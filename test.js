@@ -47,6 +47,13 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 		: r.url().includes('/news.json') ? r.respond({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: newsBody }) : r.continue()));
 	await p.goto('https://example.com/');
 	const stub = () => {
+		// The game's own rule for every canvas (CSS/Styles.css), which SlimeBeep's canvases must survive.
+		if (!document.getElementById('game-css')) {
+			const gs = document.createElement('style');
+			gs.id = 'game-css';
+			gs.textContent = 'canvas { padding: 0; margin: auto; outline: none; display: block; top: 0; bottom: 0; left: 0; right: 0; position: absolute; width: 100%; }';
+			document.head.appendChild(gs);
+		}
 		const handlers = {};
 		window.Player = { MemberNumber: 1, FriendNames: new Map([[11, 'Ann'], [12, 'Bea'], [13, 'Cat'], [14, 'Dee']]) };
 		window.ChatRoomData = { Name: 'Velvet Lounge' };
@@ -551,6 +558,8 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	await wait(800);
 	// The cropper: place it in the circle, then Save.
 	check(!!await p.$('#sb-crop canvas'), 'choosing a picture opens the circle to place it in');
+	check(await p.evaluate(() => { const c = document.querySelector('#sb-crop canvas').getBoundingClientRect(), r = document.querySelector('#sb-crop .sb-crop-ring').getBoundingClientRect(); return Math.abs(c.left - r.left - 3) < 2 && Math.abs(c.top - r.top - 3) < 2 && Math.round(c.width) === 200; }),
+		'the picture sits exactly in the circle, even with the game styling every canvas');
 	check(await p.evaluate(() => { const c = document.getElementById('sb-crop').getBoundingClientRect(), pn = document.getElementById('sb-panel').getBoundingClientRect(); return document.getElementById('sb-crop').parentElement.id === 'sb-panel' && c.width <= pn.width + 1 && c.height <= pn.height + 1; }), 'and it stays inside the SlimeBeep panel, not over the game');
 	const before = await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.options')).pfp.v);
 	const ring = await (await p.$('#sb-crop canvas')).boundingBox();
@@ -581,7 +590,8 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	await p.click('#sb-crop .sb-crop-x');
 	check(!await p.$('#sb-crop'), 'and so does its ✕');
 	const chosen = await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.options')).pfp);
-	check(chosen && chosen.v !== 'mypic00001' && /^data:image\/(webp|jpeg);base64,/.test(chosen.data) && chosen.data.length <= 6000, `choosing a picture shrinks it to send (${chosen && chosen.data.length} characters)`);
+	check(chosen && chosen.v !== 'mypic00001' && /^data:image\/(webp|jpeg);base64,/.test(chosen.data) && chosen.data.length <= 12000, `choosing a picture shrinks it to send (${chosen && chosen.data.length} characters)`);
+	check(await p.evaluate((d) => new Promise((res) => { const i = new Image(); i.onload = () => res(i.naturalWidth); i.src = d; }), chosen.data) === 128, 'at 128×128, sharp enough to zoom on');
 	await shot('mypic');
 	await p.click('#sb-gear');
 

@@ -21,7 +21,7 @@
 
 import { DurableObject } from 'cloudflare:workers';
 
-const LIMITS = { name: 40, text: 500, members: 40, admins: 10, keep: 200, pic: 6000, burst: 20, sockets: 80, inviteDays: 7, openUses: 20, perDay: 2000 };
+const LIMITS = { name: 40, text: 500, members: 40, admins: 10, keep: 200, pic: 12000, burst: 20, sockets: 80, inviteDays: 7, openUses: 20, perDay: 2000 };
 const ID_RE = /^[a-z0-9]{8,24}$/;
 const SECRET_RE = /^[A-Z2-9]{10}$/;
 const PIC_RE = /^data:image\/(webp|jpeg|png);base64,[A-Za-z0-9+/]+=*$/;

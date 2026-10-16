@@ -124,5 +124,11 @@
     "date": "16 Oct 2026",
     "title": "📢 SlimeBeep 2.14.2",
     "text": "Fitting your profile picture now happens inside the SlimeBeep window instead of covering the whole game, and it closes with ✕, Cancel, Escape or a click beside it."
+  },
+  {
+    "id": "2.14.3",
+    "date": "16 Oct 2026",
+    "title": "📢 SlimeBeep 2.14.3",
+    "text": "🖼 Sharper profile pictures (128×128, choose yours again to upgrade it), and the picture now sits right inside the circle when you fit it."
   }
 ]

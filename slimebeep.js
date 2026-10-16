@@ -13,7 +13,7 @@
 (function () {
 	'use strict';
 
-	const VERSION = '2.14.2';
+	const VERSION = '2.14.3';
 	// Loaded once per page, whatever loads it.
 	if (window.SlimeBeep) return;
 	window.SlimeBeep = { version: VERSION };
@@ -321,8 +321,9 @@
 	 * or shown (never a web address), so a picture loads nothing from anywhere and can run nothing.
 	 */
 	const PFP_RE = /^data:image\/(webp|jpeg|png);base64,[A-Za-z0-9+/]+=*$/;
-	const PFP_MAX = 6000;
-	const PFP_CHUNK = 700;
+	// Pictures are 128×128 (96 if a busy one won't fit), sent to friends in beep-sized pieces.
+	const PFP_MAX = 12000;
+	const PFP_CHUNK = 900;
 	let pfps = null; // member number -> { v, data }
 	function loadPfps() {
 		if (pfps) return pfps;
@@ -411,7 +412,8 @@
 		#sb-crop { position: absolute; inset: 0; z-index: 5; background: #fff8; backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; font-family: inherit; }
 		#sb-crop .sb-crop-card { background: #fff; color: #5a2a48; border-radius: 18px; padding: 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; box-shadow: 0 10px 40px #0008; max-width: calc(100% - 24px); }
 		#sb-crop .sb-crop-ring { border-radius: 50%; overflow: hidden; border: 3px solid #ff7ac0; background: repeating-conic-gradient(#eee 0 25%, #fff 0 50%) 0 0 / 16px 16px; touch-action: none; }
-		#sb-crop canvas { display: block; cursor: grab; }
+		/* The game styles every canvas as its full-screen one (absolute, 100% wide); not this one. */
+		#sb-crop canvas { display: block; cursor: grab; position: static; inset: auto; margin: 0; padding: 0; width: 200px !important; height: 200px !important; max-width: none; }
 		#sb-crop canvas:active { cursor: grabbing; }
 		#sb-crop input[type=range] { width: 200px; accent-color: #ff4fa3; }
 		#sb-crop .sb-crop-btns { display: flex; gap: 8px; }
@@ -772,7 +774,8 @@
 			if (!pic || Date.now() - (sentPic.get(from) || 0) < 60000) return;
 			sentPic.set(from, Date.now());
 			const parts = Math.ceil(pic.data.length / PFP_CHUNK);
-			for (let i = 0; i < parts; i++) sendHidden(from, { sb: 1, pf: { v: pic.v, i, n: parts, d: pic.data.slice(i * PFP_CHUNK, (i + 1) * PFP_CHUNK) } });
+			// A little apart, so a dozen pieces never look like a flood to the server.
+			for (let i = 0; i < parts; i++) setTimeout(() => sendHidden(from, { sb: 1, pf: { v: pic.v, i, n: parts, d: pic.data.slice(i * PFP_CHUNK, (i + 1) * PFP_CHUNK) } }), i * 250);
 		}
 		const pf = p.pf;
 		if (pf && typeof pf === 'object' && isId(pf.v) && Number.isInteger(pf.i) && Number.isInteger(pf.n) && pf.n > 0 && pf.n <= Math.ceil(PFP_MAX / PFP_CHUNK) &&
@@ -878,15 +881,18 @@
 				const act = e.target.dataset && e.target.dataset.act;
 				if (e.target === box || act === 'cancel') return box.remove();
 				if (act !== 'save') return;
-				const out = document.createElement('canvas');
-				out.width = out.height = 48;
-				const octx = out.getContext('2d');
-				octx.imageSmoothingQuality = 'high';
-				draw(octx, 48);
 				let data = '';
-				for (const q of [0.8, 0.6, 0.45, 0.3]) {
-					data = out.toDataURL('image/webp', q);
-					if (!data.startsWith('data:image/webp')) data = out.toDataURL('image/jpeg', q);
+				for (const size of [128, 96, 64]) {
+					const out = document.createElement('canvas');
+					out.width = out.height = size;
+					const octx = out.getContext('2d');
+					octx.imageSmoothingQuality = 'high';
+					draw(octx, size);
+					for (const q of [0.9, 0.8, 0.65, 0.5]) {
+						data = out.toDataURL('image/webp', q);
+						if (!data.startsWith('data:image/webp')) data = out.toDataURL('image/jpeg', q);
+						if (data.length <= PFP_MAX) break;
+					}
 					if (data.length <= PFP_MAX) break;
 				}
 				if (data.length > PFP_MAX || !PFP_RE.test(data)) return notify('That picture is too big, try another');
