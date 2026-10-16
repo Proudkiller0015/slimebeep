@@ -40,5 +40,11 @@
     "date": "16 Oct 2026",
     "title": "📢 SlimeBeep 2.5.1",
     "text": "Fixed: beeps no longer show bits like {\"messageType\":...} on R132, and other extensions' hidden signals (like ReqRoom) no longer show up as beeps."
+  },
+  {
+    "id": "2.5.2",
+    "date": "16 Oct 2026",
+    "title": "📢 SlimeBeep 2.5.2",
+    "text": "Other extensions' hidden signals (like KIKILINK) are no longer shown as beeps, and short beeps like <3 or hi always come through."
   }
 ]

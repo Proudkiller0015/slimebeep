@@ -13,7 +13,7 @@
 (function () {
 	'use strict';
 
-	const VERSION = '2.5.1';
+	const VERSION = '2.5.2';
 	// Loaded once per page, whatever loads it.
 	if (window.SlimeBeep) return;
 	window.SlimeBeep = { version: VERSION };
@@ -145,7 +145,7 @@
 		if (!opts.keep) return;
 		try {
 			const saved = JSON.parse(localStorage.getItem(histKey()) || '[]');
-			if (Array.isArray(saved)) for (const h of saved) if (h && h.k && !histKeys.has(h.k)) { hist.push(h); histKeys.add(h.k); }
+			if (Array.isArray(saved)) for (const h of saved) if (h && h.k && !histKeys.has(h.k) && (h.group || !isSignal(h.Message))) { hist.push(h); histKeys.add(h.k); }
 		} catch (e) { /* unreadable: start fresh */ }
 	}
 
@@ -170,7 +170,7 @@
 			const k = keyOf(b);
 			if (live.has(k)) continue;
 			live.set(k, b);
-			if (histKeys.has(k)) continue;
+			if (histKeys.has(k) || isSignal(b.Message)) continue;
 			const h = { k, MemberNumber: b.MemberNumber, MemberName: b.MemberName, Sent: !!b.Sent, Time: new Date(b.Time).getTime() || Date.now(),
 				Message: b.Message, ChatRoomName: b.ChatRoomName };
 			hist.push(h);
@@ -204,6 +204,27 @@
 		let meta = null;
 		if (raw) try { const x = JSON.parse(raw); if (x && typeof x === 'object' && !Array.isArray(x)) meta = x; } catch (e) { /* not settings after all */ }
 		return { text: text.trimEnd(), meta };
+	}
+	/*
+	 * Other add-ons talk to each other over beeps too: "ReqRoom" (EBC), "KIKILINK/1 {...}" and the like.
+	 * Those are machine data, not something a person wrote, so SlimeBeep never shows them: a beep that is
+	 * a {...} or [...] block, a short code followed by one (NAME/1 {...}), or one joined-up word like ReqRoom.
+	 * A one-word message a person types ("beep", "hi") still comes through.
+	 */
+	function isSignal(msg, typed = false) {
+		if (typeof msg !== 'string') return false;
+		const t = parseBeep(msg).text.trim();
+		if (!t) return false;
+		// A joined-up word only counts as a signal when it came as another add-on's own beep type.
+		if (typed && /^[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+$/.test(t)) return true;
+		// Real data (it has to parse into something with named fields), alone or after one short code with no spaces.
+		const m = /^([^\s{[]{0,40})\s*([[{][\s\S]*[\]}])$/.exec(t);
+		if (!m) return false;
+		try {
+			const x = JSON.parse(m[2]);
+			if (Array.isArray(x)) return m[1].length > 0 && x.length > 0;
+			return !!x && typeof x === 'object' && Object.keys(x).length > 0;
+		} catch (e) { return false; }
 	}
 	const textOf = (beep) => {
 		if (beep.group) return beep.sys === 'left' ? `${beep.MemberName} left the group` : beep.text;
@@ -876,9 +897,8 @@
 		const type = typeof d.BeepType === 'string' ? d.BeepType : '';
 		if (/leash/i.test(type)) return;
 		const msg = typeof d.Message === 'string' ? d.Message : undefined;
-		// Another add-on's own signals, not something a person wrote: raw data, or a joined-up code like
-		// EBC's "ReqRoom" (a one-word message a person types, like "beep", still comes through).
-		if (type && msg && (/^\s*[[{]/.test(msg) || /^[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+$/.test(msg.trim()))) return;
+		// Another add-on's own signals (isSignal) are not beeps.
+		if (isSignal(msg, !!type)) return;
 		if (type && !parseBeep(msg).text) return;
 		const at = Date.now();
 		setTimeout(() => {

@@ -161,6 +161,10 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 		FriendListBeepLog.push({ MemberNumber: 12, MemberName: 'Bea', Sent: false, Read: false, Time: new Date(), Message: 'what\n{"messageType":"Message","messageColor":"#F4CC00"}' });
 		FriendListBeepLog.push({ MemberNumber: 12, MemberName: 'Bea', Sent: false, Read: true, Time: new Date(), Message: 'lost marker\n{"messageType":"Message","messageColor":"#F4CC00"}' });
 		fire('AccountBeep', { MemberNumber: 13, MemberName: 'Cat', BeepType: 'EBC', Message: 'ReqRoom' });
+		fire('AccountBeep', { MemberNumber: 13, MemberName: 'Cat', BeepType: '', Message: 'KIKILINK/1 {"t":"pq","i":"-9fa1-9ce98fb5ea95"}' });
+		FriendListBeepLog.push({ MemberNumber: 13, MemberName: 'Cat', Sent: false, Read: false, Time: new Date(), Message: 'KIKILINK/1 {"t":"pq","i":"x"}' });
+		FriendListBeepLog.push({ MemberNumber: 13, MemberName: 'Cat', Sent: false, Read: false, Time: new Date(), Message: 'lol {hug}' });
+		for (const m of ['<3', 'hi', 'HiHi', '[3]', '{}', 'LoveYou']) FriendListBeepLog.push({ MemberNumber: 13, MemberName: 'Cat', Sent: false, Read: false, Time: new Date(), Message: m });
 	});
 	await wait(2200);
 	await p.click('#sb-back');
@@ -171,7 +175,10 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	await p.click('#sb-back');
 	await p.click('[data-open="13"]');
 	await wait(200);
-	check(!/ReqRoom/.test(await p.$eval('#sb-msgs', (e) => e.textContent)), "another add-on's one-word signal (ReqRoom) is not shown as a beep");
+	const cat = await p.$eval('#sb-msgs', (e) => e.textContent);
+	check(!/ReqRoom|KIKILINK/.test(cat), "other add-ons' signals (ReqRoom, KIKILINK/1 {...}) are not shown as beeps");
+	const catBubbles = await p.$$eval('.sb-b.them', (e) => e.map((x) => x.firstChild.textContent));
+	check(['lol {hug}', '<3', 'hi', 'HiHi', '[3]', '{}', 'LoveYou'].every((m) => catBubbles.includes(m)), `but short and playful beeps always show (${catBubbles.slice(-7).join(' | ')})`);
 	await p.click('#sb-back');
 
 	// Beeps another add-on handles before the game (EBC): not in the game's list, so SlimeBeep keeps them itself.
