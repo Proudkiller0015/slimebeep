@@ -13,7 +13,7 @@
 (function () {
 	'use strict';
 
-	const VERSION = '2.1.0';
+	const VERSION = '2.2.0';
 	// Loaded once per page, whatever loads it.
 	if (window.SlimeBeep) return;
 	window.SlimeBeep = { version: VERSION };
@@ -26,7 +26,11 @@
 	 * seconds, so the server doesn't drop them; `picked` is who was ticked last time;
 	 * `pos` is where the slime was dragged to, as fractions of the window (null: bottom right).
 	 */
-	const DEFAULTS = { pos: null, gap: 1.5, shareRoom: true, remember: true, picked: [], sound: true };
+	// `popups`: a card for each new beep; `desktop`: a system notification while the game tab is in the background;
+	// `keep`: keep beeps in this browser across logins; `seenNews`: the news items (news.json) already shown.
+	const DEFAULTS = { pos: null, gap: 1.5, shareRoom: true, remember: true, picked: [], sound: true, popups: true, desktop: false, keep: true, seenNews: null };
+	const NEWS = 'https://raw.githubusercontent.com/Proudkiller0015/slimebeep/main/news.json';
+	const KEEP_MAX = 2000;
 	const KEY = 'slimebeep.options';
 	const opts = (() => {
 		try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) || '{}') }; } catch (e) { return { ...DEFAULTS }; }
@@ -39,14 +43,75 @@
 	let thread = null; // the member number whose chat is open
 	let search = '';
 	let sending = false;
-	let seenLog = -1;
+
+	/*
+	 * The beeps, kept by SlimeBeep. The game's own beep log (FriendListBeepLog) starts empty at every
+	 * login; every beep in it is copied here, and with "keep" on the copies are saved in this browser
+	 * per account, so chats survive a relog. The game's log is only ever read, never changed, apart
+	 * from the same Read flag the game's own beep list sets.
+	 */
+	let hist = [];
+	let histOwner = null;
+	const histKeys = new Set();
+	const live = new Map(); // key -> the game's own beep object, for its Read flag
+	const histKey = () => `slimebeep.history.${Player.MemberNumber}`;
+	const keyOf = (b) => (b.Id ? `id:${b.Id}` : `${b.MemberNumber}|${new Date(b.Time).getTime()}|${b.Sent ? 1 : 0}|${String(b.Message || '').slice(0, 40)}`);
 
 	const $ = (id) => document.getElementById(id);
 	const esc = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 	const loggedIn = () => typeof ServerSocket !== 'undefined' && ServerSocket && typeof Player !== 'undefined' && Player && Player.MemberNumber != null;
 	/** The chat room you are in, or null. */
 	const myRoom = () => (typeof ChatRoomData !== 'undefined' && ChatRoomData && ChatRoomData.Name) || null;
-	const log = () => (typeof FriendListBeepLog !== 'undefined' && Array.isArray(FriendListBeepLog) ? FriendListBeepLog : []);
+	const gameLog = () => (typeof FriendListBeepLog !== 'undefined' && Array.isArray(FriendListBeepLog) ? FriendListBeepLog : []);
+	const log = () => hist;
+
+	function loadHistory() {
+		hist = [];
+		histKeys.clear();
+		live.clear();
+		histOwner = Player.MemberNumber;
+		if (!opts.keep) return;
+		try {
+			const saved = JSON.parse(localStorage.getItem(histKey()) || '[]');
+			if (Array.isArray(saved)) for (const h of saved) if (h && h.k && !histKeys.has(h.k)) { hist.push(h); histKeys.add(h.k); }
+		} catch (e) { /* unreadable: start fresh */ }
+	}
+
+	function saveHistory() {
+		if (!opts.keep) return;
+		try {
+			localStorage.setItem(histKey(), JSON.stringify(hist.slice(-KEEP_MAX)));
+		} catch (e) {
+			// Full: keep the newer half.
+			hist = hist.slice(-Math.floor(KEEP_MAX / 2));
+			try { localStorage.setItem(histKey(), JSON.stringify(hist)); } catch (e2) { /* the browser won't keep it */ }
+		}
+	}
+
+	/** Copies new beeps from the game's log. Returns the incoming ones that are new since the last time. */
+	function sync() {
+		if (!loggedIn()) return [];
+		if (histOwner !== Player.MemberNumber) loadHistory();
+		const added = [];
+		for (const b of gameLog()) {
+			if (!b || typeof b !== 'object' || b.MemberNumber == null) continue;
+			const k = keyOf(b);
+			if (live.has(k)) continue;
+			live.set(k, b);
+			if (histKeys.has(k)) continue;
+			const h = { k, MemberNumber: b.MemberNumber, MemberName: b.MemberName, Sent: !!b.Sent, Time: new Date(b.Time).getTime() || Date.now(),
+				Message: b.Message, ChatRoomName: b.ChatRoomName };
+			hist.push(h);
+			histKeys.add(k);
+			added.push(h);
+		}
+		if (added.length) {
+			hist.sort((a, b) => a.Time - b.Time);
+			if (hist.length > KEEP_MAX) for (const h of hist.splice(0, hist.length - KEEP_MAX)) histKeys.delete(h.k);
+			saveHistory();
+		}
+		return added.filter((h) => !h.Sent && !isReaction(h));
+	}
 	/** A beep's visible text, without the metadata the game appends. */
 	const textOf = (beep) => {
 		if (typeof beep.Message !== 'string') return beep.ChatRoomName ? `📍 ${beep.ChatRoomName}` : '🔔 Beep!';
@@ -57,7 +122,9 @@
 		const meta = FriendListBeepParseMessage(beep.Message).metadata;
 		return !!meta && meta.messageType === 'Reaction';
 	};
-	const unread = (beep) => !beep.Sent && beep.Read === false && !isReaction(beep);
+	// Unread is the game's own flag, so reading a beep here or in the game's beep list is the same thing.
+	const unread = (h) => { const b = live.get(h.k); return !h.Sent && !!b && b.Read === false && !isReaction(h); };
+	const markRead = (h) => { const b = live.get(h.k); if (b && b.Read === false) b.Read = true; };
 	const nameOf = (n) => {
 		const f = friends.find((x) => x.MemberNumber === n);
 		if (f) return f.MemberName;
@@ -143,6 +210,19 @@
 		.sb-go:disabled { opacity: .45; cursor: default; }
 		.sb-line { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin: 6px 0; }
 		.sb-hint { color: #a0638a; font-size: 11px; }
+		#sb-cards { position: fixed; z-index: 100000; width: 280px; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+		.sb-card { pointer-events: auto; display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 18px; cursor: pointer;
+			background: #fff7fb; color: #4a2340; border: 2px solid #ffc2e2; box-shadow: 0 6px 20px #c2186b55; box-sizing: border-box;
+			font: 13px "Trebuchet MS", "Segoe UI", sans-serif; text-align: left; line-height: 1.3; animation: sb-in .25s ease-out; }
+		.sb-card.out { animation: sb-out .25s ease-in forwards; }
+		.sb-card .sb-main { flex: 1; min-width: 0; }
+		.sb-card .sb-main b { display: block; color: #c2186b; }
+		.sb-card .sb-txt { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; word-break: break-word; }
+		.sb-card small { display: block; color: #a0638a; font-size: 11px; margin-top: 2px; }
+		.sb-card .sb-x { flex: none; border: none; background: none; color: #c08aaa; font-size: 14px; cursor: pointer; padding: 0 2px; }
+		.sb-card.news { background: linear-gradient(120deg, #fff0f8, #eafbff); border-color: #9fe8ff; }
+		@keyframes sb-in { from { opacity: 0; transform: translateY(10px) scale(.95); } }
+		@keyframes sb-out { to { opacity: 0; transform: translateX(30px); } }
 		#sb-toast { position: fixed; z-index: 100000; padding: 8px 14px; border-radius: 16px; background: #4a2340; color: #fff;
 			font: bold 13px "Trebuchet MS", "Segoe UI", sans-serif; box-shadow: 0 4px 14px #c2186b66; pointer-events: none;
 			opacity: 0; transform: translateY(6px); transition: opacity .2s, transform .2s; white-space: nowrap; }
@@ -166,6 +246,9 @@
 		const toast = document.createElement('div');
 		toast.id = 'sb-toast';
 		document.body.appendChild(toast);
+		const cards = document.createElement('div');
+		cards.id = 'sb-cards';
+		document.body.appendChild(cards);
 
 		const panel = document.createElement('div');
 		panel.id = 'sb-panel';
@@ -212,16 +295,20 @@
 		if (loggedIn()) listen();
 		place();
 		setInterval(tick, 1000);
+		news();
 	}
 
 	let listening = false;
 	function listen() {
 		if (listening || !loggedIn() || typeof ServerSocket.on !== 'function') return;
 		listening = true;
+		// Only listens; an error in here is caught so the game's own handlers and other add-ons carry on.
 		ServerSocket.on('AccountQueryResult', (data) => {
-			if (!data || data.Query !== 'OnlineFriends' || !Array.isArray(data.Result)) return;
-			friends = data.Result.filter((f) => f && f.MemberNumber !== Player.MemberNumber);
-			if (isOpen() && tab !== 'chats') render();
+			try {
+				if (!data || data.Query !== 'OnlineFriends' || !Array.isArray(data.Result)) return;
+				friends = data.Result.filter((f) => f && f.MemberNumber !== Player.MemberNumber);
+				if (isOpen() && tab !== 'chats') render();
+			} catch (e) { console.warn('[SlimeBeep]', e); }
 		});
 	}
 	const askFriends = () => { if (loggedIn()) { listen(); ServerSend('AccountQuery', { Query: 'OnlineFriends' }); } };
@@ -243,6 +330,7 @@
 		const top = Math.max(0, Math.min(innerHeight - size, y));
 		t.style.left = `${left}px`;
 		t.style.top = `${top}px`;
+		placeCards();
 		if (!isOpen()) return;
 		const w = panel.offsetWidth, h = Math.min(480, innerHeight - 16);
 		panel.style.height = `${h}px`;
@@ -250,20 +338,93 @@
 		panel.style.left = `${Math.max(8, Math.min(innerWidth - w - 8, left + size - w))}px`;
 		const above = top - h - 10, below = top + size + 10;
 		panel.style.top = `${above >= 8 ? above : below + h <= innerHeight - 8 ? below : Math.max(8, innerHeight - h - 8)}px`;
+		placeCards();
 	}
 
 	/** Every second: new beeps update the badge and the open chat. */
 	function tick() {
-		const all = log();
-		const n = all.filter(unread).length;
-		const badge = $('sb-badge');
-		badge.textContent = n > 99 ? '99+' : String(n);
-		badge.style.display = n ? 'block' : 'none';
-		if (all.length === seenLog) return;
-		const fresh = seenLog >= 0 && all.slice(seenLog).some((b) => !b.Sent && !isReaction(b));
-		seenLog = all.length;
-		if (fresh && opts.sound) chime();
-		if (isOpen() && tab !== 'options' && tab !== 'group') render(true);
+		// Whatever goes wrong in here stays in here: never an error into the game or other add-ons.
+		try {
+			const first = histOwner === null || (loggedIn() && histOwner !== Player.MemberNumber);
+			const fresh = sync();
+			const n = log().filter(unread).length;
+			const badge = $('sb-badge');
+			badge.textContent = n > 99 ? '99+' : String(n);
+			badge.style.display = n ? 'block' : 'none';
+			// The beeps already there at login are not news.
+			if (first || !fresh.length) { if (fresh.length && isOpen()) render(true); return; }
+			if (opts.sound) chime();
+			for (const h of fresh.slice(-4)) announce(h);
+			if (isOpen() && tab !== 'options' && tab !== 'group') render(true);
+		} catch (e) {
+			if (!tick.warned) { tick.warned = true; console.warn('[SlimeBeep]', e); }
+		}
+	}
+
+	/** A new beep: a card by the slime (click opens the chat), and a desktop notification if the game is in the background. */
+	function announce(h) {
+		// Already looking at that chat: it's right there.
+		if (isOpen() && thread === h.MemberNumber && !document.hidden) return;
+		const text = textOf(h);
+		const room = h.ChatRoomName && typeof h.Message === 'string' ? `📍 in ${h.ChatRoomName}` : '';
+		const open = () => { thread = h.MemberNumber; renderThread.pin = undefined; if (!isOpen()) setOpen(true); else render(); };
+		if (opts.popups) card({ icon: avatar(h.MemberNumber, h.MemberName), title: `💌 ${h.MemberName}`, text, sub: room, onClick: open });
+		if (opts.desktop && document.hidden && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+			try {
+				const note = new Notification(`💌 ${h.MemberName}`, { body: room ? `${text}\n${room}` : text, icon: ICON, tag: `slimebeep-${h.MemberNumber}` });
+				note.onclick = () => { focus(); open(); note.close(); };
+			} catch (e) { /* the browser said no */ }
+		}
+	}
+
+	/** A card in the stack by the slime; gone after `ms` (0: stays until closed). At most four at once. */
+	function card({ icon, title, text, sub = '', onClick, ms = 7000, cls = '' }) {
+		const box = $('sb-cards');
+		const c = document.createElement('div');
+		c.className = `sb-card ${cls}`;
+		c.innerHTML = `${icon}<span class="sb-main"><b>${esc(title)}</b><span class="sb-txt">${esc(text)}</span>${sub ? `<small>${esc(sub)}</small>` : ''}</span><button class="sb-x" title="Dismiss">✕</button>`;
+		const close = () => { c.classList.add('out'); setTimeout(() => { c.remove(); placeCards(); }, 250); };
+		c.querySelector('.sb-x').addEventListener('click', (e) => { e.stopPropagation(); close(); });
+		c.addEventListener('click', () => { close(); if (onClick) onClick(); });
+		box.prepend(c);
+		while (box.children.length > 4) box.lastChild.remove();
+		placeCards();
+		if (ms) setTimeout(close, ms);
+	}
+
+	/** The card stack beside the slime (or the panel, when it's open), kept inside the window. */
+	function placeCards() {
+		const box = $('sb-cards');
+		if (!box || !box.children.length) return;
+		const open = isOpen();
+		const r = (open ? $('sb-panel') : $('sb-toggle')).getBoundingClientRect();
+		const w = box.offsetWidth, h = box.offsetHeight;
+		let left = open ? r.left - w - 10 : r.right - w;
+		if (open && left < 8) left = r.right + 10;
+		box.style.left = `${Math.max(8, Math.min(innerWidth - w - 8, left))}px`;
+		const top = open ? r.bottom - h : r.top - h - 10 >= 8 ? r.top - h - 10 : r.bottom + 10;
+		box.style.top = `${Math.max(8, Math.min(innerHeight - h - 8, top))}px`;
+	}
+
+	/*
+	 * News from the repository (news.json): [{ "id": "...", "title": "...", "text": "...", "date": "..." }].
+	 * Each item shows once per browser, and stays until closed. A first install only gets the newest one.
+	 */
+	function news() {
+		fetch(NEWS, { cache: 'no-store' })
+			.then((r) => (r.ok ? r.json() : []))
+			.then((items) => {
+				const valid = Array.isArray(items) ? items.filter((i) => i && i.id && i.text) : [];
+				if (!valid.length) return;
+				if (!Array.isArray(opts.seenNews)) opts.seenNews = valid.slice(0, -1).map((i) => i.id);
+				for (const i of valid.filter((x) => !opts.seenNews.includes(x.id)).slice(-3)) {
+					card({ icon: `<img src="${ICON}" style="width:34px;height:34px;border-radius:50%;flex:none" alt="">`,
+						title: i.title || '📢 SlimeBeep news', text: i.text, sub: i.date || '', ms: 0, cls: 'news' });
+				}
+				opts.seenNews = valid.map((i) => i.id);
+				saveOpts();
+			})
+			.catch(() => { /* no news is fine */ });
 	}
 
 	/** A soft two-note pop for a new beep. */
@@ -329,7 +490,7 @@
 		}
 		if (keepScroll) $('sb-body').scrollTop = scroll;
 		for (const b of view.querySelectorAll('[data-tab]')) b.addEventListener('click', () => { tab = b.dataset.tab; search = ''; render(); });
-		for (const r of view.querySelectorAll('[data-open]')) r.addEventListener('click', () => { thread = Number(r.dataset.open); render(); });
+		for (const r of view.querySelectorAll('[data-open]')) r.addEventListener('click', () => { thread = Number(r.dataset.open); renderThread.pin = undefined; render(); });
 		if (tab === 'group') wireGroup();
 		if (tab === 'options') wireOptions();
 	}
@@ -355,12 +516,21 @@
 				<div class="sb-side">#${f.MemberNumber}</div></div>`).join('');
 	}
 
+	/** The room under a bubble: only when there is one, and only when it changed since that side's last beep. */
+	function roomLine(b, msgs, i) {
+		const room = typeof b.Message === 'string' && typeof b.ChatRoomName === 'string' ? b.ChatRoomName.trim() : '';
+		if (!room) return '';
+		const prev = msgs.slice(0, i).reverse().find((x) => x.Sent === b.Sent);
+		if (prev && (prev.ChatRoomName || '').trim() === room) return '';
+		return `<span class="sb-room">📍 ${b.Sent ? 'invited to' : 'in'} ${esc(room)}</span>`;
+	}
+
 	function renderThread(keepScroll) {
 		const n = thread;
 		const view = $('sb-view');
 		const msgs = log().filter((b) => b.MemberNumber === n && !isReaction(b));
 		// Opening the chat reads it, the same flag the game's own beep list uses.
-		for (const b of msgs) if (unread(b)) b.Read = true;
+		for (const b of msgs) markRead(b);
 		const f = friends.find((x) => x.MemberNumber === n);
 		const old = $('sb-msgs');
 		const atBottom = !old || old.scrollHeight - old.scrollTop - old.clientHeight < 40;
@@ -371,8 +541,8 @@
 			<div class="sb-thead"><button id="sb-back" title="Back">‹</button>${avatar(n, nameOf(n))}
 				<div class="sb-main"><div class="sb-name">${esc(nameOf(n))} <small style="font-weight:normal;color:#c08aaa">#${n}</small></div>
 				<div class="sb-sub">${f ? '<span class="sb-on"></span>' : ''}${esc(where(f))}</div></div></div>
-			<div class="sb-msgs" id="sb-msgs">${msgs.length ? msgs.map((b) => `<div class="sb-b ${b.Sent ? 'me' : 'them'}">${esc(textOf(b))}` +
-				`${b.ChatRoomName && typeof b.Message === 'string' ? `<span class="sb-room">📍 ${b.Sent ? 'invited to' : 'in'} ${esc(b.ChatRoomName)}</span>` : ''}<em>${timeOf(b.Time)}</em></div>`).join('')
+			<div class="sb-msgs" id="sb-msgs">${msgs.length ? msgs.map((b, i) => `<div class="sb-b ${b.Sent ? 'me' : 'them'}">${esc(textOf(b))}` +
+				`${roomLine(b, msgs, i)}<em>${timeOf(b.Time)}</em></div>`).join('')
 				: '<div class="sb-empty">🫧 Say hi!</div>'}</div>
 			<div class="sb-compose">
 				<button class="pin ${pinOn ? 'on' : ''}" id="sb-pin" ${room ? '' : 'disabled'} title="${room ? `Let them join me: adds a button to join you in "${esc(room)}"` : "You're not in a chat room"}">📍</button>
@@ -388,8 +558,13 @@
 		const send = () => {
 			const text = ta.value.trim();
 			if (!text) return;
-			beep(n, text, pinOn);
-			notify(`✓ Beep sent to ${nameOf(n)}${pinOn ? ' 📍' : ''}`);
+			// Read now, not when the chat was drawn: a quick second Enter must not invite again.
+			const invite = !!myRoom() && (renderThread.pin ?? opts.shareRoom);
+			beep(n, text, invite);
+			// An invite goes once; the next beeps in the chat are just beeps unless 📍 is pressed again.
+			renderThread.pin = false;
+			sync();
+			notify(`✓ Beep sent to ${nameOf(n)}${invite ? ' 📍' : ''}`);
 			ta.value = '';
 			setTimeout(() => render(true), 50);
 		};
@@ -485,6 +660,10 @@
 		return `<div class="sb-opts">
 			<b style="display:block;margin:6px 2px">⚙ Options</b>
 			<label><input type="checkbox" id="sb-o-sound" ${opts.sound ? 'checked' : ''}>Pop sound for new beeps</label>
+			<label><input type="checkbox" id="sb-o-popups" ${opts.popups ? 'checked' : ''}>💌 A card by the slime for each new beep</label>
+			<label><input type="checkbox" id="sb-o-desktop" ${opts.desktop ? 'checked' : ''}>🖥 Desktop notification when the game is in the background</label>
+			<label><input type="checkbox" id="sb-o-keep" ${opts.keep ? 'checked' : ''}>🗂 Keep my beeps in this browser after I log out
+				<span class="sb-hint" style="display:block">${hist.length} beeps kept. <button class="sb-pill" id="sb-o-clear">Clear them</button></span></label>
 			<label><input type="checkbox" id="sb-o-share" ${opts.shareRoom ? 'checked' : ''}>📍 "Let them join me" starts on</label>
 			<label><input type="checkbox" id="sb-o-remember" ${opts.remember ? 'checked' : ''}>Remember who I picked for group beeps</label>
 			<label>Wait <input type="number" id="sb-o-gap" min="1" max="10" step="0.5" value="${opts.gap}"> seconds between group beeps</label>
@@ -495,6 +674,32 @@
 
 	function wireOptions() {
 		$('sb-o-sound').addEventListener('change', (e) => { opts.sound = e.target.checked; saveOpts(); });
+		$('sb-o-popups').addEventListener('change', (e) => { opts.popups = e.target.checked; saveOpts(); });
+		$('sb-o-desktop').addEventListener('change', async (e) => {
+			opts.desktop = e.target.checked;
+			// The browser asks once; a "no" there turns this back off.
+			if (opts.desktop && typeof Notification !== 'undefined' && Notification.permission !== 'granted') {
+				const answer = await Notification.requestPermission().catch(() => 'denied');
+				if (answer !== 'granted') { opts.desktop = false; e.target.checked = false; notify('The browser blocked notifications'); }
+			}
+			saveOpts();
+		});
+		$('sb-o-keep').addEventListener('change', (e) => {
+			opts.keep = e.target.checked;
+			saveOpts();
+			if (opts.keep) saveHistory();
+			else try { localStorage.removeItem(histKey()); } catch (err) { /* nothing kept anyway */ }
+		});
+		$('sb-o-clear').addEventListener('click', (e) => {
+			e.preventDefault();
+			try { localStorage.removeItem(histKey()); } catch (err) { /* nothing kept anyway */ }
+			// Only this session's beeps stay, as the game itself still has them.
+			hist = hist.filter((h) => live.has(h.k));
+			histKeys.clear();
+			for (const h of hist) histKeys.add(h.k);
+			saveHistory();
+			render();
+		});
 		$('sb-o-share').addEventListener('change', (e) => { opts.shareRoom = e.target.checked; saveOpts(); });
 		$('sb-o-remember').addEventListener('change', (e) => { opts.remember = e.target.checked; if (!opts.remember) opts.picked = []; saveOpts(); });
 		$('sb-o-gap').addEventListener('change', (e) => {
@@ -505,5 +710,9 @@
 		$('sb-o-reset').addEventListener('click', () => { opts.pos = null; saveOpts(); place(); });
 	}
 
-	build();
+	try {
+		build();
+	} catch (e) {
+		console.warn('[SlimeBeep] could not start:', e);
+	}
 })();

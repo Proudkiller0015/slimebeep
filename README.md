@@ -19,7 +19,11 @@ Click the pink slime (drag it anywhere you like; it stays there). A pink dot on 
 - **📣 Group:** one beep to every friend you tick (**All** / **None**), sent one at a time.
 - **⚙ Options:** pop sound for new beeps, whether 📍 starts on, remembering who you picked, the wait between group beeps, and putting the slime back in its corner.
 
-Every beep you send pops up a "✓ Beep sent" note by the slime.
+Every beep you send pops up a "✓ Beep sent" note by the slime. A new beep pops a 💌 card (click it to reply), with an optional desktop notification when the game is in the background. Your chats are kept in your browser, per account, so they're still there after you log out (⚙ can turn that off or clear them).
+
+## News
+
+[`news.json`](news.json) holds announcements. Add an item (a new `id`, a `title` and a `text`) and push: every player sees it once, as a card by the slime, on their next reload. Nobody has to update anything.
 
 ## Updates
 

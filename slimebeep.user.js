@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SlimeBeep
 // @namespace    https://github.com/Proudkiller0015/slimebeep
-// @version      2.1.0
+// @version      2.2.0
 // @description  A bubble gum beep messenger for Bondage Club: chats, online friends, group beeps. Always runs the newest version.
 // @icon         https://raw.githubusercontent.com/Proudkiller0015/slimebeep/main/icon-64.png
 // @homepageURL  https://github.com/Proudkiller0015/slimebeep

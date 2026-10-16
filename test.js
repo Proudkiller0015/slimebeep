@@ -76,6 +76,29 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	await p.evaluate(() => FriendListBeepLog.push({ MemberNumber: 13, MemberName: 'Cat', Sent: false, Read: false, Time: new Date(), Message: 'yay!' }));
 	await wait(1300);
 	check(await p.$$eval('.sb-b.them', (e) => e.map((x) => x.firstChild.textContent)).then((t) => t.includes('yay!')), 'a new beep appears in the open chat');
+	check(await p.$$eval('.sb-card', (e) => e.length) === 0, 'no card for a beep in the chat you are reading');
+	await p.type('#sb-text', 'second');
+	await p.keyboard.press('Enter');
+	await wait(300);
+	check((await p.evaluate(() => beeps)).slice(-1)[0][2] === false, '📍 invites once, then the next beep is plain');
+	await p.click('#sb-pin');
+	await p.type('#sb-text', 'third');
+	await p.keyboard.press('Enter');
+	await p.type('#sb-text', 'fourth');
+	await p.keyboard.press('Enter');
+	await wait(300);
+	check(JSON.stringify((await p.evaluate(() => beeps)).slice(-2).map((x) => x[2])) === '[true,false]', 'even a quick second Enter sends no invite');
+	const rooms = await p.$$eval('.sb-b.me', (e) => e.map((x) => (x.querySelector('.sb-room') || {}).textContent || '-'));
+	check(rooms.filter((r) => r !== '-').length === 2, `the room line only shows when it changes (${rooms.join(' | ')})`);
+	await p.click('#sb-back');
+	await p.evaluate(() => FriendListBeepLog.push({ MemberNumber: 11, MemberName: 'Ann', Sent: false, Read: false, Time: new Date(), Message: 'psst, over here' }));
+	await wait(1300);
+	const cardText = await p.$$eval('.sb-card', (e) => e.map((x) => x.textContent));
+	await shot('card');
+	check(cardText.length === 1 && /Ann.*psst/.test(cardText[0]), `a new beep pops a card (${cardText})`);
+	await p.click('.sb-card');
+	await wait(300);
+	check(await p.$eval('.sb-thead', (e) => /Ann/.test(e.textContent)), 'clicking the card opens that chat');
 
 	await p.click('#sb-back');
 	await p.click('[data-tab=friends]');
@@ -100,7 +123,7 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	await shot('group');
 	await p.click('#sb-gsend');
 	await wait(1500);
-	const sent = (await p.evaluate(() => beeps)).slice(1);
+	const sent = (await p.evaluate(() => beeps)).slice(-2);
 	check(JSON.stringify(sent) === JSON.stringify([[11, 'Party in 10!', true], [13, 'Party in 10!', true]]), `group beep to Ann and Cat (${JSON.stringify(sent)})`);
 
 	// Drag; the spot and the picks survive a reload.
@@ -110,15 +133,34 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	check(at[0] === '280px' && at[1] === '180px', `dragged to ${at}`);
 	const inside = await p.$eval('#sb-panel', (e) => { const x = e.getBoundingClientRect(); return x.left >= 0 && x.top >= 0 && x.right <= innerWidth && x.bottom <= innerHeight; });
 	check(inside, 'the panel stays inside the window');
+	await p.setRequestInterception(true);
+	p.on('request', (r) => (r.url().includes('/news.json') ? r.respond({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' },
+		body: JSON.stringify([{ id: 'old', text: 'old news' }, { id: 'n1', title: '📢 Hi', text: 'SlimeBeep can now keep your beeps!' }]) }) : r.continue()));
 	await p.reload();
 	await p.evaluate(stub);
+	// A new login: the game's log starts empty again.
+	await p.evaluate(() => { FriendListBeepLog.length = 0; });
 	await p.addScriptTag({ content: src });
+	await wait(1500);
+	const newsCards = await p.$$eval('.sb-card.news', (e) => e.map((x) => x.textContent));
+	await shot('news');
+	check(newsCards.length === 1 && /keep your beeps/.test(newsCards[0]), `a first install sees only the newest news item (${newsCards})`);
+	check(await p.$$eval('.sb-card:not(.news)', (e) => e.length) === 0, 'beeps from before the reload pop no cards');
 	check(JSON.stringify(await p.$eval('#sb-toggle', (e) => [e.style.left, e.style.top])) === JSON.stringify(at), 'the spot survives a reload');
 	await p.click('#sb-toggle');
 	await wait(200);
 	await p.click('[data-tab=group]');
 	await wait(100);
 	check(JSON.stringify(await p.$$eval('#sb-body label input:checked:not(#sb-groom)', (e) => e.map((x) => x.value))) === '["11","13"]', 'and so do the picks');
+	await p.click('[data-tab=chats]');
+	await wait(200);
+	const kept = await p.$$eval('#sb-body .sb-row .sb-name', (e) => e.map((x) => x.textContent));
+	check(kept.length === 2 && kept.some((t) => /Cat/.test(t)), `chats survive a relog (${kept})`);
+	await p.reload();
+	await p.evaluate(stub);
+	await p.addScriptTag({ content: src });
+	await wait(1500);
+	check(await p.$$eval('.sb-card.news', (e) => e.length) === 0, 'news shows once');
 	await shot('reload');
 	await b.close();
 	console.log(failed ? `\n${failed} FAILED` : '\nall passed');
