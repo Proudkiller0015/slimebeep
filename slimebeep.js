@@ -8,7 +8,7 @@
 (function () {
 	'use strict';
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
-	const LOADED_FROM = (document.currentScript && document.currentScript.src) || '';
+	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
 	const VERSION = '3.0.1';
 	// Only one copy runs per page.
@@ -23,7 +23,7 @@
 
 	/** Default user options. The live values are in `opts`, saved in localStorage under KEY. */
 	const DEFAULTS = {
-		/** Toggle button position as window fractions {x, y}; null puts it bottom right. */
+		/** @type {{ x: number, y: number } | null} Toggle button position as window fractions; null puts it bottom right. */
 		pos: null,
 		/** Seconds between beeps when a WaveBeep goes to several friends. */
 		gap: 1.5,
@@ -31,7 +31,7 @@
 		shareRoom: true,
 		/** Whether WaveBeep keeps the ticked friends (`picked`) for next time. */
 		remember: true,
-		/** Member numbers ticked in WaveBeep. */
+		/** @type {number[]} Member numbers ticked in WaveBeep. */
 		picked: [],
 		/** Chime for new messages. */
 		sound: true,
@@ -41,25 +41,31 @@
 		desktop: false,
 		/** Save chat history per account (see `hist`). */
 		keep: true,
-		/** Ids of news.json items already shown as cards. */
+		/** @type {string[] | null} Ids of news.json items already shown as cards (null before the first load). */
 		seenNews: null,
-		/** Last version that posted its update note in the room chat. */
+		/** @type {string | null} Last version that posted its update note in the room chat. */
 		lastVersion: null,
 		/** Night colours. */
 		night: false,
 		/** Follow a theme add-on's colours (Themed, BCNeko). */
 		themed: false,
-		/** Emoji for the picker's 🕘 tab, newest first. */
+		/** @type {string[]} Emoji for the picker's 🕘 tab, newest first. */
 		recentEmoji: [],
-		/** Chats that make no sound: 'n:<member number>' or 'g:<group id>'. */
+		/** @type {string[]} Chats that make no sound: 'n:<member number>' or 'g:<group id>'. */
 		muted: [],
+		/** @type {Picture | null} Your profile picture. */
+		pfp: null,
+		/** Version and missing game parts already warned about by gameCheck. */
+		gameWarned: '',
 	};
+	/** @typedef {typeof DEFAULTS} Options */
 	/** Release notes, shown as cards and in update notes. */
 	const NEWS = 'https://proudkiller0015.github.io/slimebeep/news.json';
 	/** Most entries kept in `hist`. */
 	const KEEP_MAX = 2000;
 	/** localStorage key of `opts` (shared by every account in this browser). */
 	const KEY = 'slimebeep.options';
+	/** @type {Options} The live options. */
 	const opts = (() => {
 		try {
 			return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) || '{}') };
@@ -76,13 +82,22 @@
 	};
 
 	/**
-	 * Online friends, from the last OnlineFriends query.
-	 * @type {{ MemberNumber: number, MemberName: string, ChatRoomName?: string, ChatRoomSpace?: string, Private?: boolean, Type?: string }[]}
+	 * An online friend, as the server's OnlineFriends answer lists them.
+	 * @typedef {object} Friend
+	 * @property {number} MemberNumber
+	 * @property {string} MemberName
+	 * @property {string} [ChatRoomName] the room they are in
+	 * @property {string} [ChatRoomSpace]
+	 * @property {number} [ChatRoomMemberCount]
+	 * @property {number} [ChatRoomLimit]
+	 * @property {boolean} [Private] in a private room
+	 * @property {string} [Type] 'Friend', 'Lover', 'Submissive'...
 	 */
+	/** @type {Friend[]} Online friends, from the last OnlineFriends answer. */
 	let friends = [];
 	/** Open panel tab: 'chats', 'groups', 'friends', 'wave', 'bug', 'options', 'newgc' or 'invitefor'. */
 	let tab = 'chats';
-	/** Open chat: a member number, 'g:<group id>', or null for the lists. */
+	/** @type {number | string | null} Open chat: a member number, 'g:<group id>', or null for the lists. */
 	let thread = null;
 	/** Search box text on the list tabs. */
 	let search = '';
@@ -90,16 +105,35 @@
 	let sending = false;
 
 	/**
+	 * A message in a chat (an entry of `hist`).
+	 * @typedef {object} HistEntry
+	 * @property {string} k unique key: the game beep's (keyOf), 'g:<group>:<id>', 'raw:...' or 'mail:<id>'
+	 * @property {number} MemberNumber one-to-one: the other person; group: the sender (0 for system lines)
+	 * @property {string} MemberName
+	 * @property {boolean} Sent sent by you
+	 * @property {number} Time when, in ms
+	 * @property {string} [Message] a beep's message, as the game keeps it (may carry settings after MARK)
+	 * @property {string} [ChatRoomName] the room a beep was sent from
+	 * @property {string} [group] the group id, for group messages
+	 * @property {string} [text] a group message's text
+	 * @property {string} [sys] a group's system line: 'roster' or 'left'
+	 * @property {boolean} [unread] for entries the game's log doesn't have (group, caught and mailbox ones)
+	 * @property {boolean} [mail] went through a mailbox
+	 * @property {boolean} [unchecked] mailbox beep whose sender key could not be checked
+	 * @property {string} [announceText] the card text, when different from the message
+	 */
+	/**
 	 * Every message shown in chats: beeps copied from the game's FriendListBeepLog (emptied at each
-	 * login), group messages and mailbox beeps, oldest first. Each entry has a unique key `k`.
-	 * Saved per account under histKey() when opts.keep is on.
+	 * login), group messages and mailbox beeps, oldest first. Saved per account under histKey() when
+	 * opts.keep is on.
+	 * @type {HistEntry[]}
 	 */
 	let hist = [];
-	/** Member number `hist` was loaded for. */
+	/** @type {number | null} Member number `hist` was loaded for. */
 	let histOwner = null;
-	/** Keys of the entries in `hist`. */
+	/** @type {Set<string>} Keys of the entries in `hist`. */
 	const histKeys = new Set();
-	/** Key -> the game's own beep object, so opening a chat can set its Read flag. */
+	/** @type {Map<string, BcBeepLogEntry>} Key -> the game's own beep, so opening a chat can set its Read flag. */
 	const live = new Map();
 	const histKey = () => `slimebeep.history.${Player.MemberNumber}`;
 
@@ -132,20 +166,57 @@
 		perMinute: 60,
 	};
 	/**
-	 * Groups you are in, by id: { id, name, owner, admins, open, members: [{ n, name, kf }],
-	 * online, last (newest message id seen), picv (your picture version sent there), pic }.
+	 * A member of a group, as the relay's roster lists them.
+	 * @typedef {object} GroupMember
+	 * @property {number} n member number
+	 * @property {string} name
+	 * @property {string} kf the first 16 chars of the key they signed in with
 	 */
+	/**
+	 * A group chat you are in.
+	 * @typedef {object} Group
+	 * @property {string} id
+	 * @property {string} name
+	 * @property {number} owner member number
+	 * @property {number[]} admins member numbers (the owner included)
+	 * @property {boolean} open anyone in it can invite
+	 * @property {GroupMember[]} members
+	 * @property {number[]} [online] members connected right now
+	 * @property {number} last id of the newest message received
+	 * @property {string} [picv] version of your picture already sent to it
+	 * @property {string} [pic] the group's picture (a data URL)
+	 */
+	/** @type {Record<string, Group>} Groups you are in, by id. */
 	let groups = {};
-	/** Friends known to have SlimeBeep. */
+	/** @type {Set<number>} Friends known to have SlimeBeep. */
 	let peers = new Set();
-	/** Friend -> first 16 chars of their public key, as their own SlimeBeep sent it. */
+	/** @type {Record<number, string>} Friend -> first 16 chars of their public key, as their own SlimeBeep sent it. */
 	let peerKeys = {};
-	/** Group invites from friends not joined yet: [{ code, name, from, fromName, at }]. */
+	/**
+	 * A group invite from a friend, not joined yet.
+	 * @typedef {object} Invitation
+	 * @property {string} code SB-<group id>-<secret>
+	 * @property {string} name the group's name
+	 * @property {number} from who invited you
+	 * @property {string} fromName
+	 * @property {number} at when, in ms
+	 */
+	/** @type {Invitation[]} Group invites from friends, not joined yet. */
 	let invitations = [];
 	const gcKey = () => `slimebeep.gc2.${Player.MemberNumber}`;
 	/**
-	 * Beeps to offline friends not delivered yet, saved per account: [{ id, n, text, at }].
-	 * mailWaiting leaves them in the friend's mailbox; otherwise sendWaiting sends them when the friend is online.
+	 * A beep to an offline friend, not delivered yet.
+	 * @typedef {object} WaitingBeep
+	 * @property {string} id
+	 * @property {number} n the friend's member number
+	 * @property {string} text
+	 * @property {number} at when it was written, in ms
+	 * @property {number} [tried] last mailbox attempt, in ms (not saved)
+	 */
+	/**
+	 * Beeps to offline friends not delivered yet, saved per account. mailWaiting leaves them in the
+	 * friend's mailbox; otherwise sendWaiting sends them when the friend is online.
+	 * @type {WaitingBeep[]}
 	 */
 	let waiting = [];
 	/** Whether an OnlineFriends answer has arrived, so `friends` can be trusted. */
@@ -160,8 +231,18 @@
 	};
 	/** A group invite code: SB-<group id>-<invite secret>. */
 	const CODE_RE = /^SB-([a-z0-9]{8,24})-([A-Z2-9]{10})$/;
+	/**
+	 * Whether `x` is an id made by newId (also group ids).
+	 * @param {unknown} x
+	 * @returns {x is string}
+	 */
 	const isId = (x) => typeof x === 'string' && /^[a-z0-9]{8,24}$/.test(x);
-	const isNum = (n) => Number.isInteger(n) && n > 0 && n < 1e9;
+	/**
+	 * Whether `n` is a plausible member number.
+	 * @param {unknown} n
+	 * @returns {n is number}
+	 */
+	const isNum = (n) => Number.isInteger(n) && /** @type {number} */ (n) > 0 && /** @type {number} */ (n) < 1e9;
 	/** A random id (8-16 lowercase letters and digits). */
 	const newId = () => {
 		const a = new Uint32Array(3);
@@ -172,7 +253,12 @@
 			.slice(0, 16)
 			.padEnd(8, '0');
 	};
-	/** Text from outside, made safe to keep: control characters removed, trimmed, cut to `max`. */
+	/**
+	 * Text from outside, made safe to keep: control characters removed, trimmed, cut to `max`.
+	 * @param {unknown} x
+	 * @param {number} max
+	 * @returns {string} '' for anything but a string
+	 */
 	const clean = (x, max) =>
 		typeof x === 'string'
 			? x
@@ -181,13 +267,37 @@
 					.trim()
 					.slice(0, max)
 			: '';
+	/**
+	 * Whether a member is on your friend list (or online as a friend).
+	 * @param {number} n
+	 */
 	const isFriend = (n) =>
 		!!(Player.FriendNames && typeof Player.FriendNames.has === 'function' && Player.FriendNames.has(n)) ||
 		friends.some((f) => f.MemberNumber === n);
+	/** Your name, as groups and mailboxes see it. */
 	const myName = () => clean(Player.Nickname || Player.Name, LIMITS.name) || `#${Player.MemberNumber}`;
+	/**
+	 * @param {Group | undefined} g
+	 * @param {number} n
+	 */
 	const isAdmin = (g, n) => !!g && g.admins.includes(n);
+	/**
+	 * @param {Group | undefined} g
+	 * @param {number} n
+	 */
 	const isMember = (g, n) => !!g && g.members.some((m) => m.n === n);
+	/**
+	 * Whether member `n` may invite people to `g`.
+	 * @param {Group} g
+	 * @param {number} n
+	 */
 	const canInvite = (g, n) => isMember(g, n) && (g.open || isAdmin(g, n));
+	/**
+	 * A member's name as shown in a group ('You' for yourself).
+	 * @param {Group | undefined} g
+	 * @param {number} n
+	 * @returns {string}
+	 */
 	const memberName = (g, n) => {
 		if (n === Player.MemberNumber) {
 			return 'You';
@@ -214,11 +324,12 @@
 		groups = {};
 		waiting = [];
 		try {
+			/** @type {unknown} */
 			const w = JSON.parse(localStorage.getItem(waitKey()) || '[]');
 			if (Array.isArray(w)) {
-				waiting = w
+				waiting = /** @type {Partial<WaitingBeep>[]} */ (w)
 					.filter((x) => x && isId(x.id) && isNum(x.n) && typeof x.text === 'string')
-					.map((x) => ({ id: x.id, n: x.n, text: x.text.slice(0, 1000), at: Number(x.at) || Date.now() }))
+					.map((x) => ({ id: String(x.id), n: Number(x.n), text: String(x.text).slice(0, 1000), at: Number(x.at) || Date.now() }))
 					.slice(0, 100);
 			}
 		} catch (e) {
@@ -229,6 +340,7 @@
 		invitations = [];
 		relayPics = {};
 		try {
+			/** @type {{ groups?: Record<string, Partial<Group>>, peers?: unknown[], peerKeys?: Record<string, unknown>, invitations?: Partial<Invitation>[] }} */
 			const saved = JSON.parse(localStorage.getItem(gcKey()) || '{}');
 			for (const g of Object.values(saved.groups || {})) {
 				if (!g || !isId(g.id) || !Array.isArray(g.members)) {
@@ -243,7 +355,7 @@
 					members: g.members
 						.filter((m) => m && isNum(m.n))
 						.map((m) => ({ n: m.n, name: clean(m.name, LIMITS.name), kf: typeof m.kf === 'string' ? m.kf.slice(0, 16) : '' })),
-					last: Number.isInteger(g.last) ? g.last : 0,
+					last: Number.isInteger(g.last) ? Number(g.last) : 0,
 					picv: typeof g.picv === 'string' ? g.picv : undefined,
 					pic: typeof g.pic === 'string' && g.pic.length <= PFP_MAX && PFP_RE.test(g.pic) ? g.pic : undefined,
 				};
@@ -259,17 +371,18 @@
 				}
 			}
 			for (const i of saved.invitations || []) {
-				if (i && CODE_RE.test(i.code) && isNum(i.from)) {
+				if (i && typeof i.code === 'string' && CODE_RE.test(i.code) && isNum(i.from)) {
 					invitations.push({
 						code: i.code,
 						name: clean(i.name, LIMITS.name),
 						from: i.from,
 						fromName: clean(i.fromName, LIMITS.name),
-						at: i.at,
+						at: Number(i.at) || 0,
 					});
 				}
 			}
 			// Peers saved under the older storage key.
+			/** @type {{ peers?: unknown[] }} */
 			const old = JSON.parse(localStorage.getItem(`slimebeep.gc.${Player.MemberNumber}`) || '{}');
 			for (const n of old.peers || []) {
 				if (isNum(n)) {
@@ -288,16 +401,32 @@
 			/* the browser won't keep it */
 		}
 	}
-	/** The `hist` key of a game beep: its Id, or its sender, time, direction and start of text. */
+	/**
+	 * The `hist` key of a game beep: its Id, or its sender, time, direction and start of text.
+	 * @param {BcBeepLogEntry} b
+	 */
 	const keyOf = (b) =>
 		b.Id ? `id:${b.Id}` : `${b.MemberNumber}|${new Date(b.Time).getTime()}|${b.Sent ? 1 : 0}|${String(b.Message || '').slice(0, 40)}`;
 
-	const $ = (id) => document.getElementById(id);
+	/**
+	 * An element of SlimeBeep's own UI by id. build() and the render functions create them, so code that can
+	 * run before they exist checks the result first.
+	 * @param {string} id
+	 * @returns {HTMLElement}
+	 */
+	const $ = (id) => /** @type {HTMLElement} */ (document.getElementById(id));
+	/**
+	 * An <input> or <textarea> of SlimeBeep's UI by id (value, checked, disabled).
+	 * @param {string} id
+	 * @returns {HTMLInputElement}
+	 */
+	const $input = (id) => /** @type {HTMLInputElement} */ (document.getElementById(id));
 
 	/**
 	 * Game globals SlimeBeep uses: [name, typeof check, what stops working without it]. Shown by the
 	 * 🐞 report and a one-time card when missing; .github/workflows/bc-check.yml checks the live game daily.
 	 */
+	/** @type {[string, () => string, string][]} */
 	const NEEDS = [
 		['ServerSocket', () => typeof ServerSocket, 'everything (the connection to the game)'],
 		['Player', () => typeof Player, 'everything (who you are)'],
@@ -310,6 +439,7 @@
 		['DrawCheckbox', () => typeof DrawCheckbox, 'Settings > Extensions'],
 		['MouseIn', () => typeof MouseIn, 'Settings > Extensions'],
 	];
+	/** The NEEDS entries the game doesn't have (any more). */
 	const missing = () =>
 		NEEDS.filter(([, t]) => {
 			try {
@@ -318,15 +448,20 @@
 				return true;
 			}
 		});
-	/** The last 10 caught errors, for the 🐞 report. */
+	/** @type {string[]} The last 10 caught errors, for the 🐞 report. */
 	const errors = [];
-	/** Logs a caught error to the console and to `errors`. */
+	/**
+	 * Logs a caught error to the console and to `errors`.
+	 * @param {unknown} e
+	 * @param {string} [where] what was being done
+	 */
 	function warn(e, where = '') {
 		try {
-			const msg = `${where ? `${where}: ` : ''}${(e && e.message) || String(e)}`.slice(0, 200);
+			const err = e instanceof Error ? e : null;
+			const msg = `${where ? `${where}: ` : ''}${(err && err.message) || String(e)}`.slice(0, 200);
 			const at =
-				e && e.stack
-					? String(e.stack)
+				err && err.stack
+					? String(err.stack)
 							.split('\n')
 							.find((l) => /slimebeep/i.test(l)) || ''
 					: '';
@@ -339,9 +474,14 @@
 			/* ignore */
 		}
 	}
-	/** Text escaped for HTML (content and quoted attributes). */
-	const esc = (t) =>
-		String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+	/** @type {Record<string, string>} */
+	const ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+	/**
+	 * Text escaped for HTML (content and quoted attributes).
+	 * @param {unknown} t
+	 * @returns {string}
+	 */
+	const esc = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ESCAPES[c]);
 	/** HTML that can be inserted as is: built by `html`, or markup made from escaped text and marked with trustedHtml. */
 	class SafeHtml {
 		/** @param {string} value */
@@ -352,7 +492,11 @@
 			return this.value;
 		}
 	}
-	/** One value inserted into `html`: SafeHtml as is, arrays one after another, null/undefined/false as nothing, the rest escaped. */
+	/**
+	 * One value inserted into `html`: SafeHtml as is, arrays one after another, null/undefined/false as nothing, the rest escaped.
+	 * @param {HtmlValue} v
+	 * @returns {string}
+	 */
 	const htmlPart = (v) => {
 		if (v instanceof SafeHtml) {
 			return v.value;
@@ -366,15 +510,62 @@
 		return esc(v);
 	};
 	/** Tag for HTML templates: every inserted value is escaped unless it is SafeHtml, so text can never become markup. */
+	/**
+	 * @param {TemplateStringsArray} strings
+	 * @param {...HtmlValue} values
+	 * @returns {SafeHtml}
+	 */
 	const html = (strings, ...values) =>
 		new SafeHtml(strings.reduce((out, s, i) => out + s + (i < values.length ? htmlPart(values[i]) : ''), ''));
-	/** Marks markup assembled from already-escaped text as safe. Used only by rich(). */
+	/**
+	 * Marks markup assembled from already-escaped text as safe. Used only by rich().
+	 * @param {string} s
+	 */
 	const trustedHtml = (s) => new SafeHtml(s);
+	/**
+	 * Puts HTML into one of SlimeBeep's elements. The only place that sets innerHTML: it takes SafeHtml
+	 * only, so everything shown went through `html` (and its escaping) first.
+	 * @param {Element} el
+	 * @param {SafeHtml} content
+	 */
+	function setHtml(el, content) {
+		// eslint-disable-next-line no-unsanitized/property -- content is SafeHtml, escaped by `html`
+		el.innerHTML = content.value;
+	}
+	/**
+	 * The HTML elements under `root` that match `selector`.
+	 * @param {ParentNode} root
+	 * @param {string} selector
+	 * @returns {HTMLElement[]}
+	 */
+	const $$ = (root, selector) => /** @type {HTMLElement[]} */ ([...root.querySelectorAll(selector)]);
+	/**
+	 * The <input> elements under `root` that match `selector`.
+	 * @param {ParentNode} root
+	 * @param {string} selector
+	 * @returns {HTMLInputElement[]}
+	 */
+	const $$inputs = (root, selector) => /** @type {HTMLInputElement[]} */ ([...root.querySelectorAll(selector)]);
+	/**
+	 * The element an event happened on (SlimeBeep only listens on its own elements).
+	 * @param {Event} e
+	 * @returns {HTMLElement}
+	 */
+	const targetOf = (e) => /** @type {HTMLElement} */ (e.target);
+	/**
+	 * The <input> or <textarea> an event happened on.
+	 * @param {Event} e
+	 * @returns {HTMLInputElement}
+	 */
+	const inputOf = (e) => /** @type {HTMLInputElement} */ (e.target);
+	/** Whether a player is logged in. */
 	const loggedIn = () =>
 		typeof ServerSocket !== 'undefined' && ServerSocket && typeof Player !== 'undefined' && Player && Player.MemberNumber != null;
 	/** Name of the chat room you are in, or null. */
 	const myRoom = () => (typeof ChatRoomData !== 'undefined' && ChatRoomData && ChatRoomData.Name) || null;
+	/** The game's beep log ([] when missing). */
 	const gameLog = () => (typeof FriendListBeepLog !== 'undefined' && Array.isArray(FriendListBeepLog) ? FriendListBeepLog : []);
+	/** The chat history. */
 	const log = () => hist;
 
 	/** Loads `hist` (and the group state) for the logged-in account. */
@@ -421,7 +612,7 @@
 
 	/**
 	 * Copies beeps from the game's log into `hist`.
-	 * @returns {object[]} the received beeps added this time (no reactions)
+	 * @returns {HistEntry[]} the received beeps added this time (no reactions)
 	 */
 	function sync() {
 		if (!loggedIn()) {
@@ -430,6 +621,7 @@
 		if (histOwner !== Player.MemberNumber) {
 			loadHistory();
 		}
+		/** @type {HistEntry[]} */
 		const added = [];
 		for (const b of gameLog()) {
 			if (!b || typeof b !== 'object' || b.MemberNumber == null) {
@@ -443,6 +635,7 @@
 			if (histKeys.has(k) || isSignal(b.Message)) {
 				continue;
 			}
+			/** @type {HistEntry} */
 			const h = {
 				k,
 				MemberNumber: b.MemberNumber,
@@ -470,8 +663,14 @@
 	/** Character after which the game appends a beep's settings (JSON: name colour, message type). */
 	const MARK = '';
 	/**
+	 * A beep's settings, as the game appends them.
+	 * @typedef {object} BeepMeta
+	 * @property {string} [messageType] 'Message', 'Reply', 'Reaction'...
+	 */
+	/**
 	 * Splits a beep's message into its text and the settings the game appended after MARK.
-	 * @returns {{ text: string, meta: object|null }}
+	 * @param {unknown} msg
+	 * @returns {{ text: string, meta: BeepMeta | null }}
 	 */
 	function parseBeep(msg) {
 		if (typeof msg !== 'string') {
@@ -509,6 +708,10 @@
 	 * array, optionally after a short tag ("KIKILINK/1 {...}"), or, with `typed` (the beep had its own
 	 * BeepType), a CamelCase word like "ReqRoom".
 	 */
+	/**
+	 * @param {unknown} msg
+	 * @param {boolean} [typed]
+	 */
 	function isSignal(msg, typed = false) {
 		if (typeof msg !== 'string') {
 			return false;
@@ -535,22 +738,32 @@
 			return false;
 		}
 	}
-	/** What a `hist` entry shows as its text. */
+	/**
+	 * What a `hist` entry shows as its text.
+	 * @param {HistEntry} entry
+	 * @returns {string}
+	 */
 	const textOf = (entry) => {
 		if (entry.group) {
-			return entry.sys === 'left' ? `${entry.MemberName} left the group` : entry.text;
+			return entry.sys === 'left' ? `${entry.MemberName} left the group` : entry.text || '';
 		}
 		if (typeof entry.Message !== 'string') {
 			return entry.ChatRoomName ? `📍 ${entry.ChatRoomName}` : '🔔 Beep!';
 		}
 		return parseBeep(entry.Message).text || '🔔 Beep!';
 	};
-	/** Whether a beep is a reaction (the game's messageType 'Reaction'); those are not listed. */
+	/**
+	 * Whether a beep is a reaction (the game's messageType 'Reaction'); those are not listed.
+	 * @param {HistEntry} entry
+	 */
 	const isReaction = (entry) => {
 		const meta = typeof entry.Message === 'string' ? parseBeep(entry.Message).meta : null;
 		return !!meta && meta.messageType === 'Reaction';
 	};
-	/** Whether a received entry is unread: the game's Read flag when the game has the beep, else `h.unread`. */
+	/**
+	 * Whether a received entry is unread: the game's Read flag when the game has the beep, else `h.unread`.
+	 * @param {HistEntry} h
+	 */
 	const unread = (h) => {
 		if (h.Sent || isReaction(h)) {
 			return false;
@@ -558,7 +771,10 @@
 		const b = live.get(h.k);
 		return b ? b.Read === false : !!h.unread;
 	};
-	/** Marks an entry read, in the game's log too. */
+	/**
+	 * Marks an entry read, in the game's log too.
+	 * @param {HistEntry} h
+	 */
 	const markRead = (h) => {
 		const b = live.get(h.k);
 		if (b && b.Read === false) {
@@ -569,7 +785,11 @@
 			saveHistory();
 		}
 	};
-	/** A member's name: from the online friends, the friend list, or the last beep they sent. */
+	/**
+	 * A member's name: from the online friends, the friend list, or the last beep they sent.
+	 * @param {number} n
+	 * @returns {string}
+	 */
 	const nameOf = (n) => {
 		const f = friends.find((x) => x.MemberNumber === n);
 		if (f) {
@@ -582,11 +802,17 @@
 		const b = [...log()].reverse().find((x) => x.MemberNumber === n && !x.Sent);
 		return b ? b.MemberName : `#${n}`;
 	};
-	/** Whether a message is only an *action* (it gets the sb-act bubble). */
+	/**
+	 * Whether a message is only an *action* (it gets the sb-act bubble).
+	 * @param {string} text
+	 */
 	const isAction = (text) => /^\*{1,2}[^*\n]+\*{1,2}$/.test(String(text).trim());
 	/** Group invite codes inside a text. */
 	const CODE_IN = /SB-[a-z0-9]{8,24}-[A-Z2-9]{10}/g;
-	/** A message as HTML: escaped, with *actions* in italics, clickable links (new tab) and a Join button after group codes. */
+	/**
+	 * A message as HTML: escaped, with *actions* in italics, clickable links (new tab) and a Join button after group codes.
+	 * @param {string} text
+	 */
 	const rich = (text) =>
 		trustedHtml(
 			esc(text)
@@ -598,14 +824,24 @@
 				})
 				.replace(
 					CODE_IN,
-					(code) =>
-						`${code} <button class="sb-pill sb-joincode" data-code="${code}">${groups[CODE_RE.exec(code)[1]] ? 'Open' : 'Join'}</button>`,
+					(code) => `${code} <button class="sb-pill sb-joincode" data-code="${code}">${groups[codeGroup(code)] ? 'Open' : 'Join'}</button>`,
 				),
 		);
-	/** A time as hh:mm today, or as a date. */
+	/**
+	 * The group id inside an invite code ('' if it isn't one).
+	 * @param {string} code
+	 */
+	const codeGroup = (code) => {
+		const m = CODE_RE.exec(code);
+		return m ? m[1] : '';
+	};
+	/**
+	 * A time as hh:mm today, or as a date.
+	 * @param {number | string | Date} t
+	 */
 	const timeOf = (t) => {
 		const d = new Date(t);
-		if (isNaN(d)) {
+		if (isNaN(d.getTime())) {
 			return '';
 		}
 		const today = new Date().toDateString() === d.toDateString();
@@ -613,7 +849,10 @@
 			? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 			: d.toLocaleDateString([], { day: 'numeric', month: 'short' });
 	};
-	/** Hue of a member's letter avatar. */
+	/**
+	 * Hue of a member's letter avatar.
+	 * @param {number} n
+	 */
 	const hue = (n) => (Number(n) * 137) % 360;
 	/** A profile picture: only image data URLs are accepted (never a web address). */
 	const PFP_RE = /^data:image\/(webp|jpeg|png);base64,[A-Za-z0-9+/]+=*$/;
@@ -621,48 +860,75 @@
 	const PFP_MAX = 12000;
 	/** Characters of picture per hidden beep. */
 	const PFP_CHUNK = 900;
-	/** Friends' pictures received by hidden beeps: member number -> { v: version id, data }. Lazy, see loadPfps. */
+	/**
+	 * A profile picture.
+	 * @typedef {object} Picture
+	 * @property {string} v version id (a new one for each new picture)
+	 * @property {string} data an image data URL (PFP_RE)
+	 */
+	/** @type {Record<number, Picture> | null} Friends' pictures received by hidden beeps. Lazy, see loadPfps. */
 	let pfps = null;
-	/** `pfps`, loaded from localStorage on first use. */
+	/**
+	 * `pfps`, loaded from localStorage on first use.
+	 * @returns {Record<number, Picture>}
+	 */
 	function loadPfps() {
 		if (pfps) {
 			return pfps;
 		}
-		pfps = {};
+		/** @type {Record<number, Picture>} */
+		const loaded = {};
+		pfps = loaded;
 		try {
+			/** @type {Record<string, Partial<Picture>>} */
 			const saved = JSON.parse(localStorage.getItem('slimebeep.pfps') || '{}');
 			for (const [k, x] of Object.entries(saved)) {
 				if (isNum(Number(k)) && x && isId(x.v) && typeof x.data === 'string' && x.data.length <= PFP_MAX && PFP_RE.test(x.data)) {
-					pfps[Number(k)] = { v: x.v, data: x.data };
+					loaded[Number(k)] = { v: x.v, data: x.data };
 				}
 			}
 		} catch (e) {
 			/* unreadable: none */
 		}
-		return pfps;
+		return loaded;
 	}
 	/** Saves `pfps`, keeping the last 300. */
 	function savePfps() {
-		const keys = Object.keys(pfps);
+		const all = loadPfps();
+		const keys = Object.keys(all).map(Number);
 		for (const k of keys.slice(0, Math.max(0, keys.length - 300))) {
-			delete pfps[k];
+			delete all[k];
 		}
 		try {
-			localStorage.setItem('slimebeep.pfps', JSON.stringify(pfps));
+			localStorage.setItem('slimebeep.pfps', JSON.stringify(all));
 		} catch (e) {
 			/* the browser won't keep it */
 		}
 	}
-	/** Your own picture { v, data }, or null. */
+	/**
+	 * Your own picture, or null.
+	 * @returns {Picture | null}
+	 */
 	const myPfp = () => (opts.pfp && isId(opts.pfp.v) && typeof opts.pfp.data === 'string' && PFP_RE.test(opts.pfp.data) ? opts.pfp : null);
-	/** A member's picture: yours, a friend's from `pfps`, or one a group shared (`relayPics`). */
+	/**
+	 * A member's picture: yours, a friend's from `pfps`, or one a group shared (`relayPics`).
+	 * @param {number} n
+	 * @returns {{ data: string } | null}
+	 */
 	const pfpOf = (n) =>
 		(loggedIn() && n === Player.MemberNumber ? myPfp() : loadPfps()[n] || (relayPics[n] ? { data: relayPics[n] } : null)) || null;
-	/** A group's avatar HTML: its picture or 👥. */
+	/**
+	 * A group's avatar HTML: its picture or 👥.
+	 * @param {{ pic?: string }} g
+	 */
 	const groupAv = (g) => (g.pic ? html`<img class="sb-av sb-pic" src="${g.pic}" alt="">` : html`<span class="sb-av sb-gav">👥</span>`);
 	/** The slime logo as a card icon. */
 	const logoIcon = () => html`<img src="${ICON}" style="width:34px;height:34px;border-radius:50%;flex:none" alt="">`;
-	/** A member's avatar HTML: their picture or their initials. */
+	/**
+	 * A member's avatar HTML: their picture or their initials.
+	 * @param {number} n
+	 * @param {string} [name]
+	 */
 	const avatar = (n, name) => {
 		const pic = pfpOf(n);
 		if (pic) {
@@ -921,7 +1187,7 @@
 		const toggle = document.createElement('button');
 		toggle.id = 'sb-toggle';
 		toggle.title = 'SlimeBeep (drag to move)';
-		toggle.innerHTML = html`<img src="${ICON}" alt="SlimeBeep"><span id="sb-badge"></span>`;
+		setHtml(toggle, html`<img src="${ICON}" alt="SlimeBeep"><span id="sb-badge"></span>`);
 		document.body.appendChild(toggle);
 		const toast = document.createElement('div');
 		toast.id = 'sb-toast';
@@ -932,7 +1198,9 @@
 
 		const panel = document.createElement('div');
 		panel.id = 'sb-panel';
-		panel.innerHTML = html`
+		setHtml(
+			panel,
+			html`
 			<div class="sb-head">
 				<img src="${ICON}" alt="">
 				<b>SlimeBeep <small>v${VERSION}</small></b>
@@ -942,15 +1210,20 @@
 				<button id="sb-quit" title="Quit SlimeBeep until you reload">⏻</button>
 				<button id="sb-close" title="Close">✕</button>
 			</div>
-			<div id="sb-view" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>`;
+			<div id="sb-view" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>`,
+		);
 		document.body.appendChild(panel);
 
-		/** Toggle drag in progress: pointer offset, start point and whether it moved past the click threshold. */
+		/** @type {{ dx: number, dy: number, x0: number, y0: number, moved: boolean } | null} Toggle drag in progress: pointer offset, start point, whether it moved. */
 		let drag = null;
-		/** Ends a drag (saving the position when `save`); returns whether it was a move rather than a click. */
+		/**
+		 * Ends a drag (saving the position when `save`).
+		 * @param {boolean} save
+		 * @returns {boolean} whether it was a move rather than a click
+		 */
 		const endDrag = (save) => {
 			if (!drag) {
-				return;
+				return false;
 			}
 			const moved = drag.moved;
 			drag = null;
@@ -978,7 +1251,8 @@
 			}
 			// The release was lost (another window took it): stop instead of following the pointer.
 			if (!(e.buttons & 1)) {
-				return endDrag(true);
+				endDrag(true);
+				return;
 			}
 			if (!drag.moved && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 8) {
 				return;
@@ -1014,11 +1288,11 @@
 		panel.addEventListener(
 			'click',
 			(e) => {
-				const join = e.target.closest && e.target.closest('button.sb-joincode');
-				if (join) {
+				const join = targetOf(e).closest('button.sb-joincode');
+				if (join instanceof HTMLElement) {
 					e.preventDefault();
 					e.stopPropagation();
-					return joinCode(join.dataset.code, openJoined);
+					joinCode(join.dataset.code || '', openJoined);
 				}
 			},
 			true,
@@ -1027,8 +1301,8 @@
 		panel.addEventListener(
 			'click',
 			(e) => {
-				const img = e.target.closest && e.target.closest('img.sb-pic');
-				if (!img || img.closest('#sb-me')) {
+				const img = targetOf(e).closest('img.sb-pic');
+				if (!(img instanceof HTMLImageElement) || img.closest('#sb-me')) {
 					return;
 				}
 				e.preventDefault();
@@ -1071,12 +1345,12 @@
 		registerSettings();
 	}
 
-	/** The ServerSocket our listeners are attached to (see listen). */
+	/** @type {BcSocket | null} The ServerSocket our listeners are attached to (see listen). */
 	let listening = null;
 	/** Set by quit(); stops every timer callback and late reply from doing anything. */
 	let stopped = false;
-	/** The 1 s tick interval, cleared by quit(). */
-	let tickTimer = null;
+	/** @type {ReturnType<typeof setInterval> | undefined} The 1 s tick interval, cleared by quit(). */
+	let tickTimer;
 	/** Asks before quitting (⏻), in a box inside the panel. */
 	function askQuit() {
 		if (stopped || $('sb-ask')) {
@@ -1084,16 +1358,21 @@
 		}
 		const box = document.createElement('div');
 		box.id = 'sb-ask';
-		box.innerHTML = html`<div class="sb-crop-card">
+		setHtml(
+			box,
+			html`<div class="sb-crop-card">
 			<b>Turn SlimeBeep off?</b>
 			<div class="sb-warn">⚠ To get it back you'll have to <u>reload the game</u> and <u>click your SlimeBeep bookmark again</u> (with the userscript it comes back on its own after the reload).</div>
 			<span class="sb-hint" style="text-align:center">Your chats and settings stay.</span>
 			<div class="sb-crop-btns"><button class="sb-pill" data-act="keep">Keep it on</button><button class="sb-go" data-act="quit">⏻ Turn off</button></div>
-		</div>`;
+		</div>`,
+		);
 		const close = () => {
 			box.remove();
 			document.removeEventListener('keydown', onKey, true);
 		};
+		/** @param {KeyboardEvent} e */
+		/** @param {KeyboardEvent} e */
 		const onKey = (e) => {
 			if (e.key === 'Escape') {
 				e.stopPropagation();
@@ -1101,11 +1380,11 @@
 			}
 		};
 		box.addEventListener('click', (e) => {
-			const act = e.target.dataset && e.target.dataset.act;
+			const act = targetOf(e).dataset.act;
 			if (act === 'quit') {
 				close();
 				quit();
-			} else if (act === 'keep' || e.target === box) {
+			} else if (act === 'keep' || targetOf(e) === box) {
 				close();
 			}
 		});
@@ -1156,7 +1435,7 @@
 				/* gone */
 			}
 		}
-		for (const b of document.querySelectorAll('.sb-bcjoin')) {
+		for (const b of $$(document, '.sb-bcjoin')) {
 			b.remove();
 		}
 		for (const id of ['sb-toggle', 'sb-panel', 'sb-toast', 'sb-cards', 'sb-crop', 'sb-zoom', 'sb-ask', 'sb-emoji', 'sb-style']) {
@@ -1177,16 +1456,32 @@
 		delete window.SlimeBeep;
 		console.info('[SlimeBeep] quit until the next reload');
 	}
-	/** The last 20 beeps received (sender, type, start of text), for SlimeBeep.debug(). */
+	/** @type {{ at: string, from: number, type: string, text: string | null }[]} The last 20 beeps received, for SlimeBeep.debug(). */
 	const seenBeeps = [];
-	/** Handles the two server messages SlimeBeep reads: AccountBeep and the OnlineFriends answer. Others are ignored. */
+	/**
+	 * A beep as the server sends it (AccountBeep).
+	 * @typedef {object} ServerBeep
+	 * @property {number} MemberNumber the sender
+	 * @property {string} MemberName
+	 * @property {string} [BeepType] '' for a plain beep; PROTO for SlimeBeep's hidden ones; other add-ons use their own
+	 * @property {string} [Message]
+	 * @property {string} [ChatRoomName] the sender's room, when they shared it
+	 * @property {string} [ChatRoomSpace]
+	 * @property {boolean} [Private]
+	 */
+	/**
+	 * Handles the two server messages SlimeBeep reads: AccountBeep and the OnlineFriends answer. Others are ignored.
+	 * @param {string} event
+	 * @param {unknown} data
+	 */
 	function onServer(event, data) {
 		try {
 			if (event === 'AccountQueryResult') {
-				if (!data || data.Query !== 'OnlineFriends' || !Array.isArray(data.Result)) {
+				const answer = /** @type {{ Query?: string, Result?: Friend[] } | null} */ (data);
+				if (!answer || answer.Query !== 'OnlineFriends' || !Array.isArray(answer.Result)) {
 					return;
 				}
-				friends = data.Result.filter((f) => f && f.MemberNumber !== Player.MemberNumber);
+				friends = answer.Result.filter((f) => f && f.MemberNumber !== Player.MemberNumber);
 				friendsKnown = true;
 				sendWaiting();
 				if (isOpen() && tab !== 'chats') {
@@ -1196,15 +1491,17 @@
 				if (!data || typeof data !== 'object') {
 					return;
 				}
+				const beepData = /** @type {ServerBeep} */ (data);
 				// Copied before the game or another add-on changes it.
+				/** @type {ServerBeep} */
 				const d = {
-					MemberNumber: data.MemberNumber,
-					MemberName: data.MemberName,
-					BeepType: data.BeepType,
-					Message: data.Message,
-					ChatRoomName: data.ChatRoomName,
-					ChatRoomSpace: data.ChatRoomSpace,
-					Private: data.Private,
+					MemberNumber: beepData.MemberNumber,
+					MemberName: beepData.MemberName,
+					BeepType: beepData.BeepType,
+					Message: beepData.Message,
+					ChatRoomName: beepData.ChatRoomName,
+					ChatRoomSpace: beepData.ChatRoomSpace,
+					Private: beepData.Private,
 				};
 				seenBeeps.push({
 					at: new Date().toISOString(),
@@ -1225,43 +1522,53 @@
 			warn(e);
 		}
 	}
-	/** Catch-all socket listener; onServer keeps only AccountBeep and AccountQueryResult. */
+	/**
+	 * Catch-all socket listener; onServer keeps only AccountBeep and AccountQueryResult.
+	 * @param {string} event
+	 * @param {unknown} data
+	 */
 	const anyListener = (event, data) => onServer(event, data);
-	/** Per-event listeners, for a socket without a catch-all. */
+	/**
+	 * Per-event listener, for a socket without a catch-all.
+	 * @param {unknown} data
+	 */
 	const beepListener = (data) => onServer('AccountBeep', data);
+	/**
+	 * Per-event listener, for a socket without a catch-all.
+	 * @param {unknown} data
+	 */
 	const queryListener = (data) => onServer('AccountQueryResult', data);
+	/**
+	 * Whether our listener is still attached to `sock` (true when the socket can't tell).
+	 * @param {BcSocket} sock
+	 * @param {boolean} catchAll whether we listen with the catch-all
+	 */
+	function stillListening(sock, catchAll) {
+		if (catchAll) {
+			return sock.listenersAny ? sock.listenersAny().includes(anyListener) : true;
+		}
+		return sock.listeners ? sock.listeners('AccountBeep').includes(beepListener) : true;
+	}
 	/**
 	 * Attaches the listeners to ServerSocket (called every tick, re-attaching if they were removed).
 	 * The catch-all goes first (prependAny) so a beep is read before another add-on can remove the
 	 * game's listener for it or change it; it survives other code removing per-event listeners.
 	 */
-	/** Whether our listener is still attached to `sock` (true when the socket can't tell). */
-	function stillListening(sock, any) {
-		if (any) {
-			return typeof sock.listenersAny === 'function' ? sock.listenersAny().includes(anyListener) : true;
-		}
-		return typeof sock.listeners === 'function' ? sock.listeners('AccountBeep').includes(beepListener) : true;
-	}
 	function listen() {
 		if (!loggedIn() || !ServerSocket || typeof ServerSocket.on !== 'function') {
 			return;
 		}
 		const sock = ServerSocket;
-		let any = null;
-		if (typeof sock.prependAny === 'function') {
-			any = 'prependAny';
-		} else if (typeof sock.onAny === 'function') {
-			any = 'onAny';
-		}
-		if (listening === sock && stillListening(sock, any)) {
+		const catchAll = sock.prependAny || sock.onAny;
+		if (listening === sock && stillListening(sock, !!catchAll)) {
 			return;
 		}
 		listening = sock;
-		if (any) {
-			if (typeof sock.offAny === 'function') {
+		if (catchAll) {
+			if (sock.offAny) {
 				sock.offAny(anyListener);
 			}
-			sock[any](anyListener);
+			catchAll.call(sock, anyListener);
 		} else {
 			if (typeof sock.off === 'function') {
 				sock.off('AccountBeep', beepListener);
@@ -1271,11 +1578,16 @@
 			sock.on('AccountQueryResult', queryListener);
 		}
 	}
-	/** Other add-ons' listeners for api.on(), by event type. */
+	/** @typedef {'group' | 'groupGone' | 'presence' | 'slimeBeepFriend'} ApiEvent */
+	/** @type {Record<ApiEvent, Set<(data: unknown) => void>>} Other add-ons' listeners for api.on(), by event. */
 	const apiListeners = { group: new Set(), groupGone: new Set(), presence: new Set(), slimeBeepFriend: new Set() };
-	/** Calls an api.on() event's listeners, each with its own copy of `data`. */
+	/**
+	 * Calls an api.on() event's listeners, each with its own copy of `data`.
+	 * @param {ApiEvent} type
+	 * @param {object} data
+	 */
 	function emit(type, data) {
-		for (const fn of apiListeners[type] || []) {
+		for (const fn of apiListeners[type]) {
 			try {
 				fn(JSON.parse(JSON.stringify(data)));
 			} catch (e) {
@@ -1283,14 +1595,22 @@
 			}
 		}
 	}
-	/** A member's role in a group: 'owner', 'admin' or 'member'. */
+	/**
+	 * A member's role in a group.
+	 * @param {Group} g
+	 * @param {number} n
+	 * @returns {'owner' | 'admin' | 'member'}
+	 */
 	function roleOf(g, n) {
 		if (n === g.owner) {
 			return 'owner';
 		}
 		return g.admins.includes(n) ? 'admin' : 'member';
 	}
-	/** A group as the API hands it out (see API.md). */
+	/**
+	 * A group as the API hands it out (see API.md).
+	 * @param {Group} g
+	 */
 	function groupView(g) {
 		const me = loggedIn() ? Player.MemberNumber : 0;
 		const online = new Set([...(g.online || []), me]);
@@ -1319,13 +1639,22 @@
 		version: VERSION,
 		/** Your group chats, as groupView. */
 		groups: () => (loggedIn() ? Object.values(groups).map(groupView) : []),
-		/** One group by id, or null. */
+		/**
+		 * One group by id, or null.
+		 * @param {string} id
+		 */
 		group: (id) => (loggedIn() && groups[id] ? groupView(groups[id]) : null),
 		/** The member numbers of friends known to have SlimeBeep. */
 		slimeBeepFriends: () => [...peers],
-		/** Whether this member number is a friend known to have SlimeBeep. */
+		/**
+		 * Whether this member number is a friend known to have SlimeBeep.
+		 * @param {number} memberNumber
+		 */
 		hasSlimeBeep: (memberNumber) => peers.has(memberNumber),
-		/** Opens SlimeBeep on a group chat. */
+		/**
+		 * Opens SlimeBeep on a group chat.
+		 * @param {string} id
+		 */
 		openGroup: (id) => {
 			if (!groups[id]) {
 				return false;
@@ -1339,9 +1668,16 @@
 			}
 			return true;
 		},
-		/** Invites someone to a group: a SlimeBeep friend gets an invite card, anyone else a code for them alone. Promise of { ok, sent } / { ok, code } / { ok: false, why }. */
+		/**
+		 * Invites someone to a group (see inviteToGroup).
+		 * @param {string} id
+		 * @param {number} memberNumber
+		 */
 		inviteToGroup: (id, memberNumber) => inviteToGroup(id, memberNumber),
-		/** Opens SlimeBeep on "Invite <them> to…", listing the groups you can invite to. */
+		/**
+		 * Opens SlimeBeep on "Invite <them> to…", listing the groups you can invite to.
+		 * @param {number} memberNumber
+		 */
 		openInvite: (memberNumber) => {
 			if (!isNum(memberNumber)) {
 				return false;
@@ -1356,14 +1692,20 @@
 			}
 			return true;
 		},
-		/** For theme add-ons: SlimeBeep takes the running theme add-on's colours (true) or its own (false). Off unless switched on. */
+		/**
+		 * For theme add-ons: SlimeBeep takes the running theme add-on's colours (true) or its own (false). Off unless switched on.
+		 * @param {boolean} on
+		 */
 		matchTheme: (on) => {
 			setThemed(!!on);
 			return !!applyThemed();
 		},
 		/** { on, source }: whether SlimeBeep matches a theme add-on, and which one it found ('Themed', 'BCNeko' or null). */
-		matchingTheme: () => ({ on: !!opts.themed, source: (themeSource() || {}).name || null }),
-		/** Opens SlimeBeep on a chat with this member number. */
+		matchingTheme: () => ({ on: !!opts.themed, source: themeSource()?.name || null }),
+		/**
+		 * Opens SlimeBeep on a chat with this member number.
+		 * @param {number} memberNumber
+		 */
 		openChat: (memberNumber) => {
 			if (!isNum(memberNumber)) {
 				return false;
@@ -1381,12 +1723,20 @@
 		 * group: a group was joined or changed (a group, as in groups()); groupGone: { id }; presence: a group whose
 		 * online members changed; slimeBeepFriend: { memberNumber } of a friend just found to have SlimeBeep.
 		 */
+		/**
+		 * @param {string} type
+		 * @param {(data: unknown) => void} fn
+		 * @returns {() => void}
+		 */
 		on: (type, fn) => {
-			if (!apiListeners[type] || typeof fn !== 'function') {
+			if (!(type in apiListeners) || typeof fn !== 'function') {
 				return () => {};
 			}
-			apiListeners[type].add(fn);
-			return () => apiListeners[type].delete(fn);
+			const set = apiListeners[/** @type {ApiEvent} */ (type)];
+			set.add(fn);
+			return () => {
+				set.delete(fn);
+			};
 		},
 	});
 
@@ -1395,13 +1745,16 @@
 		version: VERSION,
 		missing: missing().map(([k]) => k),
 		listening: !!listening,
-		catchAll: !!(listening && typeof listening.onAny === 'function'),
+		catchAll: !!(listening && (listening.prependAny || listening.onAny)),
 		lastBeeps: seenBeeps.slice(),
 	});
 
-	/** Member number -> times of their recent hidden beeps (see allow). */
+	/** @type {Map<number, number[]>} Member number -> times of their recent hidden beeps (see allow). */
 	const hiddenBeepTimes = new Map();
-	/** Whether a hidden beep from `n` is accepted: at most LIMITS.perMinute a minute. */
+	/**
+	 * Whether a hidden beep from `n` is accepted: at most LIMITS.perMinute a minute.
+	 * @param {number} n
+	 */
 	function allow(n) {
 		const now = Date.now();
 		const list = (hiddenBeepTimes.get(n) || []).filter((t) => now - t < 60000);
@@ -1416,16 +1769,30 @@
 	const asked = new Map();
 	/** Member number -> when we last sent them ours. */
 	const sentPic = new Map();
-	/** Member number -> a picture being received in pieces: { v, n: piece count, parts }. */
+	/** @type {Map<number, { v: string, n: number, parts: string[] }>} Member number -> a picture being received in pieces. */
 	const pieces = new Map();
+	/**
+	 * A hidden beep's content (JSON). Every one has `sb: 1`, your picture version `pv` and key start `kf`.
+	 * @typedef {object} HiddenPayload
+	 * @property {number} sb always 1
+	 * @property {string} [kf] the sender's key start
+	 * @property {string | 0} [pv] the sender's picture version; 0 = no picture
+	 * @property {1} [pfreq] asks for your picture
+	 * @property {{ v: string, i: number, n: number, d: string }} [pf] piece `i` of `n` of picture version `v`
+	 * @property {1} [ping] "do you have SlimeBeep?"
+	 * @property {1} [pong] the answer
+	 * @property {{ code: string, name: string }} [ginv] a group invite
+	 */
 	/**
 	 * Picture fields of a hidden beep: `pv` (their picture version; 0 = none) makes us ask for a new one,
 	 * `pfreq` asks for ours, `pf` is one piece of theirs.
+	 * @param {number} from
+	 * @param {Partial<HiddenPayload>} p
 	 */
 	function pictureNews(from, p) {
 		const known = loadPfps()[from];
 		if (p.pv === 0 && known) {
-			delete pfps[from];
+			delete loadPfps()[from];
 			savePfps();
 		}
 		if (isId(p.pv) && (!known || known.v !== p.pv) && Date.now() - (asked.get(from) || 0) > 60000) {
@@ -1467,7 +1834,7 @@
 			}
 			got.parts[pf.i] = pf.d;
 			pieces.set(from, got);
-			if (got.parts.filter((x) => typeof x === 'string').length === got.n) {
+			if (got.parts.filter((part) => typeof part === 'string').length === got.n) {
 				pieces.delete(from);
 				const data = got.parts.join('');
 				if (data.length <= PFP_MAX && PFP_RE.test(data)) {
@@ -1492,15 +1859,17 @@
 			return null;
 		}
 	};
+	/** @typedef {((data: string) => void) | null} PictureSaver gets a cropped picture instead of it becoming yours (group pictures) */
 	/**
 	 * Reads a picked image file, scales it to at most 320 px and opens the cropper on it.
-	 * @param {File} file
-	 * @param {?function(string)} onSave  gets the cropped picture instead of it becoming yours (group pictures)
-	 * @param {string} title  the cropper's heading
+	 * @param {File | null | undefined} file
+	 * @param {PictureSaver} [onSave]
+	 * @param {string} [title] the cropper's heading
 	 */
 	function setPicture(file, onSave = null, title = '') {
 		if (!file || !/^image\//.test(file.type)) {
-			return notify('That is not a picture');
+			notify('That is not a picture');
+			return;
 		}
 		const url = URL.createObjectURL(file);
 		const img = new Image();
@@ -1510,7 +1879,7 @@
 				const c = document.createElement('canvas');
 				c.width = Math.max(1, Math.round(img.naturalWidth * k));
 				c.height = Math.max(1, Math.round(img.naturalHeight * k));
-				c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+				/** @type {CanvasRenderingContext2D} */ (c.getContext('2d')).drawImage(img, 0, 0, c.width, c.height);
 				const src = c.toDataURL('image/jpeg', 0.9);
 				if (!onSave) {
 					try {
@@ -1532,7 +1901,11 @@
 		};
 		img.src = url;
 	}
-	/** Opens the file picker, then setPicture. */
+	/**
+	 * Opens the file picker, then setPicture.
+	 * @param {PictureSaver} [onSave]
+	 * @param {string} [title]
+	 */
 	function pickPicture(onSave = null, title = '') {
 		const input = document.createElement('input');
 		input.type = 'file';
@@ -1543,6 +1916,9 @@
 	/**
 	 * The cropper: drag and zoom `src` inside a circle. Save makes the result (128 px, under PFP_MAX)
 	 * your picture, or passes it to `onSave`.
+	 * @param {string} src an image data URL
+	 * @param {PictureSaver} [onSave]
+	 * @param {string} [title]
 	 */
 	function openCropper(src, onSave = null, title = '') {
 		if ($('sb-crop')) {
@@ -1559,19 +1935,24 @@
 				y = 0; // x, y: the picture's centre offset from the circle's, in screen px
 			const box = document.createElement('div');
 			box.id = 'sb-crop';
-			box.innerHTML = html`<div class="sb-crop-card">
+			setHtml(
+				box,
+				html`<div class="sb-crop-card">
 				<button class="sb-crop-x" data-act="cancel" title="Close">✕</button>
 				<b>${title || 'Fit your picture in the circle'}</b>
 				<div class="sb-crop-ring" style="width:${SIZE}px;height:${SIZE}px"><canvas width="${SIZE}" height="${SIZE}"></canvas></div>
 				<span class="sb-hint">Drag to move it, scroll or slide to zoom.</span>
 				<input type="range" min="1" max="4" step="0.01" value="1" aria-label="Zoom">
 				<div class="sb-crop-btns"><button class="sb-pill" data-act="cancel">Cancel</button><button class="sb-go" data-act="save">Save</button></div>
-			</div>`;
+			</div>`,
+			);
 			if (!isOpen()) {
 				setOpen(true);
 			}
 			$('sb-panel').appendChild(box);
 			// Closed by Cancel, ✕, a click outside the card, Escape, or the panel closing.
+			/** @param {KeyboardEvent} e */
+			/** @param {KeyboardEvent} e */
 			const onKey = (e) => {
 				if (e.key === 'Escape' && document.body.contains(box)) {
 					e.stopPropagation();
@@ -1586,9 +1967,9 @@
 				}
 			}).observe($('sb-panel'), { childList: true });
 			box.addEventListener('keydown', (e) => e.stopPropagation());
-			const cv = box.querySelector('canvas'),
-				ctx = cv.getContext('2d'),
-				slider = box.querySelector('input');
+			const cv = /** @type {HTMLCanvasElement} */ (box.querySelector('canvas'));
+			const ctx = /** @type {CanvasRenderingContext2D} */ (cv.getContext('2d'));
+			const slider = /** @type {HTMLInputElement} */ (box.querySelector('input'));
 			// The picture always covers the whole circle.
 			const clampXY = () => {
 				const sw = w * base * zoom,
@@ -1596,6 +1977,11 @@
 				x = Math.max(-(sw - SIZE) / 2, Math.min((sw - SIZE) / 2, x));
 				y = Math.max(-(sh - SIZE) / 2, Math.min((sh - SIZE) / 2, y));
 			};
+			/**
+			 * Draws the picture as placed now, onto the cropper or onto the output canvas.
+			 * @param {CanvasRenderingContext2D} [to]
+			 * @param {number} [size]
+			 */
 			const draw = (to = ctx, size = SIZE) => {
 				const k = size / SIZE,
 					sw = w * base * zoom * k,
@@ -1603,6 +1989,7 @@
 				to.clearRect(0, 0, size, size);
 				to.drawImage(img, size / 2 + x * k - sw / 2, size / 2 + y * k - sh / 2, sw, sh);
 			};
+			/** @param {number} z */
 			const setZoom = (z) => {
 				zoom = Math.max(1, Math.min(4, z));
 				slider.value = String(zoom);
@@ -1610,6 +1997,7 @@
 				draw();
 			};
 			draw();
+			/** @type {{ px: number, py: number, x: number, y: number } | null} Drag start: pointer and picture position. */
 			let drag = null;
 			cv.addEventListener('pointerdown', (e) => {
 				drag = { px: e.clientX, py: e.clientY, x, y };
@@ -1637,9 +2025,10 @@
 			);
 			slider.addEventListener('input', () => setZoom(Number(slider.value)));
 			box.addEventListener('click', (e) => {
-				const act = e.target.dataset && e.target.dataset.act;
-				if (e.target === box || act === 'cancel') {
-					return box.remove();
+				const act = targetOf(e).dataset.act;
+				if (targetOf(e) === box || act === 'cancel') {
+					box.remove();
+					return;
 				}
 				if (act !== 'save') {
 					return;
@@ -1648,7 +2037,7 @@
 				for (const size of [128, 96, 64]) {
 					const out = document.createElement('canvas');
 					out.width = out.height = size;
-					const octx = out.getContext('2d');
+					const octx = /** @type {CanvasRenderingContext2D} */ (out.getContext('2d'));
 					octx.imageSmoothingQuality = 'high';
 					draw(octx, size);
 					for (const q of [0.9, 0.8, 0.65, 0.5]) {
@@ -1665,11 +2054,13 @@
 					}
 				}
 				if (data.length > PFP_MAX || !PFP_RE.test(data)) {
-					return notify('That picture is too big, try another');
+					notify('That picture is too big, try another');
+					return;
 				}
 				box.remove();
 				if (onSave) {
-					return onSave(data);
+					onSave(data);
+					return;
 				}
 				setOpt('pfp', { v: newId(), data });
 				pushPicture();
@@ -1679,20 +2070,18 @@
 					render(true);
 				}
 			});
-			// For the tests.
-			openCropper.state = () => ({ zoom, x, y });
-			openCropper.set = (z, nx, ny) => {
-				x = nx;
-				y = ny;
-				setZoom(z);
-			};
 		};
 		img.onerror = () => notify('That picture could not be read');
 		img.src = src;
 	}
 	/** Image element drawMyPic draws from. */
 	const picImg = new Image();
-	/** Draws your picture in a circle on the game's canvas (Extensions page). */
+	/**
+	 * Draws your picture in a circle on the game's canvas (Extensions page).
+	 * @param {number} left
+	 * @param {number} top
+	 * @param {number} size
+	 */
 	function drawMyPic(left, top, size) {
 		const pic = myPfp();
 		if (!pic || typeof MainCanvas === 'undefined' || !MainCanvas) {
@@ -1711,7 +2100,10 @@
 		MainCanvas.drawImage(picImg, left, top, size, size);
 		MainCanvas.restore();
 	}
-	/** A picture shown big, until clicked or Escape. */
+	/**
+	 * A picture shown big, until clicked or Escape.
+	 * @param {string} src an image data URL
+	 */
 	function zoomPic(src) {
 		if (!PFP_RE.test(src)) {
 			return;
@@ -1729,6 +2121,7 @@
 			box.remove();
 			document.removeEventListener('keydown', onKey, true);
 		};
+		/** @param {KeyboardEvent} e */
 		const onKey = (e) => {
 			if (e.key === 'Escape') {
 				e.stopPropagation();
@@ -1748,7 +2141,7 @@
 		if (!me) {
 			return;
 		}
-		me.innerHTML = html`${loggedIn() && avatar(Player.MemberNumber, myName())}`;
+		setHtml(me, html`${loggedIn() && avatar(Player.MemberNumber, myName())}`);
 		if (!loggedIn()) {
 			me.title = '';
 		} else {
@@ -1761,6 +2154,7 @@
 	 * picture fields (pictureNews), `ping`/`pong` (SlimeBeep check) or `ginv` (group invite).
 	 * Ignored from non-friends; the sender's member number comes from the game server.
 	 */
+	/** @param {ServerBeep} d */
 	function onHidden(d) {
 		if (!loggedIn() || !isNum(d.MemberNumber) || typeof d.Message !== 'string' || d.Message.length > 1000) {
 			return;
@@ -1772,6 +2166,7 @@
 		if (histOwner !== Player.MemberNumber) {
 			loadHistory();
 		}
+		/** @type {Partial<HiddenPayload> | null} */
 		let p;
 		try {
 			p = JSON.parse(d.Message);
@@ -1798,7 +2193,10 @@
 			takeInvite(from, d.MemberName, p.ginv);
 		}
 	}
-	/** Records a friend as having SlimeBeep and redraws, so the 🫧 by their name shows. */
+	/**
+	 * Records a friend as having SlimeBeep and redraws, so the 🫧 by their name shows.
+	 * @param {number} n
+	 */
 	function foundPeer(n) {
 		peers.add(n);
 		saveGC();
@@ -1807,7 +2205,10 @@
 			render(true);
 		}
 	}
-	/** Answers a friend's "do you have SlimeBeep?" with a pong, at most once a minute per friend. */
+	/**
+	 * Answers a friend's "do you have SlimeBeep?" with a pong, at most once a minute per friend.
+	 * @param {number} n
+	 */
 	function answerPing(n) {
 		if (Date.now() - (ponged.get(n) || 0) < 60000) {
 			return;
@@ -1815,7 +2216,12 @@
 		ponged.set(n, Date.now());
 		sendHidden(n, { sb: 1, pong: 1 });
 	}
-	/** Keeps a friend's group invite in `invitations` and shows a card; nothing is joined automatically. */
+	/**
+	 * Keeps a friend's group invite in `invitations` and shows a card; nothing is joined automatically.
+	 * @param {number} from
+	 * @param {string} senderName
+	 * @param {{ code?: unknown, name?: unknown }} ginv
+	 */
 	function takeInvite(from, senderName, ginv) {
 		const m = CODE_RE.exec(typeof ginv.code === 'string' ? ginv.code : '');
 		if (!m || groups[m[1]]) {
@@ -1851,16 +2257,85 @@
 	}
 
 	/**
-	 * One relay connection per group (reconnects with backoff, up to 5 min), by group id:
-	 * { ws, ready (signed in), retry (reconnect count), queue (messages waiting for sign-in),
-	 * waiters (invite callbacks), create/invite (sent with the sign-in), onWelcome/onFail,
-	 * dead (closed on purpose), pinged (last keep-alive) }.
+	 * A message from the relay (JSON). Which fields are set depends on `t`; see relay/src/index.js.
+	 * @typedef {object} RelayMessage
+	 * @property {string} t 'hello', 'welcome', 'roster', 'presence', 'msg', 'history', 'pic', 'gpic', 'invite', 'gone', 'error', 'ok', 'mail'
+	 * @property {string} [nonce] hello: what to sign
+	 * @property {RelayRoster} [roster] welcome, roster
+	 * @property {number[]} [online] presence
+	 * @property {RelayGroupMessage} [m] msg
+	 * @property {RelayGroupMessage[]} [msgs] history
+	 * @property {number} [n] pic: whose picture
+	 * @property {string | null} [data] pic, gpic: the picture, or null when removed
+	 * @property {string} [code] invite: the new secret
+	 * @property {string} [why] error, gone
+	 * @property {boolean} [fatal] error: the connection is closed
+	 * @property {string} [ref] ok, error: the id sent with the request
+	 * @property {MailItem[]} [list] mail
 	 */
+	/**
+	 * A group's roster as the relay sends it.
+	 * @typedef {object} RelayRoster
+	 * @property {string} name
+	 * @property {number} owner
+	 * @property {number[]} admins
+	 * @property {boolean} open
+	 * @property {number[]} online
+	 * @property {GroupMember[]} members
+	 */
+	/**
+	 * A stored group message.
+	 * @typedef {object} RelayGroupMessage
+	 * @property {number} id
+	 * @property {number} at
+	 * @property {number} [from]
+	 * @property {string} [name]
+	 * @property {string} text
+	 * @property {boolean} [sys] a system line ("X joined")
+	 */
+	/**
+	 * A beep left in a mailbox.
+	 * @typedef {object} MailItem
+	 * @property {string} id
+	 * @property {number} from
+	 * @property {string} name
+	 * @property {string} fromKf the start of the key the sender signed in with
+	 * @property {string} text
+	 * @property {number} at
+	 */
+	/**
+	 * A relay connection to one group.
+	 * @typedef {object} Conn
+	 * @property {WebSocket | null} ws
+	 * @property {boolean} ready signed in
+	 * @property {number} [retry] reconnects so far (for the backoff)
+	 * @property {object[]} queue messages waiting for the sign-in
+	 * @property {((code: string | null, why?: string) => void)[]} waiters callbacks of invite requests, in order
+	 * @property {{ name: string, open: boolean }} [create] makes the group on sign-in
+	 * @property {string} [invite] joins with this invite secret on sign-in
+	 * @property {(gid: string) => void} [onWelcome] called once signed in
+	 * @property {(why: string) => void} [onFail] called if the sign-in fails
+	 * @property {boolean} [dead] closed on purpose (no reconnect)
+	 * @property {number} [pinged] last keep-alive
+	 */
+	/** @type {Record<string, Conn>} One relay connection per group (reconnects with backoff, up to 5 min), by group id. */
 	const conns = {};
-	/** Member number -> picture shared in a group (for members who aren't friends). */
+	/** @type {Record<number, string>} Member number -> picture shared in a group (for members who aren't friends). */
 	let relayPics = {};
-	/** This account's key: { owner, priv, pub: { x, y }, kf }. See getKey. */
+	/**
+	 * This account's signing key in this browser.
+	 * @typedef {object} KeyPair
+	 * @property {number} owner member number
+	 * @property {CryptoKey} priv
+	 * @property {{ x: string, y: string }} pub
+	 * @property {string} kf the first 16 chars of pub.x
+	 */
+	/** @type {KeyPair | null} Cached result of getKey. */
 	let myKey = null;
+	/**
+	 * Bytes as base64url (no padding).
+	 * @param {ArrayBuffer} buf
+	 */
 	const b64url = (buf) =>
 		btoa(String.fromCharCode(...new Uint8Array(buf)))
 			.replace(/\+/g, '-')
@@ -1871,12 +2346,14 @@
 	const secure = () => typeof crypto !== 'undefined' && !!crypto.subtle;
 	/** This page's address over https. */
 	const httpsUrl = () => location.href.replace(/^http:/, 'https:');
+	/** Whether needHttps has shown its card. */
+	let httpsTold = false;
 	/** On an http page: tells the player, once per visit, that group chats and mailboxes need the https address. */
 	function needHttps() {
-		if (needHttps.told) {
+		if (httpsTold) {
 			return;
 		}
-		needHttps.told = true;
+		httpsTold = true;
 		card({
 			icon: logoIcon(),
 			title: '🔒 SlimeBeep',
@@ -1892,22 +2369,25 @@
 	/**
 	 * Opens a signed connection to `owner`'s mailbox on the relay. Mailboxes hold beeps for offline
 	 * SlimeBeep friends, addressed to the recipient's key start (peerKeys); see relay/src/index.js.
-	 * @param {number} owner  the mailbox's member number (yours to read, a friend's to leave a beep)
-	 * @param {function(object, WebSocket)} onMsg  gets every message from the relay
+	 * @param {number} owner the mailbox's member number (yours to read, a friend's to leave a beep)
+	 * @param {(p: RelayMessage, ws: WebSocket) => void} onMsg gets every message from the relay
 	 * @returns {Promise<WebSocket>} resolves once signed in
 	 */
 	function mailOpen(owner, onMsg) {
 		return new Promise((resolve, reject) => {
-			let ws = null,
-				done = false;
+			/** @type {WebSocket | null} */
+			let ws = null;
+			let done = false;
+			/** @param {string | null} err why it failed, or null once signed in */
 			const fin = (err) => {
 				if (done) {
 					return;
 				}
 				done = true;
 				clearTimeout(timer);
-				if (!err) {
-					return resolve(ws);
+				if (!err && ws) {
+					resolve(ws);
+					return;
 				}
 				try {
 					if (ws) {
@@ -1916,15 +2396,20 @@
 				} catch (e) {
 					/* gone */
 				}
-				reject(new Error(err));
+				reject(new Error(err || 'closed'));
 			};
 			const timer = setTimeout(() => fin('no answer'), 10000);
+			/** @type {WebSocket} */
+			let sock;
 			try {
-				ws = new WebSocket(`${relayUrl()}/ws?m=${owner}`);
+				sock = new WebSocket(`${relayUrl()}/ws?m=${owner}`);
 			} catch (e) {
-				return fin('could not connect');
+				fin('could not connect');
+				return;
 			}
-			ws.onmessage = async (e) => {
+			ws = sock;
+			sock.onmessage = async (e) => {
+				/** @type {RelayMessage | null} */
 				let p;
 				try {
 					p = JSON.parse(e.data);
@@ -1940,27 +2425,26 @@
 						const me = Player.MemberNumber;
 						const signed = `${p.nonce}|mbox:${owner}|${me}`;
 						const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, k.priv, new TextEncoder().encode(signed));
-						ws.send(JSON.stringify({ t: 'auth', member: me, name: myName(), pub: k.pub, sig: b64url(sig) }));
+						sock.send(JSON.stringify({ t: 'auth', member: me, name: myName(), pub: k.pub, sig: b64url(sig) }));
 					} catch (x) {
 						fin('could not sign in');
 					}
 					return;
 				}
 				if (p.t === 'error' && p.fatal) {
-					return fin(clean(p.why, 80) || 'refused');
+					fin(clean(p.why, 80) || 'refused');
+					return;
 				}
 				if (p.t === 'welcome' || p.t === 'mail') {
 					fin(null);
 				}
-				if (onMsg) {
-					try {
-						onMsg(p, ws);
-					} catch (x) {
-						warn(x, 'mail');
-					}
+				try {
+					onMsg(p, sock);
+				} catch (x) {
+					warn(x, 'mail');
 				}
 			};
-			ws.onclose = () => fin('closed');
+			sock.onclose = () => fin('closed');
 		});
 	}
 	/** True while mailWaiting runs. */
@@ -1968,6 +2452,7 @@
 	/**
 	 * Leaves `waiting` beeps for SlimeBeep friends in their mailboxes; delivered ones move to `hist` (📬).
 	 * A beep is retried after 10 minutes, or straight away with `now`.
+	 * @param {boolean} [now]
 	 */
 	async function mailWaiting(now = false) {
 		if (mailing || stopped || !loggedIn() || !waiting.length || !secure()) {
@@ -1984,6 +2469,7 @@
 				for (const w of mine) {
 					w.tried = Date.now();
 				}
+				/** @type {Map<string, boolean>} beep id -> left in the mailbox */
 				const answers = new Map();
 				let ws;
 				try {
@@ -2062,13 +2548,19 @@
 			mailBusy = false;
 		}
 	}
-	/** Adds mailbox beeps to `hist` and acks them. Beeps from non-friends or with a wrong sender key are dropped. */
+	/**
+	 * Adds mailbox beeps to `hist` and acks them. Beeps from non-friends or with a wrong sender key are dropped.
+	 * @param {MailItem[] | undefined} list
+	 * @param {WebSocket} sock
+	 */
 	function takeMail(list, sock) {
 		if (!Array.isArray(list) || !list.length) {
 			return;
 		}
-		const ids = [],
-			fresh = [];
+		/** @type {string[]} */
+		const ids = [];
+		/** @type {HistEntry[]} */
+		const fresh = [];
 		for (const m of list.slice(0, 100)) {
 			if (!m || typeof m.id !== 'string' || !/^[A-Z2-9]{10}$/.test(m.id)) {
 				continue;
@@ -2158,12 +2650,16 @@
 		} catch (e) {
 			/* this visit only */
 		}
-		return (myKey = { owner: me, priv: pair.privateKey, pub: { x: jwk.x, y: jwk.y }, kf: jwk.x.slice(0, 16) });
+		const x = jwk.x || '';
+		const y = jwk.y || '';
+		return (myKey = { owner: me, priv: pair.privateKey, pub: { x, y }, kf: x.slice(0, 16) });
 	}
 
 	/**
-	 * Opens (or returns) the relay connection for a group. `extra` sets fields of the connection record
-	 * (see `conns`), such as `create` or `invite` for the sign-in.
+	 * Opens (or returns) the relay connection for a group.
+	 * @param {string} gid
+	 * @param {Partial<Conn>} [extra] fields for the connection record, such as `create` or `invite` for the sign-in
+	 * @returns {Conn}
 	 */
 	function connectGroup(gid, extra = {}) {
 		if (stopped || !secure()) {
@@ -2181,15 +2677,20 @@
 				/* gone */
 			}
 		}
+		/** @type {Conn} */
 		const c = { ws: null, ready: false, retry: old ? old.retry || 0 : 0, queue: [], waiters: [], ...extra };
 		conns[gid] = c;
+		/** @type {WebSocket} */
+		let sock;
 		try {
-			c.ws = new WebSocket(`${relayUrl()}/ws?g=${gid}`);
+			sock = new WebSocket(`${relayUrl()}/ws?g=${gid}`);
 		} catch (e) {
 			warn(e, 'relay');
 			return c;
 		}
-		c.ws.onmessage = (e) => {
+		c.ws = sock;
+		sock.onmessage = (e) => {
+			/** @type {RelayMessage} */
 			let p;
 			try {
 				p = JSON.parse(e.data);
@@ -2198,7 +2699,7 @@
 			}
 			onRelay(gid, c, p).catch((x) => warn(x, 'relay'));
 		};
-		c.ws.onclose = () => {
+		sock.onclose = () => {
 			c.ready = false;
 			if (c.dead || conns[gid] !== c) {
 				return;
@@ -2221,7 +2722,11 @@
 		};
 		return c;
 	}
-	/** Sends to a group's relay connection, or queues it until signed in. */
+	/**
+	 * Sends to a group's relay connection, or queues it until signed in.
+	 * @param {string} gid
+	 * @param {object} x the message (JSON)
+	 */
 	function relaySend(gid, x) {
 		const c = conns[gid] || connectGroup(gid);
 		if (c.ready && c.ws && c.ws.readyState === 1) {
@@ -2231,18 +2736,27 @@
 		}
 	}
 
-	/** Handles one message from a group's relay connection (sign-in, roster, messages, pictures, invites, errors). */
+	/**
+	 * Handles one message from a group's relay connection (sign-in, roster, messages, pictures, invites, errors).
+	 * @param {string} gid
+	 * @param {Conn} c
+	 * @param {RelayMessage} p
+	 */
 	async function onRelay(gid, c, p) {
 		if (!p || typeof p !== 'object' || conns[gid] !== c) {
 			return;
 		}
 		const me = Player.MemberNumber;
+		const ws = c.ws;
+		if (!ws) {
+			return;
+		}
 		if (p.t === 'hello' && typeof p.nonce === 'string') {
 			const k = await getKey();
 			const signed = `${p.nonce}|${gid}|${me}`;
 			const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, k.priv, new TextEncoder().encode(signed));
 			const g = groups[gid];
-			c.ws.send(
+			ws.send(
 				JSON.stringify({
 					t: 'auth',
 					member: me,
@@ -2263,14 +2777,17 @@
 			const g = groups[gid];
 			const pic = myPfp();
 			if (g && (pic ? g.picv !== pic.v : g.picv)) {
-				c.ws.send(JSON.stringify({ t: 'profile', pic: pic ? pic.data : null }));
+				ws.send(JSON.stringify({ t: 'profile', pic: pic ? pic.data : null }));
 				g.picv = pic ? pic.v : undefined;
 				saveGC();
 			}
 			const done = c.onWelcome;
-			c.create = c.invite = c.onWelcome = c.onFail = null;
+			c.create = undefined;
+			c.invite = undefined;
+			c.onWelcome = undefined;
+			c.onFail = undefined;
 			for (const x of c.queue.splice(0)) {
-				c.ws.send(JSON.stringify(x));
+				ws.send(JSON.stringify(x));
 			}
 			if (done) {
 				done(gid);
@@ -2291,7 +2808,10 @@
 			return;
 		}
 		if (p.t === 'msg') {
-			return takeMsgs(gid, [p.m], true);
+			if (p.m) {
+				takeMsgs(gid, [p.m], true);
+			}
+			return;
 		}
 		if (p.t === 'history') {
 			return takeMsgs(gid, p.msgs, false);
@@ -2337,9 +2857,10 @@
 			c.dead = true;
 			if (c.onFail) {
 				c.onFail(why);
-				c.onFail = null;
+				c.onFail = undefined;
 			}
 			if (groups[gid] && (p.t === 'gone' || /not a member|no such group/.test(why))) {
+				/** @type {string | null} */
 				let note = `You're no longer in ${groups[gid].name}`;
 				if (why === 'left') {
 					note = null;
@@ -2351,14 +2872,19 @@
 			return;
 		}
 		if (p.t === 'error') {
-			if (/invite|full|already a member|member number/.test(why) && c.waiters.length) {
-				c.waiters.shift()(null, why);
+			const waiter = /invite|full|already a member|member number/.test(why) && c.waiters.shift();
+			if (waiter) {
+				waiter(null, why);
 			}
 			notify(`⚠ ${why}`);
 		}
 	}
 
-	/** Stores a group's roster from the relay (cleaned); ignored if you are not in it. */
+	/**
+	 * Stores a group's roster from the relay (cleaned); ignored if you are not in it.
+	 * @param {string} gid
+	 * @param {Partial<RelayRoster> | undefined} r
+	 */
 	function takeRoster(gid, r) {
 		if (!r || typeof r !== 'object' || !Array.isArray(r.members)) {
 			return;
@@ -2368,6 +2894,7 @@
 			.slice(0, LIMITS.members)
 			.filter((m) => m && isNum(m.n))
 			.map((m) => ({ n: m.n, name: clean(m.name, LIMITS.name) || `#${m.n}`, kf: typeof m.kf === 'string' ? m.kf.slice(0, 16) : '' }));
+		const rosterOnline = r.online;
 		if (!members.some((m) => m.n === Player.MemberNumber)) {
 			return;
 		}
@@ -2381,7 +2908,7 @@
 			admins: Array.isArray(r.admins) ? r.admins.filter(isNum).slice(0, LIMITS.admins) : [],
 			open: r.open === true,
 			members,
-			online: Array.isArray(r.online) ? r.online.filter(isNum).slice(0, LIMITS.members) : (old && old.online) || [],
+			online: Array.isArray(rosterOnline) ? rosterOnline.filter(isNum).slice(0, LIMITS.members) : (old && old.online) || [],
 			last: old ? old.last || 0 : 0,
 			picv: old ? old.picv : undefined,
 			pic: old ? old.pic : undefined,
@@ -2394,8 +2921,10 @@
 	}
 
 	/**
-	 * Adds group messages to `hist`. `isLive`: they just arrived (a card each); otherwise they are history
-	 * from the sign-in (one card for all).
+	 * Adds group messages to `hist`.
+	 * @param {string} gid
+	 * @param {RelayGroupMessage[] | undefined} msgs
+	 * @param {boolean} isLive they just arrived (a card each); otherwise history from the sign-in (one card for all)
 	 */
 	function takeMsgs(gid, msgs, isLive) {
 		const g = groups[gid];
@@ -2403,6 +2932,7 @@
 			return;
 		}
 		const me = Player.MemberNumber;
+		/** @type {HistEntry[]} */
 		const fresh = [];
 		for (const m of msgs.slice(-200)) {
 			if (!m || !Number.isInteger(m.id) || m.id <= 0) {
@@ -2418,6 +2948,7 @@
 			if (!text) {
 				continue;
 			}
+			/** @type {HistEntry} */
 			const h = {
 				k,
 				group: gid,
@@ -2470,7 +3001,11 @@
 		}
 	}
 
-	/** Forgets a group (left, removed or deleted): connection, state and messages; `note` shows as a card. */
+	/**
+	 * Forgets a group (left, removed or deleted): connection, state and messages.
+	 * @param {string} gid
+	 * @param {string | null} note shown as a card
+	 */
 	function dropGroup(gid, note) {
 		const g = groups[gid];
 		delete groups[gid];
@@ -2507,15 +3042,23 @@
 		}
 	}
 
+	/**
+	 * Sends a message to a group.
+	 * @param {string} id
+	 * @param {string} text
+	 */
 	const sendGroup = (id, text) => relaySend(id, { t: 'say', text });
 	/**
 	 * Makes a group on the relay and invites the `picked` friends.
-	 * @param {boolean} open  anyone in it can invite (else admins only)
-	 * @param {function(string)} done  gets the new group id once it exists
+	 * @param {string} name
+	 * @param {number[]} picked
+	 * @param {boolean} open anyone in it can invite (else admins only)
+	 * @param {(id: string) => void} done gets the new group id once it exists
 	 */
 	function createGroup(name, picked, open, done) {
 		if (!secure()) {
-			return needHttps();
+			needHttps();
+			return;
 		}
 		const id = newId();
 		connectGroup(id, {
@@ -2530,9 +3073,13 @@
 			},
 			onFail: (why) => notify(`⚠ Couldn't make the group${why ? `: ${why}` : ''}`),
 		});
-		return id;
 	}
-	/** Asks the relay for an invite code, for one member number (or anyone with `member` null); `cb(code, why)`. */
+	/**
+	 * Asks the relay for an invite code.
+	 * @param {string} id the group
+	 * @param {number | null} member the only member number it works for, or null for anyone
+	 * @param {(code: string | null, why?: string) => void} cb
+	 */
 	function requestInvite(id, member, cb) {
 		const c = conns[id] || connectGroup(id);
 		c.waiters.push(cb);
@@ -2541,6 +3088,8 @@
 	/**
 	 * Invites one member to a group with a code made for them alone. Friends get it delivered
 	 * (deliverInvite); for anyone else the code is returned to pass on.
+	 * @param {string} id
+	 * @param {number} n
 	 * @returns {Promise<{ ok: boolean, sent?: string, code?: string, why?: string }>}
 	 */
 	function inviteToGroup(id, n) {
@@ -2576,7 +3125,11 @@
 		});
 	}
 
-	/** Invites a friend to a group (a code for them, then deliverInvite). */
+	/**
+	 * Invites a friend to a group (a code for them, then deliverInvite).
+	 * @param {string} id
+	 * @param {number} n
+	 */
 	function inviteFriend(id, n) {
 		requestInvite(id, n, (code) => {
 			if (code) {
@@ -2588,13 +3141,16 @@
 	const PLAIN_MAX = 3;
 	/** Milliseconds between those beeps. */
 	const PLAIN_GAP = 3000;
-	/** Times of the invite beeps sent in the last minute. */
+	/** @type {number[]} Times of the invite beeps sent in the last minute. */
 	const plainSent = [];
 	/** When the last scheduled invite beep goes out. */
 	let plainAt = 0;
 	/**
 	 * Delivers a friend's invite code: a hidden invite card if they have SlimeBeep, else a plain beep
 	 * with the code (rate limited by PLAIN_MAX / PLAIN_GAP).
+	 * @param {number} n
+	 * @param {string} code
+	 * @param {string} name the group's name
 	 * @returns {'invite'|'beep'|'later'} 'later': over the limit, nothing sent
 	 */
 	function deliverInvite(n, code, name) {
@@ -2618,7 +3174,11 @@
 		);
 		return 'beep';
 	}
-	/** Disables pick-list boxes past PLAIN_MAX ticked friends without SlimeBeep (or all unticked ones when `full`). */
+	/**
+	 * Disables pick-list boxes past PLAIN_MAX ticked friends without SlimeBeep (or all unticked ones when `full`).
+	 * @param {HTMLInputElement[]} boxes
+	 * @param {boolean} full
+	 */
 	function capPlain(boxes, full) {
 		const plain = boxes.filter((b) => b.checked && !peers.has(Number(b.value))).length;
 		for (const b of boxes) {
@@ -2630,7 +3190,10 @@
 			b.title = capped ? `${PLAIN_MAX} friends without SlimeBeep at a time (they get a beep each)` : '';
 		}
 	}
-	/** Opens a group's chat (after joining it). */
+	/**
+	 * Opens a group's chat (after joining it).
+	 * @param {string} gid
+	 */
 	const openJoined = (gid) => {
 		tab = 'groups';
 		thread = `g:${gid}`;
@@ -2646,13 +3209,13 @@
 		if (!chatLog) {
 			return;
 		}
-		for (const el of chatLog.querySelectorAll('.ChatMessage:not([data-sb-seen])')) {
+		for (const el of $$(chatLog, '.ChatMessage:not([data-sb-seen])')) {
 			el.dataset.sbSeen = '1';
 			const codes = [...new Set(String(el.textContent || '').match(CODE_IN) || [])].slice(0, 3);
 			for (const code of codes) {
 				const b = document.createElement('button');
 				b.className = 'sb-bcjoin';
-				b.textContent = groups[CODE_RE.exec(code)[1]] ? '👥 Open in SlimeBeep' : '👥 Join';
+				b.textContent = groups[codeGroup(code)] ? '👥 Open in SlimeBeep' : '👥 Join';
 				b.title = `SlimeBeep group ${code}`;
 				b.addEventListener('click', (e) => {
 					e.preventDefault();
@@ -2663,7 +3226,11 @@
 			}
 		}
 	}
-	/** Joins a group with an invite code (SB-…); `done(gid)` runs once in, or at once if already a member. */
+	/**
+	 * Joins a group with an invite code (SB-…).
+	 * @param {string} raw the code as typed or pasted
+	 * @param {(gid: string) => void} [done] runs once in, or at once if already a member
+	 */
 	function joinCode(raw, done) {
 		const m = CODE_RE.exec(String(raw || '').trim());
 		if (!m) {
@@ -2696,17 +3263,26 @@
 			onFail: (why) => notify(`⚠ Couldn't join${why ? `: ${why}` : ''}`),
 		});
 	}
-	/** Leaves a group on the relay, then forgets it here. */
+	/**
+	 * Leaves a group on the relay, then forgets it here.
+	 * @param {string} id
+	 */
 	function leaveGroup(id) {
 		relaySend(id, { t: 'leave' });
 		setTimeout(() => dropGroup(id, null), 600);
 	}
-	/** Deletes a group for everyone (the relay accepts it from the owner only). */
+	/**
+	 * Deletes a group for everyone (the relay accepts it from the owner only).
+	 * @param {string} id
+	 */
 	function deleteGroup(id) {
 		relaySend(id, { t: 'disband' });
 		setTimeout(() => dropGroup(id, null), 600);
 	}
-	/** The 🚪 box: leave the group, or (owner) delete it. */
+	/**
+	 * The 🚪 box: leave the group, or (owner) delete it.
+	 * @param {string} id
+	 */
 	function askGroup(id) {
 		const g = groups[id];
 		if (!g || $('sb-ask')) {
@@ -2723,16 +3299,20 @@
 		const box = document.createElement('div');
 		box.id = 'sb-ask';
 		const canDelete = owner && others > 0;
-		box.innerHTML = html`<div class="sb-crop-card">
+		setHtml(
+			box,
+			html`<div class="sb-crop-card">
 			<b>${g.name}</b>
 			<span class="sb-hint" style="text-align:center">${leaveHint}</span>
 			${canDelete && html`<div class="sb-warn">Delete removes the group and all its messages <u>for everyone</u>. It can't be undone.</div>`}
 			<div class="sb-crop-btns" style="flex-wrap:wrap;justify-content:center"><button class="sb-pill" data-act="keep">Cancel</button><button class="sb-go" data-act="leave">🚪 Leave</button>${canDelete && html`<button class="sb-go sb-danger" data-act="delete">🗑 Delete group</button>`}</div>
-		</div>`;
+		</div>`,
+		);
 		const close = () => {
 			box.remove();
 			document.removeEventListener('keydown', onKey, true);
 		};
+		/** @param {KeyboardEvent} e */
 		const onKey = (e) => {
 			if (e.key === 'Escape') {
 				e.stopPropagation();
@@ -2740,8 +3320,8 @@
 			}
 		};
 		box.addEventListener('click', (e) => {
-			const act = e.target.dataset && e.target.dataset.act;
-			if (act === 'keep' || e.target === box) {
+			const act = targetOf(e).dataset.act;
+			if (act === 'keep' || targetOf(e) === box) {
 				return close();
 			}
 			if (act !== 'leave' && act !== 'delete') {
@@ -2799,7 +3379,10 @@
 			}
 		}
 	}
-	/** ✓ if a group member's key matches the one their own SlimeBeep sent you, ⚠ if not, '' if unknown. */
+	/**
+	 * ✓ if a group member's key matches the one their own SlimeBeep sent you, ⚠ if not, nothing if unknown.
+	 * @param {GroupMember} m
+	 */
 	function keyMark(m) {
 		if (m.n === Player.MemberNumber || !peerKeys[m.n] || !m.kf) {
 			return '';
@@ -2809,9 +3392,13 @@
 			: html` <span title="Not the key their own SlimeBeep sent you: this may not really be them">⚠</span>`;
 	}
 
-	/** Hidden beeps waiting to go out, sent 250 ms apart by drain: [member number, message]. */
+	/** @type {[number, string][]} Hidden beeps waiting to go out, sent 250 ms apart by drain: [member number, message]. */
 	const outbox = [];
-	/** Queues a hidden beep to a friend; every one also carries your picture version (`pv`) and key start (`kf`). */
+	/**
+	 * Queues a hidden beep to a friend; every one also carries your picture version (`pv`) and key start (`kf`).
+	 * @param {number} n
+	 * @param {HiddenPayload} payload
+	 */
 	function sendHidden(n, payload) {
 		if (stopped) {
 			return;
@@ -2852,6 +3439,7 @@
 	 * A beep from the server. If the game's beep log has not listed it 1.5 s later (another add-on took
 	 * it, or its BeepType kept it out), it is added to `hist` here. Leash beeps and add-on data are skipped.
 	 */
+	/** @param {ServerBeep} d */
 	function catchBeep(d) {
 		if (!d || typeof d.MemberNumber !== 'number' || typeof d.MemberName !== 'string') {
 			return;
@@ -2934,7 +3522,10 @@
 
 	/** Whether the panel is open. */
 	const isOpen = () => $('sb-panel').style.display === 'flex';
-	/** Opens or closes the panel. */
+	/**
+	 * Opens or closes the panel.
+	 * @param {boolean} on
+	 */
 	function setOpen(on) {
 		if (!on) {
 			for (const id of ['sb-crop', 'sb-zoom', 'sb-ask', 'sb-emoji']) {
@@ -2983,22 +3574,28 @@
 		placeCards();
 	}
 
+	/** Ticks since start (theme matching runs every 5th). */
+	let tickCount = 0;
+	/** Whether a tick error was already logged (only the first one is). */
+	let tickWarned = false;
+	/** When the friend list was last asked for while beeps wait. */
+	let friendsAskedAt = 0;
 	/** Runs every second: listeners, relay, update note, new beeps (badge, sound, cards, redraw). */
 	function tick() {
 		try {
 			updateNote();
 			gameCheck();
-			if (waiting.length && loggedIn() && Date.now() - (tick.asked || 0) > 60000) {
-				tick.asked = Date.now();
+			if (waiting.length && loggedIn() && Date.now() - (friendsAskedAt || 0) > 60000) {
+				friendsAskedAt = Date.now();
 				askFriends();
 			}
-			if (!tick.n || ++tick.n % 5 === 0) {
+			if (!tickCount || ++tickCount % 5 === 0) {
 				applyThemed();
 			}
 			if (loggedIn()) {
 				joinButtonsInChat();
 			}
-			tick.n = tick.n || 1;
+			tickCount = tickCount || 1;
 			if (loggedIn()) {
 				listen();
 			}
@@ -3026,14 +3623,17 @@
 				render(true);
 			}
 		} catch (e) {
-			if (!tick.warned) {
-				tick.warned = true;
+			if (!tickWarned) {
+				tickWarned = true;
 				warn(e);
 			}
 		}
 	}
 
-	/** Shows a new message: a card (unless that chat is open) and, with opts.desktop, a system notification. */
+	/**
+	 * Shows a new message: a card (unless that chat is open) and, with opts.desktop, a system notification.
+	 * @param {HistEntry} h
+	 */
 	function announce(h) {
 		if (isOpen() && thread === h.MemberNumber && !document.hidden) {
 			return;
@@ -3046,7 +3646,7 @@
 		}
 		const open = () => {
 			thread = g ? `g:${g.id}` : h.MemberNumber;
-			renderThread.pin = undefined;
+			threadPin = undefined;
 			if (!isOpen()) {
 				setOpen(true);
 			} else {
@@ -3078,7 +3678,21 @@
 		}
 	}
 
-	/** Adds a card to the stack (at most 4); it closes after `ms`, or stays with 0. */
+	/**
+	 * A card by the toggle.
+	 * @typedef {object} CardOptions
+	 * @property {SafeHtml} icon
+	 * @property {string} title
+	 * @property {string} text
+	 * @property {string} [sub] a small line under the text
+	 * @property {() => void} [onClick]
+	 * @property {number} [ms] how long it stays; 0 until closed
+	 * @property {string} [cls] an extra class ('news')
+	 */
+	/**
+	 * Adds a card to the stack (at most 4).
+	 * @param {CardOptions} options
+	 */
 	function card({ icon, title, text, sub = '', onClick, ms = 7000, cls = '' }) {
 		if (stopped) {
 			return;
@@ -3086,7 +3700,10 @@
 		const box = $('sb-cards');
 		const c = document.createElement('div');
 		c.className = `sb-card ${cls}`;
-		c.innerHTML = html`${icon}<span class="sb-main"><b>${title}</b><span class="sb-txt">${text}</span>${sub && html`<small>${sub}</small>`}</span><button class="sb-x" title="Dismiss">✕</button>`;
+		setHtml(
+			c,
+			html`${icon}<span class="sb-main"><b>${title}</b><span class="sb-txt">${text}</span>${sub && html`<small>${sub}</small>`}</span><button class="sb-x" title="Dismiss">✕</button>`,
+		);
 		const close = () => {
 			c.classList.add('out');
 			setTimeout(() => {
@@ -3094,7 +3711,7 @@
 				placeCards();
 			}, 250);
 		};
-		c.querySelector('.sb-x').addEventListener('click', (e) => {
+		/** @type {HTMLElement} */ (c.querySelector('.sb-x')).addEventListener('click', (e) => {
 			e.stopPropagation();
 			close();
 		});
@@ -3105,8 +3722,8 @@
 			}
 		});
 		box.prepend(c);
-		while (box.children.length > 4) {
-			box.lastChild.remove();
+		while (box.lastElementChild && box.children.length > 4) {
+			box.lastElementChild.remove();
 		}
 		placeCards();
 		if (ms) {
@@ -3138,31 +3755,47 @@
 		box.style.top = `${Math.max(8, Math.min(innerHeight - h - 8, top))}px`;
 	}
 
-	/** news.json items: [{ id, title, text, date }]. */
+	/**
+	 * An item of news.json.
+	 * @typedef {object} NewsItem
+	 * @property {string} id a version, for its update note, or any id
+	 * @property {string} [title]
+	 * @property {string} text
+	 * @property {string} [date]
+	 */
+	/** @type {NewsItem[]} The items of news.json. */
 	let newsItems = [];
 
+	/** When the chat log appeared (0: not in a room). */
+	let noteRoomSince = 0;
+	/** Update notes posted so far without showing up in the log. */
+	let noteTries = 0;
+	/** True while a posted note is being checked. */
+	let notePending = false;
+	/** When the last note was posted. */
+	let noteLastTry = 0;
 	/**
 	 * After an update or first install, posts a local note (only you see it) in the room chat with the
 	 * version and its news.json item. Waits until the chat log has been up 3 s and the news has loaded,
 	 * and retries up to 5 times until the note is really in the log.
 	 */
 	function updateNote() {
-		if (opts.lastVersion === VERSION || !loggedIn() || typeof ChatRoomSendLocal !== 'function' || updateNote.pending) {
+		if (opts.lastVersion === VERSION || !loggedIn() || typeof ChatRoomSendLocal !== 'function' || notePending) {
 			return;
 		}
 		const chatLog = document.getElementById('TextAreaChatLog');
 		const inRoom = !!chatLog && (typeof ServerPlayerIsInChatRoom === 'function' ? ServerPlayerIsInChatRoom() : !!myRoom());
 		if (!inRoom) {
-			updateNote.since = 0;
+			noteRoomSince = 0;
 			return;
 		}
-		if (!updateNote.since) {
-			updateNote.since = Date.now();
+		if (!noteRoomSince) {
+			noteRoomSince = Date.now();
 		}
-		if (Date.now() - updateNote.since < 3000 || (!newsLoaded && Date.now() - started < 15000)) {
+		if (Date.now() - noteRoomSince < 3000 || (!newsLoaded && Date.now() - started < 15000)) {
 			return;
 		}
-		if (Date.now() - (updateNote.last || 0) < 10000) {
+		if (Date.now() - (noteLastTry || 0) < 10000) {
 			return;
 		}
 		const item = newsItems.find((i) => i.id === VERSION);
@@ -3172,8 +3805,8 @@
 		if (item) {
 			body = item.text;
 		}
-		updateNote.pending = true;
-		updateNote.last = Date.now();
+		notePending = true;
+		noteLastTry = Date.now();
 		const iconStyle = `width:1.3em;height:1.3em;vertical-align:middle;border-radius:50%;margin-right:4px${opts.night ? ';filter:hue-rotate(-105deg)' : ''}`;
 		ChatRoomSendLocal(
 			String(
@@ -3181,21 +3814,23 @@
 			),
 		);
 		setTimeout(() => {
-			updateNote.pending = false;
+			notePending = false;
 			const shown = !!document.querySelector(`#TextAreaChatLog .sb-update-note[data-v="${CSS.escape(VERSION)}"]`);
-			updateNote.tries = (updateNote.tries || 0) + 1;
-			if (shown || updateNote.tries >= 5) {
+			noteTries = (noteTries || 0) + 1;
+			if (shown || noteTries >= 5) {
 				opts.lastVersion = VERSION;
 				saveOpts();
 			}
 		}, 1500);
 	}
+	/** Whether gameCheck has run. */
+	let gameChecked = false;
 	/** Once per load: a card listing what won't work if game globals in NEEDS are missing (once per version and set). */
 	function gameCheck() {
-		if (gameCheck.done || !loggedIn()) {
+		if (gameChecked || !loggedIn()) {
 			return;
 		}
-		gameCheck.done = true;
+		gameChecked = true;
 		const gone = missing();
 		if (!gone.length) {
 			return;
@@ -3229,10 +3864,8 @@
 				if (!valid.length) {
 					return;
 				}
-				if (!Array.isArray(opts.seenNews)) {
-					opts.seenNews = valid.slice(0, -1).map((i) => i.id);
-				}
-				for (const i of valid.filter((x) => !opts.seenNews.includes(x.id)).slice(-3)) {
+				const seen = Array.isArray(opts.seenNews) ? opts.seenNews : valid.slice(0, -1).map((i) => i.id);
+				for (const i of valid.filter((x) => !seen.includes(x.id)).slice(-3)) {
 					card({
 						icon: logoIcon(),
 						title: i.title || '📢 SlimeBeep news',
@@ -3253,17 +3886,30 @@
 			});
 	}
 
-	/** The opts.muted key of a message's chat. */
+	/**
+	 * The opts.muted key of a message's chat.
+	 * @param {HistEntry} h
+	 */
 	const muteKey = (h) => (h.group ? `g:${h.group}` : `n:${h.MemberNumber}`);
-	/** Whether a chat is muted (no sound; cards and unread counts still come). */
+	/**
+	 * Whether a chat is muted (no sound; cards and unread counts still come).
+	 * @param {string} key
+	 */
 	const isMuted = (key) => Array.isArray(opts.muted) && opts.muted.includes(key);
-	/** Chimes for new messages unless all of them are from muted chats. */
+	/**
+	 * Chimes for new messages unless all of them are from muted chats.
+	 * @param {HistEntry[]} list
+	 */
 	const ding = (list) => {
 		if (opts.sound && list.some((h) => !isMuted(muteKey(h)))) {
 			chime();
 		}
 	};
-	/** Mutes or unmutes a chat. */
+	/**
+	 * Mutes or unmutes a chat.
+	 * @param {string} key a muteKey
+	 * @param {string} name for the toast
+	 */
 	function toggleMute(key, name) {
 		const on = !isMuted(key);
 		setOpt('muted', [...(Array.isArray(opts.muted) ? opts.muted : []).filter((k) => k !== key), ...(on ? [key] : [])].slice(-500));
@@ -3272,13 +3918,18 @@
 			render(true);
 		}
 	}
-	/** The 🔔/🔕 button for a chat header. */
+	/**
+	 * The 🔔/🔕 button for a chat header.
+	 * @param {string} key
+	 */
 	const muteButton = (key) =>
 		html`<button id="sb-mute" title="${isMuted(key) ? 'Muted: no sound for this chat. Click for sound again' : 'Mute: no sound for this chat'}">${isMuted(key) ? '🔕' : '🔔'}</button>`;
+	/** @type {AudioContext | null} Made on the first chime. */
+	let audioCtx = null;
 	/** Plays a short two-note sound. */
 	function chime() {
 		try {
-			const ac = chime.ac || (chime.ac = new AudioContext());
+			const ac = audioCtx || (audioCtx = new AudioContext());
 			for (const [f, at] of [
 				[880, 0],
 				[1320, 0.09],
@@ -3299,14 +3950,18 @@
 		}
 	}
 
-	/** One-to-one chats from `hist`, newest first: [{ n, name, last (newest entry), unread (count) }]. */
+	/**
+	 * One-to-one chats from `hist`, newest first.
+	 * @returns {{ n: number, name: string, last: HistEntry, unread: number }[]}
+	 */
 	function chats() {
+		/** @type {Map<number, { n: number, name: string | null, last: HistEntry, unread: number }>} */
 		const by = new Map();
 		for (const b of log()) {
 			if (b.group || isReaction(b)) {
 				continue;
 			}
-			const c = by.get(b.MemberNumber) || { n: b.MemberNumber, name: null, last: null, unread: 0 };
+			const c = by.get(b.MemberNumber) || { n: b.MemberNumber, name: null, last: b, unread: 0 };
 			if (!b.Sent) {
 				c.name = b.MemberName;
 			}
@@ -3316,12 +3971,13 @@
 			}
 			by.set(b.MemberNumber, c);
 		}
-		return [...by.values()]
-			.map((c) => ({ ...c, name: c.name || nameOf(c.n) }))
-			.sort((a, b) => new Date(b.last.Time) - new Date(a.last.Time));
+		return [...by.values()].map((c) => ({ ...c, name: c.name || nameOf(c.n) })).sort((a, b) => b.last.Time - a.last.Time);
 	}
 
-	/** Where an online friend is, for the lists. */
+	/**
+	 * Where an online friend is, for the lists.
+	 * @param {Friend | undefined} f
+	 */
 	const where = (f) => {
 		if (!f) {
 			return 'Offline';
@@ -3332,7 +3988,11 @@
 		return f.Private ? '🔒 Private room' : '🏠 Not in a room';
 	};
 
-	/** Redraws the panel for the current `tab` and `thread`; `keepScroll` keeps an open chat's scroll position. */
+	/**
+	 * Redraws the panel for the current `tab` and `thread`.
+	 * @param {boolean} [keepScroll] keep the scroll position (a redraw for new data, not navigation)
+	 * @returns {void}
+	 */
 	function render(keepScroll) {
 		if (stopped) {
 			return;
@@ -3346,15 +4006,18 @@
 		}, 0);
 		showMe();
 		if (!loggedIn()) {
-			view.innerHTML = html`<div class="sb-empty">💤 Log in and SlimeBeep wakes up.</div>`;
+			setHtml(view, html`<div class="sb-empty">💤 Log in and SlimeBeep wakes up.</div>`);
 			return;
 		}
 		if (thread !== null) {
-			return renderThread(keepScroll);
+			renderThread(keepScroll);
+			return;
 		}
 		const unreadChats = log().filter((h) => !h.group && unread(h)).length;
 		const unreadGroups = log().filter((h) => h.group && unread(h)).length;
+		/** @param {string} t */
 		const on = (t) => (tab === t || (t === 'groups' && tab === 'newgc') ? 'on' : '');
+		/** @param {number} n */
 		const count = (n) => n > 0 && html`<i>${n}</i>`;
 		const tabs = html`<div class="sb-tabs">
 			<button data-tab="chats" class="${on('chats')}" title="Chats">💬 Chats${count(unreadChats)}</button>
@@ -3366,15 +4029,15 @@
 		const body = $('sb-body');
 		const scroll = keepScroll && body ? body.scrollTop : 0;
 		if (tab === 'options') {
-			view.innerHTML = html`${tabs}<div class="sb-body" id="sb-body">${optionsHtml()}</div>`;
+			setHtml(view, html`${tabs}<div class="sb-body" id="sb-body">${optionsHtml()}</div>`);
 		} else if (tab === 'newgc') {
-			view.innerHTML = html`${tabs}<div class="sb-body sb-group" id="sb-body">${newGroupHtml()}</div>`;
+			setHtml(view, html`${tabs}<div class="sb-body sb-group" id="sb-body">${newGroupHtml()}</div>`);
 		} else if (tab === 'wave') {
-			view.innerHTML = html`${tabs}<div class="sb-body sb-group" id="sb-body">${groupHtml()}</div>`;
+			setHtml(view, html`${tabs}<div class="sb-body sb-group" id="sb-body">${groupHtml()}</div>`);
 		} else if (tab === 'bug') {
-			view.innerHTML = html`${tabs}<div class="sb-body sb-group" id="sb-body">${bugHtml()}</div>`;
+			setHtml(view, html`${tabs}<div class="sb-body sb-group" id="sb-body">${bugHtml()}</div>`);
 		} else if (tab === 'invitefor') {
-			view.innerHTML = html`${tabs}<div class="sb-body sb-group" id="sb-body">${inviteForHtml()}</div>`;
+			setHtml(view, html`${tabs}<div class="sb-body sb-group" id="sb-body">${inviteForHtml()}</div>`);
 		} else {
 			const q = search.toLowerCase();
 			const list = {
@@ -3395,16 +4058,19 @@
 			const rows = list.rows(q);
 			const what = list.what;
 			const empty = q ? list.none : list.empty;
-			view.innerHTML = html`${tabs}<div class="sb-body" id="sb-body">
+			setHtml(
+				view,
+				html`${tabs}<div class="sb-body" id="sb-body">
 				${tab === 'groups' && groupsTop()}
 				<input class="sb-search" id="sb-search" placeholder="🔍 Search ${what}…" value="${search}">
 				${rows.length ? rows : html`<div class="sb-empty">${empty}</div>`}
-			</div>`;
-			const s = $('sb-search');
+			</div>`,
+			);
+			const s = $input('sb-search');
 			s.addEventListener('input', () => {
 				search = s.value;
 				render();
-				const again = $('sb-search');
+				const again = $input('sb-search');
 				again.focus();
 				again.setSelectionRange(search.length, search.length);
 			});
@@ -3412,18 +4078,18 @@
 		if (keepScroll) {
 			$('sb-body').scrollTop = scroll;
 		}
-		for (const b of view.querySelectorAll('[data-tab]')) {
+		for (const b of $$(view, '[data-tab]')) {
 			b.addEventListener('click', () => {
-				tab = b.dataset.tab;
+				tab = b.dataset.tab || 'chats';
 				search = '';
 				render();
 			});
 		}
-		for (const r of view.querySelectorAll('[data-open]')) {
+		for (const r of $$(view, '[data-open]')) {
 			r.addEventListener('click', () => {
-				const v = r.dataset.open;
+				const v = r.dataset.open || '';
 				thread = v.startsWith('g:') ? v : Number(v);
-				renderThread.pin = undefined;
+				threadPin = undefined;
 				render();
 			});
 		}
@@ -3453,7 +4119,10 @@
 		}
 	}
 
-	/** Rows of the 💬 Chats tab, filtered by search `q`. */
+	/**
+	 * Rows of the 💬 Chats tab, filtered by search `q`.
+	 * @param {string} q
+	 */
 	function chatRows(q) {
 		const rows = chats()
 			.filter((c) => !q || c.name.toLowerCase().includes(q) || String(c.n).includes(q))
@@ -3471,7 +4140,10 @@
 		return rows.sort((a, b) => b.time - a.time).map((r) => r.html);
 	}
 
-	/** Rows of the 👥 Groups tab, newest message first, filtered by `q`. */
+	/**
+	 * Rows of the 👥 Groups tab, newest message first, filtered by `q`.
+	 * @param {string} q
+	 */
 	function groupRows(q) {
 		const rows = [];
 		for (const g of Object.values(groups)) {
@@ -3491,7 +4163,10 @@
 		}
 		return rows.sort((a, b) => b.time - a.time).map((r) => r.html);
 	}
-	/** The preview line of a group: "Name: text" of its last message. */
+	/**
+	 * The preview line of a group: "Name: text" of its last message.
+	 * @param {HistEntry | undefined} last
+	 */
 	function lastLine(last) {
 		if (!last) {
 			return 'No messages yet';
@@ -3502,7 +4177,10 @@
 		return `${last.Sent ? 'You' : last.MemberName}: ${textOf(last)}`;
 	}
 
-	/** Checkbox list of online friends (SlimeBeep users first) for inviting, without the member numbers in `exclude`. */
+	/**
+	 * Checkbox list of online friends (SlimeBeep users first) for inviting.
+	 * @param {number[]} [exclude] member numbers left out
+	 */
 	function pickList(exclude = []) {
 		const rows = friends
 			.filter((f) => !exclude.includes(f.MemberNumber))
@@ -3534,7 +4212,7 @@
 	/** HTML for the top of 👥 Groups: pending invitations and the join-by-code box. */
 	function groupsTop() {
 		const inv = invitations
-			.filter((i) => !groups[CODE_RE.exec(i.code)[1]])
+			.filter((i) => !groups[codeGroup(i.code)])
 			.map(
 				(i, n) => html`<div class="sb-row" style="cursor:default">${avatar(i.from, i.fromName)}
 			<div class="sb-main"><div class="sb-name">${i.name}</div><div class="sb-sub">Invite from ${i.fromName}</div></div>
@@ -3549,8 +4227,8 @@
 	}
 	/** Wires groupsTop's buttons. */
 	function wireGroupsTop() {
-		const list = invitations.filter((i) => !groups[CODE_RE.exec(i.code)[1]]);
-		for (const b of $('sb-view').querySelectorAll('[data-join]')) {
+		const list = invitations.filter((i) => !groups[codeGroup(i.code)]);
+		for (const b of $$($('sb-view'), '[data-join]')) {
 			b.addEventListener('click', () => {
 				const i = list[Number(b.dataset.join)];
 				if (i) {
@@ -3561,7 +4239,7 @@
 				}
 			});
 		}
-		for (const b of $('sb-view').querySelectorAll('[data-dismiss]')) {
+		for (const b of $$($('sb-view'), '[data-dismiss]')) {
 			b.addEventListener('click', () => {
 				const i = list[Number(b.dataset.dismiss)];
 				invitations = invitations.filter((x) => x !== i);
@@ -3570,7 +4248,7 @@
 			});
 		}
 		$('sb-join').addEventListener('click', () =>
-			joinCode($('sb-join-code').value, (gid) => {
+			joinCode($input('sb-join-code').value, (gid) => {
 				thread = `g:${gid}`;
 				render();
 			}),
@@ -3595,7 +4273,7 @@
 
 	/** Wires the new group form. */
 	function wireNewGroup() {
-		const boxes = () => [...$('sb-body').querySelectorAll('label input[type=checkbox][value]:not(:disabled)')];
+		const boxes = () => $$inputs($('sb-body'), 'label input[type=checkbox][value]:not(:disabled)');
 		const update = () => {
 			const n = boxes().filter((b) => b.checked).length;
 			$('sb-gc-count').textContent = n ? `${n} to invite` : 'Just you for now';
@@ -3613,10 +4291,10 @@
 			const picked = boxes()
 				.filter((b) => b.checked)
 				.map((b) => Number(b.value));
-			const name = clean($('sb-gc-name').value, LIMITS.name) || 'Group chat';
-			$('sb-gc-make').disabled = true;
+			const name = clean($input('sb-gc-name').value, LIMITS.name) || 'Group chat';
+			$input('sb-gc-make').disabled = true;
 			notify('👥 Making the group…');
-			createGroup(name, picked, $('sb-gc-open').checked, (id) => {
+			createGroup(name, picked, $input('sb-gc-open').checked, (id) => {
 				notify(`👥 ${name} created`);
 				tab = 'groups';
 				thread = `g:${id}`;
@@ -3624,23 +4302,26 @@
 			});
 			setTimeout(() => {
 				if ($('sb-gc-make')) {
-					$('sb-gc-make').disabled = false;
+					$input('sb-gc-make').disabled = false;
 				}
 			}, 8000);
 		});
 		update();
 	}
 
-	/** Shows the last invite code made on the members page (renderMembers.code). */
+	/** Shows the last invite code made on the members page (lastCode). */
 	function showCode() {
 		const out = $('sb-gm-out');
-		const k = renderMembers.code;
-		if (!out || !k || !renderMembers.open || k.id !== renderMembers.open) {
+		const k = lastCode;
+		if (!out || !k || !membersOpen || k.id !== membersOpen) {
 			return;
 		}
-		out.innerHTML = html`<div class="sb-row" style="cursor:default;display:block"><code style="font-size:13px;user-select:all">${k.code}</code>
+		setHtml(
+			out,
+			html`<div class="sb-row" style="cursor:default;display:block"><code style="font-size:13px;user-select:all">${k.code}</code>
 			<div class="sb-hint">${k.forWho ? `Only #${k.forWho} can use it, once.` : 'Anyone with it can join, for 7 days (20 people at most).'} They paste it in 👥 Groups.</div>
-			<button class="sb-pill" id="sb-gm-copy" style="margin-top:4px">📋 Copy</button></div>`;
+			<button class="sb-pill" id="sb-gm-copy" style="margin-top:4px">📋 Copy</button></div>`,
+		);
 		$('sb-gm-copy').addEventListener('click', async () => {
 			try {
 				await navigator.clipboard.writeText(k.code);
@@ -3651,7 +4332,14 @@
 		});
 	}
 
-	/** A group's members page: roles, name, picture, invite settings, invite codes and friend invites. */
+	/** @type {string | null} Group whose members page is open. */
+	let membersOpen = null;
+	/** @type {{ id: string, code: string, forWho: number | null } | null} The last invite code made on a members page. */
+	let lastCode = null;
+	/**
+	 * A group's members page: roles, name, picture, invite settings, invite codes and friend invites.
+	 * @param {string} id
+	 */
 	function renderMembers(id) {
 		const g = groups[id];
 		const me = Player.MemberNumber;
@@ -3659,13 +4347,15 @@
 		const owner = g.owner === me;
 		const view = $('sb-view');
 		// Typed text and focus survive the redraw.
+		/** @type {Record<string, string>} */
 		const typing = {};
 		for (const k of ['sb-gm-name', 'sb-gm-for']) {
 			if ($(k) && $(k).dataset.touched) {
-				typing[k] = $(k).value;
+				typing[k] = $input(k).value;
 			}
 		}
 		const focused = document.activeElement && document.activeElement.id;
+		/** @param {number} n */
 		const on = (n) => n === me || (g.online || []).includes(n);
 		const rows = g.members
 			.slice()
@@ -3713,16 +4403,19 @@
 				<div id="sb-gm-out"></div>
 				<div class="sb-line"><b>Invite friends</b><button class="sb-pill" id="sb-gc-find">🔍 Find 🫧</button></div>${pickList(memberNums)}
 				<div class="sb-line" style="position:sticky;bottom:-10px;background:#fff7fb;padding:6px 0"><span></span><button class="sb-go" id="sb-gm-add" disabled>Send invites</button></div>`;
-		view.innerHTML = html`
+		setHtml(
+			view,
+			html`
 			<div class="sb-thead"><button id="sb-back" title="Back to the chat">‹</button>${groupAv(g)}
 				<div class="sb-main"><div class="sb-name">${g.name}</div><div class="sb-sub">${g.members.length} / ${LIMITS.members} members</div></div></div>
 			<div class="sb-body sb-group" id="sb-body">
 				${settings}
 				${rows}
 				${inviting}
-			</div>`;
+			</div>`,
+		);
 		for (const k of ['sb-gm-name', 'sb-gm-for']) {
-			const el = $(k);
+			const el = $input(k);
 			if (!el) {
 				continue;
 			}
@@ -3738,13 +4431,14 @@
 			}
 		}
 		$('sb-back').addEventListener('click', () => {
-			renderMembers.open = null;
+			membersOpen = null;
 			render();
 		});
+		/** @param {object} x a message for the relay */
 		const act = (x) => {
 			relaySend(id, x);
 		};
-		for (const b of view.querySelectorAll('[data-act]')) {
+		for (const b of $$(view, '[data-act]')) {
 			b.addEventListener('click', () => {
 				const n = Number(b.dataset.n);
 				if (b.dataset.act === 'up') {
@@ -3763,14 +4457,14 @@
 		}
 		if ($('sb-gm-rename')) {
 			$('sb-gm-rename').addEventListener('click', () => {
-				const name = clean($('sb-gm-name').value, LIMITS.name);
+				const name = clean($input('sb-gm-name').value, LIMITS.name);
 				if (name && name !== g.name) {
 					act({ t: 'rename', name });
 				}
 			});
 		}
 		if ($('sb-gm-open')) {
-			$('sb-gm-open').addEventListener('change', (e) => act({ t: 'open', on: e.target.checked }));
+			$('sb-gm-open').addEventListener('change', (e) => act({ t: 'open', on: inputOf(e).checked }));
 		}
 		if ($('sb-gm-pic')) {
 			$('sb-gm-pic').addEventListener('click', () =>
@@ -3786,23 +4480,23 @@
 		if (invite) {
 			wireFind();
 			$('sb-gm-code').addEventListener('click', () => {
-				const want = $('sb-gm-for') ? Number($('sb-gm-for').value.replace(/\D/g, '')) : 0;
+				const want = $input('sb-gm-for') ? Number($input('sb-gm-for').value.replace(/\D/g, '')) : 0;
 				const forWho = isNum(want) ? want : null;
 				requestInvite(id, forWho, (code) => {
 					if (!code) {
 						return;
 					}
 					// Kept across redraws.
-					renderMembers.code = { id, code, forWho };
+					lastCode = { id, code, forWho };
 					showCode();
 				});
 			});
 			showCode();
-			const boxes = () => [...$('sb-body').querySelectorAll('label input[type=checkbox][value]:not(:disabled)')];
+			const boxes = () => $$inputs($('sb-body'), 'label input[type=checkbox][value]:not(:disabled)');
 			const room = LIMITS.members - g.members.length;
 			const update = () => {
 				const n = boxes().filter((b) => b.checked).length;
-				$('sb-gm-add').disabled = !n;
+				$input('sb-gm-add').disabled = !n;
 				capPlain(boxes(), n >= room);
 			};
 			for (const b of boxes()) {
@@ -3825,16 +4519,20 @@
 		}
 	}
 
-	/** Draws an open group chat. */
+	/**
+	 * Draws an open group chat.
+	 * @param {boolean} [keepScroll]
+	 * @returns {void}
+	 */
 	function renderGroupThread(keepScroll) {
 		const mayFocus = wantsFocus();
-		const id = thread.slice(2);
+		const id = String(thread).slice(2);
 		const g = groups[id];
 		if (!g) {
 			thread = null;
 			return render();
 		}
-		if (renderMembers.open === id) {
+		if (membersOpen === id) {
 			return renderMembers(id);
 		}
 		const view = $('sb-view');
@@ -3844,11 +4542,12 @@
 		}
 		const old = $('sb-msgs');
 		const atBottom = !old || old.scrollHeight - old.scrollTop - old.clientHeight < 40;
-		const draft = $('sb-text') ? $('sb-text').value : '';
+		const draft = $input('sb-text') ? $input('sb-text').value : '';
 		const names = g.members.filter((m) => m.n !== Player.MemberNumber).map((m) => memberName(g, m.n));
 		const online = conns[id] && conns[id].ready;
 		const here = new Set([...(g.online || []), Player.MemberNumber]).size;
 		const status = online ? html`<span class="sb-on"></span>${here} online · ` : '⏳ connecting… · ';
+		/** @param {HistEntry} h */
 		const bubble = (h) => {
 			if (h.sys) {
 				return html`<div class="sb-sys">${textOf(h)}</div>`;
@@ -3856,7 +4555,9 @@
 			const from = !h.Sent && html`<span class="sb-from">${memberName(g, h.MemberNumber) || h.MemberName}</span>`;
 			return html`<div class="sb-b ${h.Sent ? 'me' : 'them'}${isAction(textOf(h)) && ' sb-act'}">${from}${rich(textOf(h))}<em>${timeOf(h.Time)}</em></div>`;
 		};
-		view.innerHTML = html`
+		setHtml(
+			view,
+			html`
 			<div class="sb-thead"><button id="sb-back" title="Back">‹</button>${groupAv(g)}
 				<div class="sb-main"><div class="sb-name">${g.name}</div>
 				<div class="sb-sub" title="${names.join(', ')}">${status}${g.members.length} members: You${names.length > 0 && `, ${names.join(', ')}`}</div></div>
@@ -3866,19 +4567,20 @@
 				<button class="pin" id="sb-emo" title="Emoji">😊</button>
 				<textarea id="sb-text" maxlength="${LIMITS.text}" placeholder="Message ${g.name}… (/help)"></textarea>
 				<button id="sb-send" title="Send (Enter)">➤</button>
-			</div>`;
+			</div>`,
+		);
 		const box = $('sb-msgs');
 		if (!keepScroll || atBottom) {
 			box.scrollTop = box.scrollHeight;
 		}
-		const ta = $('sb-text');
+		const ta = $input('sb-text');
 		ta.value = draft;
 		$('sb-back').addEventListener('click', () => {
 			thread = null;
 			render();
 		});
 		$('sb-members').addEventListener('click', () => {
-			renderMembers.open = id;
+			membersOpen = id;
 			render();
 		});
 		$('sb-mute').addEventListener('click', () => toggleMute(`g:${id}`, g.name));
@@ -3910,16 +4612,24 @@
 		}
 	}
 
-	/** Rows of the 💖 tab: online friends, then offline ones greyed out, filtered by `q`. */
+	/**
+	 * Rows of the 💖 tab: online friends, then offline ones greyed out, filtered by `q`.
+	 * @param {string} q
+	 */
 	function friendRows(q) {
+		/**
+		 * @param {string} name
+		 * @param {number} n
+		 * @param {string} [room]
+		 */
 		const match = (name, n, room = '') => !q || name.toLowerCase().includes(q) || String(n).includes(q) || room.toLowerCase().includes(q);
 		const on = friends
 			.filter((f) => match(f.MemberName, f.MemberNumber, f.ChatRoomName || ''))
 			.sort((a, b) => a.MemberName.localeCompare(b.MemberName))
 			.map(
 				(f) => html`<div class="sb-row" data-open="${f.MemberNumber}">${avatar(f.MemberNumber, f.MemberName)}
-				<div class="sb-main"><div class="sb-name"><span class="sb-on"></span>${f.MemberName}${{ Lover: ' 💞', Submissive: ' 🎀' }[f.Type]}${peers.has(f.MemberNumber) && html` <span title="Has SlimeBeep">🫧</span>`}</div>
-				<div class="sb-sub">${where(f)}${f.ChatRoomMemberCount > 0 && ` · ${f.ChatRoomMemberCount}/${f.ChatRoomLimit || '?'}`}</div></div>
+				<div class="sb-main"><div class="sb-name"><span class="sb-on"></span>${f.MemberName}${{ Lover: ' 💞', Submissive: ' 🎀' }[f.Type || '']}${peers.has(f.MemberNumber) && html` <span title="Has SlimeBeep">🫧</span>`}</div>
+				<div class="sb-sub">${where(f)}${!!f.ChatRoomMemberCount && ` · ${f.ChatRoomMemberCount}/${f.ChatRoomLimit || '?'}`}</div></div>
 				<div class="sb-side">#${f.MemberNumber}</div></div>`,
 			);
 		const onlineNums = new Set(friends.map((f) => f.MemberNumber));
@@ -3938,7 +4648,12 @@
 		return [...on, html`<div class="sb-hint" style="margin:8px 4px 2px">Offline (${off.length})</div>`, ...off];
 	}
 
-	/** The 📍 room line under a beep (with Join), shown when the room differs from that side's previous beep. */
+	/**
+	 * The 📍 room line under a beep (with Join), shown when the room differs from that side's previous beep.
+	 * @param {HistEntry} b
+	 * @param {HistEntry[]} msgs the chat
+	 * @param {number} i b's index in msgs
+	 */
 	function roomLine(b, msgs, i) {
 		const room = typeof b.Message === 'string' && typeof b.ChatRoomName === 'string' ? b.ChatRoomName.trim() : '';
 		if (!room) {
@@ -3961,6 +4676,7 @@
 	 * Joins a chat room like the game's chat search: leaves the current room if the game allows it now,
 	 * then sends ServerRoomJoin; the game handles the answer.
 	 */
+	/** @param {string} roomName */
 	async function joinRoom(roomName) {
 		const name = String(roomName || '').trim();
 		if (!name || !loggedIn() || Date.now() - joiningRoom < 3000) {
@@ -3996,12 +4712,12 @@
 				// On failure, the error's name is the server's answer (RoomFull, RoomLocked, CannotFindRoom…).
 				if (r && r.error) {
 					if (typeof ChatSearchSendToast === 'function') {
-						ChatSearchSendToast(r.error.name);
+						ChatSearchSendToast(r.error.name || '');
 					}
 					notify(
 						`⚠ Couldn't join ${name}${
 							/^[A-Za-z]+$/.test(r.error.name || '')
-								? ` (${r.error.name
+								? ` (${String(r.error.name)
 										.replace(/^Room|Error$/g, '')
 										.replace(/([a-z])([A-Z])/g, '$1 $2')
 										.toLowerCase()})`
@@ -4018,13 +4734,20 @@
 		}
 	}
 
-	/** Draws an open chat (one-to-one, or hands over to renderGroupThread). */
+	/** @type {boolean | undefined} 📍 set for the next beep in the open chat (undefined: opts.shareRoom). */
+	let threadPin;
+	/**
+	 * Draws an open chat (one-to-one, or hands over to renderGroupThread).
+	 * @param {boolean} [keepScroll]
+	 * @returns {void}
+	 */
 	function renderThread(keepScroll) {
 		if (typeof thread === 'string') {
-			return renderGroupThread(keepScroll);
+			renderGroupThread(keepScroll);
+			return;
 		}
 		const mayFocus = wantsFocus();
-		const n = thread;
+		const n = Number(thread);
 		const view = $('sb-view');
 		const msgs = log().filter((b) => b.MemberNumber === n && !isReaction(b));
 		// Opening the chat marks it read (in the game's log too).
@@ -4034,11 +4757,12 @@
 		const f = friends.find((x) => x.MemberNumber === n);
 		const old = $('sb-msgs');
 		const atBottom = !old || old.scrollHeight - old.scrollTop - old.clientHeight < 40;
-		const draft = $('sb-text') ? $('sb-text').value : '';
+		const draft = $input('sb-text') ? $input('sb-text').value : '';
 		const room = myRoom();
-		const pinOn = !!room && (renderThread.pin ?? opts.shareRoom);
+		const pinOn = !!room && (threadPin ?? opts.shareRoom);
 		const waitingHere = waiting.filter((w) => w.n === n);
 		const offline = isOffline(n);
+		/** @param {HistEntry} b */
 		const mailMark = (b) => {
 			if (!b.mail) {
 				return '';
@@ -4048,8 +4772,10 @@
 				: 'Left in your SlimeBeep mailbox while you were offline';
 			return html`<span title="${title}">📬</span> `;
 		};
+		/** @param {HistEntry} b */
 		const uncheckedMark = (b) =>
 			b.unchecked && html`<span title="Their SlimeBeep has not told yours its key yet, so who sent this could not be checked">⚠</span> `;
+		/** @type {HtmlValue} */
 		let bubbles = !waitingHere.length && html`<div class="sb-empty">🫧 Say hi!</div>`;
 		if (msgs.length) {
 			bubbles = msgs.map(
@@ -4063,7 +4789,9 @@
 		);
 		const pinTitle = room ? `Let them join me: adds a button to join you in "${room}"` : "You're not in a chat room";
 		const placeholder = offline ? `${nameOf(n)} is offline: it'll wait for them…` : `Beep ${nameOf(n)}… (/help)`;
-		view.innerHTML = html`
+		setHtml(
+			view,
+			html`
 			<div class="sb-thead"><button id="sb-back" title="Back">‹</button>${avatar(n, nameOf(n))}
 				<div class="sb-main"><div class="sb-name">${nameOf(n)} <small style="font-weight:normal;color:#c08aaa">#${n}</small></div>
 				<div class="sb-sub">${f && html`<span class="sb-on"></span>`}${where(f)}</div></div>${muteButton(`n:${n}`)}</div>
@@ -4073,30 +4801,31 @@
 				<button class="pin" id="sb-emo" title="Emoji">😊</button>
 				<textarea id="sb-text" maxlength="1000" placeholder="${placeholder}"></textarea>
 				<button id="sb-send" title="Send (Enter)">➤</button>
-			</div>`;
+			</div>`,
+		);
 		const box = $('sb-msgs');
 		if (!keepScroll || atBottom) {
 			box.scrollTop = box.scrollHeight;
 		}
-		const ta = $('sb-text');
+		const ta = $input('sb-text');
 		ta.value = draft;
 		$('sb-back').addEventListener('click', () => {
 			thread = null;
-			renderThread.pin = undefined;
+			threadPin = undefined;
 			render();
 		});
 		$('sb-pin').addEventListener('click', () => {
-			renderThread.pin = !pinOn;
+			threadPin = !pinOn;
 			render(true);
 		});
 		$('sb-mute').addEventListener('click', () => toggleMute(`n:${n}`, nameOf(n)));
-		for (const b of view.querySelectorAll('.sb-joinroom')) {
+		for (const b of $$(view, '.sb-joinroom')) {
 			b.addEventListener('click', (e) => {
 				e.preventDefault();
-				joinRoom(b.dataset.room);
+				joinRoom(b.dataset.room || '');
 			});
 		}
-		for (const a of view.querySelectorAll('[data-cancel]')) {
+		for (const a of $$(view, '[data-cancel]')) {
 			a.addEventListener('click', (e) => {
 				e.preventDefault();
 				waiting = waiting.filter((w) => w.id !== a.dataset.cancel);
@@ -4122,10 +4851,10 @@
 				return render(true);
 			}
 			// Read at send time so a quick second Enter doesn't add the room again.
-			const invite = !!myRoom() && (renderThread.pin ?? opts.shareRoom);
+			const invite = !!myRoom() && (threadPin ?? opts.shareRoom);
 			beep(n, text, invite);
 			// 📍 applies to one beep.
-			renderThread.pin = false;
+			threadPin = false;
 			sync();
 			notify(`✓ Beep sent to ${nameOf(n)}${invite ? ' 📍' : ''}`);
 			ta.value = '';
@@ -4143,9 +4872,16 @@
 		}
 	}
 
-	/** Whether a friend is known to be offline. */
+	/**
+	 * Whether a friend is known to be offline.
+	 * @param {number} n
+	 */
 	const isOffline = (n) => friendsKnown && isFriend(n) && !friends.some((f) => f.MemberNumber === n);
-	/** Adds a beep for an offline friend to `waiting` and tries their mailbox. */
+	/**
+	 * Adds a beep for an offline friend to `waiting` and tries their mailbox.
+	 * @param {number} n
+	 * @param {string} text
+	 */
 	function queueBeep(n, text) {
 		if (waiting.length >= 100) {
 			return notify('⚠ Too many beeps waiting already');
@@ -4201,7 +4937,7 @@
 	/** opts.recentEmoji, validated. */
 	const loadRecent = () =>
 		Array.isArray(opts.recentEmoji) ? opts.recentEmoji.filter((e) => typeof e === 'string' && e.length <= 16).slice(0, 24) : [];
-	/** Open emoji tab; null opens 🕘 when there are recent ones. */
+	/** @type {string | null} Open emoji tab; null opens 🕘 when there are recent ones. */
 	let emojiTab = null;
 	/** Closes the emoji picker. */
 	function closeEmoji() {
@@ -4229,14 +4965,16 @@
 		}
 		const recentEmoji = loadRecent();
 		const tabs = [...(recentEmoji.length ? ['🕘'] : []), ...Object.keys(EMOJI)];
-		if (!tabs.includes(emojiTab)) {
-			emojiTab = tabs[0];
-		}
-		const list = emojiTab === '🕘' ? recentEmoji : EMOJI[emojiTab].split(' ');
-		box.innerHTML = html`<div class="sb-emo-tabs">${tabs.map((t) => html`<button data-etab="${t}" class="${t === emojiTab && 'on'}">${t}</button>`)}<button data-eclose="1" title="Close">✕</button></div>
-			<div class="sb-emo-grid">${list.map((e) => html`<button data-emo="${e}">${e}</button>`)}</div>`;
+		const open = emojiTab !== null && tabs.includes(emojiTab) ? emojiTab : tabs[0];
+		emojiTab = open;
+		const list = open === '🕘' ? recentEmoji : EMOJI[/** @type {keyof typeof EMOJI} */ (open)].split(' ');
+		setHtml(
+			box,
+			html`<div class="sb-emo-tabs">${tabs.map((t) => html`<button data-etab="${t}" class="${t === emojiTab && 'on'}">${t}</button>`)}<button data-eclose="1" title="Close">✕</button></div>
+			<div class="sb-emo-grid">${list.map((e) => html`<button data-emo="${e}">${e}</button>`)}</div>`,
+		);
 		box.onclick = (ev) => {
-			const b = ev.target.closest('button');
+			const b = targetOf(ev).closest('button');
 			if (!b) {
 				return;
 			}
@@ -4248,7 +4986,7 @@
 				return drawEmoji();
 			}
 			const e = b.dataset.emo;
-			const ta = $('sb-text');
+			const ta = $input('sb-text');
 			if (!e || !ta) {
 				return;
 			}
@@ -4275,6 +5013,7 @@
 	];
 	/**
 	 * Applies a chat command to typed text.
+	 * @param {string} raw
 	 * @returns {?string} the text to send, or null for nothing (/help, or an unknown command)
 	 */
 	function command(raw) {
@@ -4324,12 +5063,15 @@
 		}
 		const box = document.createElement('div');
 		box.id = 'sb-ask';
-		box.innerHTML = html`<div class="sb-crop-card" style="align-items:stretch">
+		setHtml(
+			box,
+			html`<div class="sb-crop-card" style="align-items:stretch">
 			<b style="text-align:center">💬 Chat commands</b>
 			${COMMANDS.map(([c, d]) => html`<div class="sb-cmd"><code>${c}</code><span>${d}</span></div>`)}
 			<span class="sb-hint" style="text-align:center">😊 opens the emoji. *giggles* shows as an action.</span>
 			<div class="sb-crop-btns" style="justify-content:center"><button class="sb-go" data-act="keep">Got it</button></div>
-		</div>`;
+		</div>`,
+		);
 		const close = () => {
 			box.remove();
 			document.removeEventListener('keydown', onKey, true);
@@ -4337,6 +5079,7 @@
 				$('sb-text').focus();
 			}
 		};
+		/** @param {KeyboardEvent} e */
 		const onKey = (e) => {
 			if (e.key === 'Escape') {
 				e.stopPropagation();
@@ -4344,7 +5087,7 @@
 			}
 		};
 		box.addEventListener('click', (e) => {
-			if (e.target === box || (e.target.dataset && e.target.dataset.act === 'keep')) {
+			if (targetOf(e) === box || targetOf(e).dataset.act === 'keep') {
 				close();
 			}
 		});
@@ -4370,7 +5113,12 @@
 		return Date.now() - lastPanelTouch < 1500;
 	}
 
-	/** Shows a short toast by the toggle. */
+	/** @type {ReturnType<typeof setTimeout> | undefined} Hides the toast. */
+	let toastTimer;
+	/**
+	 * Shows a short toast by the toggle.
+	 * @param {string} text
+	 */
 	function notify(text) {
 		if (stopped) {
 			return;
@@ -4385,11 +5133,16 @@
 		s.classList.remove('boing');
 		void s.offsetWidth;
 		s.classList.add('boing');
-		clearTimeout(notify.timer);
-		notify.timer = setTimeout(() => t.classList.remove('show'), 2200);
+		clearTimeout(toastTimer);
+		toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
 	}
 
-	/** Sends a beep with the game's own ServerSendBeepMessage (its format, limits and beep log); `includeRoom` adds your room. */
+	/**
+	 * Sends a beep with the game's own ServerSendBeepMessage (its format, limits and beep log).
+	 * @param {number} n
+	 * @param {string} text
+	 * @param {boolean} includeRoom adds your room
+	 */
 	function beep(n, text, includeRoom) {
 		if (stopped) {
 			return;
@@ -4408,10 +5161,16 @@
 		}
 	}
 
+	/** @type {number[] | undefined} Friends ticked on the WaveBeep tab since it was opened. */
+	let waveTicked;
+	/** The WaveBeep text being written. */
+	let waveText = '';
+	/** @type {boolean | undefined} The WaveBeep 📍 box (undefined: opts.shareRoom). */
+	let waveRoom;
 	/** HTML of the 🌊 WaveBeep tab. */
 	function groupHtml() {
 		const room = myRoom();
-		const picked = new Set(groupHtml.picked || opts.picked);
+		const picked = new Set(waveTicked || opts.picked);
 		const list = friends
 			.slice()
 			.sort((a, b) => a.MemberName.localeCompare(b.MemberName))
@@ -4426,8 +5185,8 @@
 			friends.some((f) => f.ChatRoomName === room) &&
 			html`<button class="sb-pill" id="sb-myroom" title="Only the friends in your room">📍 My room</button> `;
 		return html`<div class="sb-line" style="margin-top:2px"><b>🌊 WaveBeep</b></div><div class="sb-hint" style="margin:0 0 6px">One beep, sent to every friend you tick.</div>
-			<textarea id="sb-gmsg" maxlength="1000" placeholder="Write your beep…">${groupHtml.draft || ''}</textarea>
-			<label title="Adds a button to your beep that takes them to the chat room you're in."><input type="checkbox" id="sb-groom" ${!room && 'disabled'} ${room && (groupHtml.room ?? opts.shareRoom) && 'checked'}>
+			<textarea id="sb-gmsg" maxlength="1000" placeholder="Write your beep…">${waveText || ''}</textarea>
+			<label title="Adds a button to your beep that takes them to the chat room you're in."><input type="checkbox" id="sb-groom" ${!room && 'disabled'} ${room && (waveRoom ?? opts.shareRoom) && 'checked'}>
 				<span>📍 Let them join me<span class="sb-hint" style="display:block">${roomHint}</span></span></label>
 			<div class="sb-line"><b>Beep who?</b><span>${myRoomButton}<button class="sb-pill" id="sb-all">All</button> <button class="sb-pill" id="sb-none">None</button></span></div>
 			${list.length ? list : html`<div class="sb-empty">🌙 None of your friends are online.</div>`}
@@ -4437,22 +5196,22 @@
 
 	/** Wires the WaveBeep tab and sends the beeps, opts.gap seconds apart. */
 	function wireGroup() {
-		const boxes = () => [...$('sb-body').querySelectorAll('label input[type=checkbox]:not(#sb-groom)')];
+		const boxes = () => $$inputs($('sb-body'), 'label input[type=checkbox]:not(#sb-groom)');
 		const chosen = () =>
 			boxes()
 				.filter((b) => b.checked)
 				.map((b) => Number(b.value));
 		const count = () => {
 			const n = chosen().length;
-			groupHtml.picked = chosen();
+			waveTicked = chosen();
 			if (opts.remember) {
 				// Offline friends stay in `picked`.
 				const online = new Set(friends.map((f) => f.MemberNumber));
-				opts.picked = [...new Set([...opts.picked.filter((m) => !online.has(m)), ...groupHtml.picked])];
+				opts.picked = [...new Set([...opts.picked.filter((m) => !online.has(m)), ...waveTicked])];
 				saveOpts();
 			}
 			$('sb-gcount').textContent = `${n} picked of ${friends.length} online`;
-			$('sb-gsend').disabled = sending || n === 0;
+			$input('sb-gsend').disabled = sending || n === 0;
 		};
 		for (const b of boxes()) {
 			b.addEventListener('change', count);
@@ -4480,14 +5239,15 @@
 			});
 		}
 		$('sb-gmsg').addEventListener('input', (e) => {
-			groupHtml.draft = e.target.value;
+			waveText = inputOf(e).value;
 		});
 		$('sb-groom').addEventListener('change', (e) => {
-			groupHtml.room = e.target.checked;
+			waveRoom = inputOf(e).checked;
 		});
 		$('sb-gsend').addEventListener('click', async () => {
-			const msg = $('sb-gmsg').value.trim();
+			const msg = $input('sb-gmsg').value.trim();
 			const targets = chosen();
+			/** @param {string} t */
 			const status = (t) => {
 				const s = $('sb-gstatus');
 				if (s) {
@@ -4501,8 +5261,8 @@
 				return;
 			}
 			sending = true;
-			$('sb-gsend').disabled = true;
-			const includeRoom = $('sb-groom').checked && !!myRoom();
+			$input('sb-gsend').disabled = true;
+			const includeRoom = $input('sb-groom').checked && !!myRoom();
 			let done = 0;
 			for (const n of targets) {
 				beep(n, msg, includeRoom);
@@ -4513,9 +5273,9 @@
 				}
 			}
 			sending = false;
-			groupHtml.draft = '';
+			waveText = '';
 			if ($('sb-gmsg')) {
-				$('sb-gmsg').value = '';
+				$input('sb-gmsg').value = '';
 			}
 			status(`✨ Done: beeped ${done} friend${done === 1 ? '' : 's'}.`);
 			notify(`✓ Beep sent to ${done === 1 ? nameOf(targets[0]) : `${done} friends`}`);
@@ -4537,10 +5297,13 @@
 		if (typeof PreferenceExtensionsSettings === 'object' && PreferenceExtensionsSettings && PreferenceExtensionsSettings.SlimeBeep) {
 			return;
 		}
+		/** @typedef {[number, number, number, number]} Rect x, y, width, height on the canvas */
+		/** @type {Rect} */
 		const EXIT = [1815, 75, 90, 90];
 		const LEFT = 500,
 			TOP = 190,
 			ROW = 72;
+		/** @type {[string, string | (() => string), () => unknown, (on: boolean) => void, (() => boolean)?][]} id, label, get, set, shown */
 		const boxes = [
 			['night', 'Night mode (a night blue slime)', () => opts.night, (on) => setNight(on)],
 			// Listed only while a theme add-on is running.
@@ -4571,7 +5334,10 @@
 		// Boxes shown right now (an entry's 5th item decides).
 		const shown = () => boxes.filter((b) => !b[4] || b[4]());
 		const gapY = () => TOP + shown().length * ROW;
-		// Recomputed every frame: the shown boxes can change.
+		/**
+		 * Recomputed every frame: the shown boxes can change.
+		 * @returns {{ g: number, MINUS: Rect, PLUS: Rect, RESET: Rect, CLEAR: Rect, PIC: Rect, NOPIC: Rect }}
+		 */
 		const layout = () => {
 			const g = gapY(),
 				btnY = g + ROW;
@@ -4585,6 +5351,7 @@
 				NOPIC: [LEFT + 450, btnY + ROW, 420, 64],
 			};
 		};
+		/** @param {Rect} r */
 		const mouse = (r) => typeof MouseIn === 'function' && MouseIn(...r);
 		PreferenceRegisterExtensionSetting({
 			Identifier: 'SlimeBeep',
@@ -4685,13 +5452,21 @@
 	}
 
 	/* The options, changed the same way from the ⚙ tab and from Settings > Extensions. */
-	/** Sets and saves one option. */
+	/**
+	 * Sets and saves one option.
+	 * @template {keyof Options} K
+	 * @param {K} name
+	 * @param {Options[K]} value
+	 */
 	function setOpt(name, value) {
 		opts[name] = value;
 		saveOpts();
 	}
 
-	/** Turns desktop notifications on or off; asks the browser for permission and turns off if refused. */
+	/**
+	 * Turns desktop notifications on or off; asks the browser for permission and turns off if refused.
+	 * @param {boolean} on
+	 */
 	async function setDesktop(on) {
 		setOpt('desktop', !!on);
 		if (on && typeof Notification !== 'undefined' && Notification.permission !== 'granted') {
@@ -4701,13 +5476,16 @@
 				notify('The browser blocked notifications');
 			}
 		}
-		const box = $('sb-o-desktop');
+		const box = $input('sb-o-desktop');
 		if (box) {
 			box.checked = opts.desktop;
 		}
 	}
 
-	/** Turns saving of chat history on or off. */
+	/**
+	 * Turns saving of chat history on or off.
+	 * @param {boolean} on
+	 */
 	function setKeep(on) {
 		setOpt('keep', !!on);
 		if (opts.keep) {
@@ -4740,6 +5518,7 @@
 	}
 
 	/** Supported theme add-ons: [id, name, probe returning one of its CSS variables]. */
+	/** @type {[string, string, () => unknown][]} */
 	const THEME_SOURCES = [
 		['themed', 'Themed', () => getComputedStyle(document.documentElement).getPropertyValue('--tmd-main')],
 		['bcneko', 'BCNeko', () => document.body && getComputedStyle(document.body).getPropertyValue('--bcn-panel')],
@@ -4767,13 +5546,19 @@
 		}
 		return src;
 	}
-	/** Turns theme matching on or off. */
+	/**
+	 * Turns theme matching on or off.
+	 * @param {boolean} on
+	 */
 	function setThemed(on) {
 		setOpt('themed', !!on);
 		applyThemed();
 	}
 
-	/** Turns night mode on or off (the sb-night class on <html>). */
+	/**
+	 * Turns night mode on or off (the sb-night class on <html>).
+	 * @param {boolean} on
+	 */
 	function setNight(on) {
 		opts.night = !!on;
 		saveOpts();
@@ -4783,7 +5568,7 @@
 			moon.textContent = opts.night ? '☀️' : '🌙';
 			moon.title = opts.night ? 'Day mode' : 'Night mode';
 		}
-		const box = $('sb-o-night');
+		const box = $input('sb-o-night');
 		if (box) {
 			box.checked = opts.night;
 		}
@@ -4793,7 +5578,10 @@
 	const OWNER = 255659;
 	/** New GitHub issue page, for 🐞 reports. */
 	const ISSUES = 'https://github.com/Proudkiller0015/slimebeep/issues/new';
-	/** Report details: versions, browser, other mods, recent errors (and your member number with `withNumber`). */
+	/**
+	 * Report details: versions, browser, other mods, recent errors.
+	 * @param {boolean} withNumber adds your member number
+	 */
 	function details(withNumber) {
 		const mods = (() => {
 			try {
@@ -4828,18 +5616,20 @@
 	}
 	/** The full 🐞 report: what the player wrote, then details(). */
 	function reportText() {
-		const what = clean($('sb-bug-what').value, 1500);
-		const how = clean($('sb-bug-how').value, 800);
+		const what = clean($input('sb-bug-what').value, 1500);
+		const how = clean($input('sb-bug-how').value, 800);
 		return {
 			what,
 			how,
-			full: `What happened:\n${what || '(not filled in)'}\n\nWhat I was doing:\n${how || '(not filled in)'}\n\n---\n${details($('sb-bug-num').checked)}`,
+			full: `What happened:\n${what || '(not filled in)'}\n\nWhat I was doing:\n${how || '(not filled in)'}\n\n---\n${details($input('sb-bug-num').checked)}`,
 		};
 	}
 
+	/** @type {{ what?: string, how?: string, num?: boolean }} The bug report being written. */
+	let bugDraft = {};
 	/** HTML of the 🐞 tab. */
 	function bugHtml() {
-		const draft = bugHtml.draft || {};
+		const draft = bugDraft || {};
 		return html`<div class="sb-line" style="margin-top:2px"><b>🐞 Report a bug</b></div>
 			<div class="sb-hint" style="margin:0 0 6px">Tell SlimeQueenSamantha what went wrong. SlimeBeep adds its version and recent errors for you.</div>
 			<textarea id="sb-bug-what" maxlength="1500" placeholder="What happened?">${draft.what || ''}</textarea>
@@ -4857,8 +5647,9 @@
 	/** Wires the 🐞 tab: open a GitHub issue, copy, or beep the report. */
 	function wireBug() {
 		const keep = () => {
-			bugHtml.draft = { what: $('sb-bug-what').value, how: $('sb-bug-how').value, num: $('sb-bug-num').checked };
+			bugDraft = { what: $input('sb-bug-what').value, how: $input('sb-bug-how').value, num: $input('sb-bug-num').checked };
 		};
+		/** @param {string} t */
 		const status = (t) => {
 			const x = $('sb-bug-status');
 			if (x) {
@@ -4870,7 +5661,7 @@
 		}
 		$('sb-bug-num').addEventListener('change', () => {
 			keep();
-			$('sb-bug-details').textContent = details($('sb-bug-num').checked);
+			$('sb-bug-details').textContent = details($input('sb-bug-num').checked);
 		});
 		const ready = () => {
 			const r = reportText();
@@ -4911,10 +5702,8 @@
 				return status('Log in first.');
 			}
 			// A beep holds 1000 characters: the description first, then as many details as fit.
-			const text = `🐞 SlimeBeep bug report\n${r.what}${r.how ? `\nDoing: ${r.how}` : ''}\n— ${details($('sb-bug-num').checked)}`.slice(
-				0,
-				990,
-			);
+			const text =
+				`🐞 SlimeBeep bug report\n${r.what}${r.how ? `\nDoing: ${r.how}` : ''}\n— ${details($input('sb-bug-num').checked)}`.slice(0, 990);
 			beep(OWNER, text, false);
 			notify('🐞 Report beeped');
 			status('Beeped to SlimeQueenSamantha. It only arrives if she has you on her friend list; if unsure, use GitHub or Copy too.');
@@ -4922,7 +5711,7 @@
 	}
 
 	/* "Invite <them> to…": every group you can invite to, an Invite button each (opened by other add-ons too). */
-	/** State of the "Invite <member> to…" page (api.openInvite): { n, results: group id -> result text }. */
+	/** @type {{ n: number, results: Record<string, HtmlValue> } | null} State of the "Invite <member> to…" page (api.openInvite). */
 	let inviteFor = null;
 	/** HTML of the "Invite <member> to…" page. */
 	function inviteForHtml() {
@@ -4935,9 +5724,10 @@
 		if (isFriend(n)) {
 			how = peers.has(n) ? `${name} has SlimeBeep: they get an invite card.` : `${name} gets a beep with the code.`;
 		}
+		const results = inviteFor.results;
 		const list = Object.values(groups).filter((g) => canInvite(g, Player.MemberNumber));
 		const rows = list.map((g) => {
-			const res = inviteFor.results[g.id];
+			const res = results[g.id];
 			const action = isMember(g, n)
 				? html`<span class="sb-hint">Already in it</span>`
 				: html`<button class="sb-go" data-invite="${g.id}" ${res && 'disabled'}>Invite</button>`;
@@ -4957,21 +5747,25 @@
 			tab = 'groups';
 			render();
 		});
-		for (const b of $('sb-body').querySelectorAll('[data-invite]')) {
+		for (const b of $$inputs($('sb-body'), '[data-invite]')) {
 			b.addEventListener('click', async () => {
-				const id = b.dataset.invite;
+				const id = b.dataset.invite || '';
+				const page = inviteFor;
+				if (!page) {
+					return;
+				}
 				b.disabled = true;
-				const r = await inviteToGroup(id, inviteFor.n);
+				const r = await inviteToGroup(id, page.n);
 				if (!r.ok) {
-					inviteFor.results[id] = `⚠ ${r.why}`;
+					page.results[id] = `⚠ ${r.why}`;
 				} else if (r.sent) {
-					inviteFor.results[id] = '📨 Invite sent!';
+					page.results[id] = '📨 Invite sent!';
 				} else {
-					inviteFor.results[id] = html`Code: <code style="user-select:all">${r.code}</code> — give it to them (copied).`;
+					page.results[id] = html`Code: <code style="user-select:all">${r.code}</code> — give it to them (copied).`;
 				}
 				if (r.ok && !r.sent) {
 					try {
-						await navigator.clipboard.writeText(r.code);
+						await navigator.clipboard.writeText(r.code || '');
 					} catch (e) {
 						/* shown to copy by hand */
 					}
@@ -4985,6 +5779,7 @@
 
 	/** HTML of the ⚙ tab. */
 	function optionsHtml() {
+		/** @param {boolean} on */
 		const checked = (on) => on && 'checked';
 		return html`<div class="sb-opts">
 			<b style="display:block;margin:6px 2px">⚙ Options</b>
@@ -5033,25 +5828,25 @@
 				render();
 			});
 		}
-		$('sb-o-night').addEventListener('change', (e) => setNight(e.target.checked));
-		$('sb-o-sound').addEventListener('change', (e) => setOpt('sound', e.target.checked));
-		$('sb-o-popups').addEventListener('change', (e) => setOpt('popups', e.target.checked));
-		$('sb-o-desktop').addEventListener('change', (e) => setDesktop(e.target.checked));
-		$('sb-o-keep').addEventListener('change', (e) => setKeep(e.target.checked));
+		$('sb-o-night').addEventListener('change', (e) => setNight(inputOf(e).checked));
+		$('sb-o-sound').addEventListener('change', (e) => setOpt('sound', inputOf(e).checked));
+		$('sb-o-popups').addEventListener('change', (e) => setOpt('popups', inputOf(e).checked));
+		$('sb-o-desktop').addEventListener('change', (e) => setDesktop(inputOf(e).checked));
+		$('sb-o-keep').addEventListener('change', (e) => setKeep(inputOf(e).checked));
 		$('sb-o-clear').addEventListener('click', (e) => {
 			e.preventDefault();
 			clearKept();
 		});
-		$('sb-o-share').addEventListener('change', (e) => setOpt('shareRoom', e.target.checked));
+		$('sb-o-share').addEventListener('change', (e) => setOpt('shareRoom', inputOf(e).checked));
 		$('sb-o-remember').addEventListener('change', (e) => {
-			setOpt('remember', e.target.checked);
+			setOpt('remember', inputOf(e).checked);
 			if (!opts.remember) {
 				setOpt('picked', []);
 			}
 		});
 		$('sb-o-gap').addEventListener('change', (e) => {
-			setOpt('gap', Math.max(1, Math.min(10, Number(e.target.value) || DEFAULTS.gap)));
-			e.target.value = opts.gap;
+			setOpt('gap', Math.max(1, Math.min(10, Number(inputOf(e).value) || DEFAULTS.gap)));
+			inputOf(e).value = String(opts.gap);
 		});
 		$('sb-o-reset').addEventListener('click', () => {
 			setOpt('pos', null);
@@ -5066,7 +5861,11 @@
 	 * within 4 s it starts as is.
 	 */
 	const PAGES = 'https://proudkiller0015.github.io/slimebeep/slimebeep.js';
-	/** Whether version string `a` is newer than `b`. */
+	/**
+	 * Whether version string `a` is newer than `b`.
+	 * @param {string} a
+	 * @param {string} b
+	 */
 	const newer = (a, b) => {
 		const x = a.split('.').map(Number),
 			y = b.split('.').map(Number);
