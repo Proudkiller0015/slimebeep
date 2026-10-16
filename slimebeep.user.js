@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SlimeBeep
 // @namespace    https://github.com/Proudkiller0015/slimebeep
-// @version      2.0.0
-// @description  A simple beep tool: send one beep to the online friends you pick in Bondage Club. Always runs the newest version.
+// @version      2.1.0
+// @description  A bubble gum beep messenger for Bondage Club: chats, online friends, group beeps. Always runs the newest version.
 // @icon         https://raw.githubusercontent.com/Proudkiller0015/slimebeep/main/icon-64.png
 // @homepageURL  https://github.com/Proudkiller0015/slimebeep
 // @downloadURL  https://raw.githubusercontent.com/Proudkiller0015/slimebeep/main/slimebeep.user.js
