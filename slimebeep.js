@@ -13,7 +13,7 @@
 (function () {
 	'use strict';
 
-	const VERSION = '2.14.3';
+	const VERSION = '2.15.0';
 	// Loaded once per page, whatever loads it.
 	if (window.SlimeBeep) return;
 	window.SlimeBeep = { version: VERSION };
@@ -547,6 +547,7 @@
 		#sb-toggle.boing { animation: sb-boing .45s; }
 		@keyframes sb-boing { 30% { transform: scale(1.25, .8); } 60% { transform: scale(.9, 1.15); } }
 		.sb-opts label { display: block; padding: 6px 8px; margin: 4px 0; border-radius: 12px; background: #fff; }
+		#sb-quit { font-size: 13px; }
 		.sb-opts input[type=number] { width: 54px; border: 1px solid #ffb3d9; border-radius: 8px; padding: 2px 4px; font: inherit; }
 	`;
 
@@ -558,6 +559,7 @@
 			}
 		} catch (e) { warn(e, 'mod SDK'); }
 		const style = document.createElement('style');
+		style.id = 'sb-style';
 		style.textContent = css;
 		document.head.appendChild(style);
 
@@ -582,6 +584,7 @@
 				<span id="sb-me"></span>
 				<button id="sb-moon" title="Night mode">🌙</button>
 				<button id="sb-gear" title="Options">⚙</button>
+				<button id="sb-quit" title="Quit SlimeBeep until you reload">⏻</button>
 				<button id="sb-close" title="Close">✕</button>
 			</div>
 			<div id="sb-view" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>`;
@@ -611,6 +614,7 @@
 			setOpen(panel.style.display !== 'flex');
 		});
 		addEventListener('resize', place);
+		$('sb-quit').addEventListener('click', quit);
 		$('sb-close').addEventListener('click', () => setOpen(false));
 		$('sb-moon').addEventListener('click', () => setNight(!opts.night));
 		setNight(opts.night);
@@ -630,7 +634,7 @@
 		// Friends as the server reports them, whoever asked (the game asks too).
 		if (loggedIn()) listen();
 		place();
-		setInterval(tick, 1000);
+		tickTimer = setInterval(tick, 1000);
 		news();
 		registerSettings();
 	}
@@ -643,6 +647,33 @@
 	 * arrives, and checks every few seconds that it is still attached. It only ever listens.
 	 */
 	let listening = null; // the socket SlimeBeep listens on
+	/*
+	 * ⏻ Quit: SlimeBeep goes away until the next reload, as if it had never been started: the slime,
+	 * the panel, the cards, its style, its listener on the server and its group chat connections. Nothing
+	 * saved is touched, and the bookmarklet (or a reload, with the userscript) starts it again.
+	 */
+	let stopped = false, tickTimer = null;
+	function quit() {
+		if (stopped) return;
+		stopped = true;
+		try { clearInterval(tickTimer); } catch (e) { /* gone */ }
+		try { removeEventListener('resize', place); } catch (e) { /* gone */ }
+		try {
+			const sock = listening;
+			if (sock) {
+				if (typeof sock.offAny === 'function') sock.offAny(anyListener);
+				if (typeof sock.off === 'function') { sock.off('AccountBeep', beepListener); sock.off('AccountQueryResult', queryListener); }
+			}
+		} catch (e) { /* gone */ }
+		listening = null;
+		for (const c of Object.values(conns)) { c.dead = true; try { if (c.ws) c.ws.close(); } catch (e) { /* gone */ } }
+		for (const id of ['sb-toggle', 'sb-panel', 'sb-toast', 'sb-cards', 'sb-crop', 'sb-zoom', 'sb-style']) { const el = $(id); if (el) el.remove(); }
+		const root = document.documentElement;
+		for (const k of [...root.classList]) if (/^sb-/.test(k)) root.classList.remove(k);
+		for (const set of Object.values(apiListeners)) set.clear();
+		delete window.SlimeBeep;
+		console.info('[SlimeBeep] quit until the next reload');
+	}
 	const seenBeeps = []; // the last few beeps as they arrived, for SlimeBeep.debug()
 	function onServer(event, data) {
 		try {
@@ -1013,6 +1044,7 @@
 	}
 
 	function connectGroup(gid, extra = {}) {
+		if (stopped) return { ws: null, ready: false, queue: [], waiters: [], dead: true };
 		const old = conns[gid];
 		if (old && !extra.create && !extra.invite && old.ws && old.ws.readyState <= 1) return old;
 		if (old && old.ws) { old.dead = true; try { old.ws.close(); } catch (e) { /* gone */ } }
@@ -1270,6 +1302,7 @@
 	// Hidden beeps go out one at a time, a little apart, so a group message never floods the server.
 	const outbox = [];
 	function sendHidden(n, payload) {
+		if (stopped) return;
 		// Every hidden beep says which picture you have now (pv), so the other side can ask for it.
 		const pic = myPfp();
 		const kf = myKey && myKey.owner === Player.MemberNumber ? myKey.kf : undefined;
@@ -1410,6 +1443,7 @@
 
 	/** A card in the stack by the slime; gone after `ms` (0: stays until closed). At most four at once. */
 	function card({ icon, title, text, sub = '', onClick, ms = 7000, cls = '' }) {
+		if (stopped) return;
 		const box = $('sb-cards');
 		const c = document.createElement('div');
 		c.className = `sb-card ${cls}`;
@@ -1548,6 +1582,7 @@
 	const where = (f) => (!f ? 'Offline' : f.ChatRoomName ? (f.Private ? `🔒 ${f.ChatRoomName}` : `📍 ${f.ChatRoomName}`) : f.Private ? '🔒 Private room' : '🏠 Not in a room');
 
 	function render(keepScroll) {
+		if (stopped) return;
 		const view = $('sb-view');
 		showMe();
 		if (!loggedIn()) {
@@ -2023,6 +2058,7 @@
 
 	/** A short note that something happened, by the slime, and a bounce. */
 	function notify(text) {
+		if (stopped) return;
 		const t = $('sb-toast'), s = $('sb-toggle');
 		t.textContent = text;
 		const r = isOpen() ? $('sb-panel').getBoundingClientRect() : s.getBoundingClientRect();
@@ -2038,6 +2074,7 @@
 
 	/** The game's own beep sender: same format, length limit and beep log as the friend list. */
 	function beep(n, text, includeRoom) {
+		if (stopped) return;
 		try {
 			if (typeof ServerSendBeepMessage === 'function') ServerSendBeepMessage(n, text, { includeRoom });
 			else if (typeof ServerSend === 'function') ServerSend('AccountBeep', { MemberNumber: n, BeepType: '', IsSecret: !includeRoom, Message: text });
@@ -2161,6 +2198,11 @@
 			run: () => {
 				try {
 					DrawCharacter(Player, 50, 50, 0.9);
+					if (stopped) {
+						DrawText('SlimeBeep is off until you reload the game.', 1100, 300, 'Black', 'Gray');
+						DrawButton(...EXIT, '', 'White', 'Icons/Exit.png');
+						return;
+					}
 					MainCanvas.textAlign = 'left';
 					DrawText(`- SlimeBeep Settings - v${VERSION}`, LEFT, 125, 'Black', 'Gray');
 					const { g, MINUS, PLUS, RESET, CLEAR, PIC, NOPIC } = layout();
@@ -2184,6 +2226,7 @@
 			click: () => {
 				try {
 					if (mouse(EXIT)) { if (typeof PreferenceSubscreenExtensionsClear === 'function') PreferenceSubscreenExtensionsClear(); return; }
+					if (stopped) return;
 					const { MINUS, PLUS, RESET, CLEAR, PIC, NOPIC } = layout();
 					shown().forEach(([, , get, set], i) => { if (mouse([LEFT, TOP + i * ROW, 64, 64])) set(!get()); });
 					if (mouse(MINUS)) setOpt('gap', Math.max(1, opts.gap - 0.5));

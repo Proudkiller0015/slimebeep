@@ -493,6 +493,22 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 		check(r.off === false && r.offBg !== 'rgb(255, 240, 224)', 'api.matchTheme(false) (for theme add-ons) turns it back off');
 	}
 
+	// ---- ⏻ Quit: everything goes until the next reload, and the bookmarklet can start it again.
+	{
+		const r = await p.evaluate(async () => {
+			document.getElementById('sb-quit').click();
+			await new Promise((res) => setTimeout(res, 300));
+			const left = [...document.querySelectorAll('[id^="sb-"]')].map((e) => e.id);
+			fire('AccountBeep', { MemberNumber: 11, MemberName: 'Ann', BeepType: '', Message: 'still there?' });
+			await new Promise((res) => setTimeout(res, 300));
+			return { left, api: typeof window.SlimeBeep, cls: [...document.documentElement.classList].filter((c) => c.startsWith('sb-')), cards: !!document.getElementById('sb-cards') };
+		});
+		check(r.left.length === 0 && r.api === 'undefined' && r.cls.length === 0 && !r.cards, `⏻ Quit removes SlimeBeep completely until a reload (${JSON.stringify(r)})`);
+		await p.addScriptTag({ content: src });
+		await wait(1500);
+		check(!!await p.$('#sb-toggle'), 'and starting it again (the bookmarklet) brings it back');
+	}
+
 	// ---- An old copy (the raw link lagging) finds a newer one on GitHub Pages: the newer one runs, once.
 	{
 		const ver = src.match(/const VERSION = '([^']+)'/)[1];

@@ -130,5 +130,11 @@
     "date": "16 Oct 2026",
     "title": "📢 SlimeBeep 2.14.3",
     "text": "🖼 Sharper profile pictures (128×128, choose yours again to upgrade it), and the picture now sits right inside the circle when you fit it."
+  },
+  {
+    "id": "2.15.0",
+    "date": "16 Oct 2026",
+    "title": "📢 SlimeBeep 2.15",
+    "text": "⏻ Need a break? The ⏻ button in SlimeBeep's header turns it off until you reload."
   }
 ]
