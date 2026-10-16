@@ -202,5 +202,11 @@
     "date": "16 Oct 2026",
     "title": "📢 SlimeBeep 3.0.1",
     "text": "Tidier code under the hood. If you open the game on a plain http:// address, SlimeBeep now points you to the https one for group chats."
+  },
+  {
+    "id": "3.0.2",
+    "date": "16 Oct 2026",
+    "title": "📢 SlimeBeep 3.0.2",
+    "text": "Behind the scenes: every update is now checked for mistakes automatically before it goes out, so things break less. Nothing changes for you."
   }
 ]

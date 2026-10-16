@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.0.1';
+	const VERSION = '3.0.2';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
