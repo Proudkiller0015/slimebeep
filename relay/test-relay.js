@@ -127,6 +127,13 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 	await wait(300);
 	check(c3.last('roster').roster.owner === 13, 'when the owner leaves, the group passes to an admin');
 
+	// Only the owner can delete the group; it goes for everyone, and nobody can come back to it.
+	c3.send({ t: 'disband' });
+	await wait(300);
+	check(c3.last('gone') && c3.last('gone').why === 'deleted', 'the owner deletes the group: everyone connected is told and closed');
+	const back = await connect(gid, cat);
+	check(back.closed && /no such group|not a member/.test(JSON.stringify(back.got)), 'and the group is gone for good');
+
 	console.log(failed ? `\n${failed} FAILED` : '\nall passed');
 	process.exit(failed ? 1 : 0);
 })();

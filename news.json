@@ -142,5 +142,11 @@
     "date": "16 Oct 2026",
     "title": "📢 SlimeBeep 2.15.1",
     "text": "⏻ now asks before turning SlimeBeep off, and warns that you'll need to reload and click your SlimeBeep bookmark to get it back."
+  },
+  {
+    "id": "2.16.0",
+    "date": "16 Oct 2026",
+    "title": "📢 SlimeBeep 2.16",
+    "text": "🚪 Leaving a group chat is clearer (the 🚪 at the top of the chat), and owners can now delete their group for everyone."
   }
 ]

@@ -117,6 +117,7 @@ export class Group extends DurableObject {
 				case 'open': return await this.setOpen(att.member, p.on === true);
 				case 'profile': return await this.profile(att.member, p);
 				case 'leave': return await this.leave(att.member);
+				case 'disband': return await this.disband(att.member);
 				default: return this.send(ws, { t: 'error', why: 'unknown' });
 			}
 		} catch (e) {
@@ -319,6 +320,17 @@ export class Group extends DurableObject {
 		await this.note(`${name} left`);
 		this.closeMember(member, 'left');
 		this.broadcast({ t: 'roster', roster: this.roster() });
+	}
+
+	/** The owner deletes the group for everyone: messages, members and invites all go. */
+	async disband(by) {
+		if (!this.meta || by !== this.meta.owner) return;
+		for (const ws of this.ctx.getWebSockets()) {
+			this.send(ws, { t: 'gone', why: 'deleted' });
+			try { ws.close(4000, 'deleted'); } catch (e) { /* gone */ }
+		}
+		await this.ctx.storage.deleteAll();
+		this.meta = null; this.members = {}; this.invites = {}; this.seq = 0;
 	}
 
 	// ---- helpers

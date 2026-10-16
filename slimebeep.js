@@ -13,7 +13,7 @@
 (function () {
 	'use strict';
 
-	const VERSION = '2.15.1';
+	const VERSION = '2.16.0';
 	// Loaded once per page, whatever loads it.
 	if (window.SlimeBeep) return;
 	window.SlimeBeep = { version: VERSION };
@@ -418,7 +418,7 @@
 		#sb-crop input[type=range] { width: 200px; accent-color: #ff4fa3; }
 		#sb-ask { align-items: flex-start; padding-top: 70px; }
 		#sb-ask .sb-warn { background: #ffe1e1; color: #b00020; border: 2px solid #e5303f; border-radius: 12px; padding: 10px 12px; font-weight: 700; font-size: 13px; line-height: 1.35; text-align: center; }
-		#sb-ask [data-act=quit] { background: #e5303f; }
+		#sb-ask [data-act=quit], #sb-ask .sb-danger { background: #e5303f; }
 		#sb-crop .sb-crop-btns, #sb-ask .sb-crop-btns { display: flex; gap: 8px; }
 		#sb-crop .sb-crop-card { position: relative; }
 		#sb-crop .sb-crop-x { position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; border-radius: 50%; border: none; background: #ffe3f1; color: #c2387f; cursor: pointer; }
@@ -1152,7 +1152,7 @@
 		if (p.t === 'gone' || (p.t === 'error' && p.fatal)) {
 			c.dead = true;
 			if (c.onFail) { c.onFail(why); c.onFail = null; }
-			if (groups[gid] && (p.t === 'gone' || /not a member|no such group/.test(why))) dropGroup(gid, why === 'left' ? null : `You're no longer in ${groups[gid].name}`);
+			if (groups[gid] && (p.t === 'gone' || /not a member|no such group/.test(why))) dropGroup(gid, why === 'left' ? null : why === 'deleted' ? `${groups[gid].name} was deleted by its owner` : `You're no longer in ${groups[gid].name}`);
 			return;
 		}
 		if (p.t === 'error') {
@@ -1298,6 +1298,39 @@
 	function leaveGroup(id) {
 		relaySend(id, { t: 'leave' });
 		setTimeout(() => dropGroup(id, null), 600);
+	}
+	/** Owner only: the group is deleted for everyone. */
+	function deleteGroup(id) {
+		relaySend(id, { t: 'disband' });
+		setTimeout(() => dropGroup(id, null), 600);
+	}
+	/** 🚪 asks first, in the panel: leave, or (the owner) delete the group for everyone. */
+	function askGroup(id) {
+		const g = groups[id];
+		if (!g || $('sb-ask')) return;
+		const owner = g.owner === Player.MemberNumber;
+		const others = g.members.filter((m) => m.n !== Player.MemberNumber).length;
+		const box = document.createElement('div');
+		box.id = 'sb-ask';
+		box.innerHTML = `<div class="sb-crop-card">
+			<b>${esc(g.name)}</b>
+			<span class="sb-hint" style="text-align:center">${others ? (owner ? 'If you leave, the group stays and passes to an admin (or whoever has been in it longest).' : 'You can come back only with a new invite.') : "You're the only one in it, so leaving deletes it."}</span>
+			${owner && others ? `<div class="sb-warn">Delete removes the group and all its messages <u>for everyone</u>. It can't be undone.</div>` : ''}
+			<div class="sb-crop-btns" style="flex-wrap:wrap;justify-content:center"><button class="sb-pill" data-act="keep">Cancel</button><button class="sb-go" data-act="leave">🚪 Leave</button>${owner && others ? '<button class="sb-go sb-danger" data-act="delete">🗑 Delete group</button>' : ''}</div>
+		</div>`;
+		const close = () => { box.remove(); document.removeEventListener('keydown', onKey, true); };
+		const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+		box.addEventListener('click', (e) => {
+			const act = e.target.dataset && e.target.dataset.act;
+			if (act === 'keep' || e.target === box) return close();
+			if (act !== 'leave' && act !== 'delete') return;
+			close();
+			if (act === 'delete') { deleteGroup(id); notify(`🗑 ${g.name} was deleted`); } else { leaveGroup(id); notify(`🚪 You left ${g.name}`); }
+			thread = null;
+			render();
+		});
+		document.addEventListener('keydown', onKey, true);
+		$('sb-panel').appendChild(box);
 	}
 	/** Your picture changed: every group gets the new one. */
 	function pushPicture() {
@@ -1886,7 +1919,7 @@
 			<div class="sb-thead"><button id="sb-back" title="Back">‹</button><span class="sb-av sb-gav">👥</span>
 				<div class="sb-main"><div class="sb-name">${esc(g.name)}</div>
 				<div class="sb-sub" title="${esc(names.join(', '))}">${online ? `<span class="sb-on"></span>${here} online · ` : '⏳ connecting… · '}${g.members.length} members: You${names.length ? `, ${esc(names.join(', '))}` : ''}</div></div>
-				<button id="sb-members" title="Members and invites">👥</button><button id="sb-leave" title="Leave the group">🚪</button></div>
+				<button id="sb-members" title="Members and invites">👥</button><button id="sb-leave" title="${g.owner === Player.MemberNumber ? 'Leave or delete the group' : 'Leave the group'}">🚪</button></div>
 			<div class="sb-msgs" id="sb-msgs">${msgs.length ? msgs.map((h) => (h.sys ? `<div class="sb-sys">${esc(textOf(h))}</div>`
 				: `<div class="sb-b ${h.Sent ? 'me' : 'them'}${isAction(textOf(h)) ? ' sb-act' : ''}">${h.Sent ? '' : `<span class="sb-from">${esc(memberName(g, h.MemberNumber) || h.MemberName)}</span>`}${rich(textOf(h))}<em>${timeOf(h.Time)}</em></div>`)).join('')
 				: '<div class="sb-empty">🫧 Say hi to the group!</div>'}</div>
@@ -1900,13 +1933,7 @@
 		ta.value = draft;
 		$('sb-back').addEventListener('click', () => { thread = null; render(); });
 		$('sb-members').addEventListener('click', () => { renderMembers.open = id; render(); });
-		$('sb-leave').addEventListener('click', () => {
-			if (renderGroupThread.confirm !== id) { renderGroupThread.confirm = id; notify('Press 🚪 again to leave'); setTimeout(() => { renderGroupThread.confirm = null; }, 3000); return; }
-			leaveGroup(id);
-			notify(`🚪 You left ${g.name}`);
-			thread = null;
-			render();
-		});
+		$('sb-leave').addEventListener('click', () => askGroup(id));
 		const send = () => {
 			const text = clean(ta.value, LIMITS.text);
 			if (!text) return;

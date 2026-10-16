@@ -760,6 +760,28 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	await wait(150);
 	const keptGroups = await p.$$eval('#sb-body .sb-row .sb-name', (e) => e.map((x) => x.textContent));
 	check(['Slime Squad', 'Night Owls'].every((n) => keptGroups.some((t) => t.includes(n))), `group chats survive a relog in 👥 Groups (${keptGroups})`);
+	// 🚪 in a group: a member can only leave; the owner can also delete it for everyone.
+	{
+		const openGroup = async (name) => { await p.evaluate((n) => [...document.querySelectorAll('#sb-body .sb-row')].find((r) => r.textContent.includes(n)).click(), name); await wait(300); };
+		await openGroup('Night Owls');
+		await p.click('#sb-leave');
+		await wait(150);
+		const member = await p.evaluate(() => ({ leave: !!document.querySelector('#sb-ask [data-act=leave]'), del: !!document.querySelector('#sb-ask [data-act=delete]') }));
+		check(member.leave && !member.del, `in someone else's group, 🚪 offers Leave but not Delete (${JSON.stringify(member)})`);
+		await p.click('#sb-ask [data-act=keep]');
+		check(!await p.$('#sb-ask') && /Night Owls/.test(await p.$eval('.sb-thead', (e) => e.textContent)), 'Cancel changes nothing');
+		await tap('#sb-back');
+		await openGroup('Slime Squad');
+		await p.click('#sb-leave');
+		await wait(150);
+		check(!!await p.$('#sb-ask [data-act=delete]') && /for everyone/.test(await p.$eval('#sb-ask', (e) => e.textContent)), 'my own group: 🚪 also offers Delete, with a warning');
+		await p.click('#sb-ask [data-act=delete]');
+		await wait(1200);
+		await p.click('[data-tab=groups]');
+		await wait(150);
+		const after = await p.$$eval('#sb-body .sb-row .sb-name', (e) => e.map((x) => x.textContent));
+		check(!after.some((t) => t.includes('Slime Squad')) && after.some((t) => t.includes('Night Owls')), `Delete removes the group (${after})`);
+	}
 	await p.reload();
 	await p.evaluate(stub);
 	await p.evaluate(() => makeLog());
