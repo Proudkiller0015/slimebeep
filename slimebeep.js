@@ -1,108 +1,153 @@
-/*
- * SlimeBeep: a bubble gum beep messenger for Bondage Club.
+/**
+ * SlimeBeep: a beep messenger for Bondage Club (chats, group chats, online friends, WaveBeep).
  *
- * Chats with each friend (built from the game's own beep log, so beeps sent from
- * the friend list show up here too), the online friends and where they are, and a
- * group beep to the friends you pick.
- *
- * This is the whole tool. Players install slimebeep.user.js, a small loader that
- * fetches this file fresh on every game load, so pushing a change here reaches
- * everybody on their next reload. Release with `node release.js <version>`, which
- * sets the same version here and in the loader.
+ * The whole add-on is this file, served from GitHub Pages and loaded by FUSAM, the bookmarklet or
+ * the slimebeep.user.js loader. Group chats and mailboxes use the relay in relay/.
+ * Release with `node release.js <version>`.
  */
 (function () {
 	'use strict';
-	// The address this copy was loaded from, when it came in a <script src> (FUSAM loads it that way).
+	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript && document.currentScript.src) || '';
 
 	const VERSION = '3.0.0';
-	// Loaded once per page, whatever loads it.
+	// Only one copy runs per page.
 	if (window.SlimeBeep) return;
 	window.SlimeBeep = { version: VERSION };
 
-	// The logo, inline so the button needs nothing from the network.
+	/** The slime logo (toggle button, Extensions page), as a data URL. */
 	const ICON = 'data:image/png;base64,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';
 
-	/*
-	 * Options (the ⚙), kept in this browser. `gap` is the wait between WaveBeeps in
-	 * seconds, so the server doesn't drop them; `picked` is who was ticked last time;
-	 * `pos` is where the slime was dragged to, as fractions of the window (null: bottom right).
-	 */
-	// `popups`: a card for each new beep; `desktop`: a system notification while the game tab is in the background;
-	// `keep`: keep beeps in this browser across logins; `seenNews`: the news items (news.json) already shown.
-	const DEFAULTS = { pos: null, gap: 1.5, shareRoom: true, remember: true, picked: [], sound: true, popups: true, desktop: false, keep: true, seenNews: null, lastVersion: null, night: false, themed: false, recentEmoji: [], muted: [] };
-	// From GitHub Pages, like slimebeep.js for FUSAM: updated within a minute of a push, so the news matches the version.
+	/** Default user options. The live values are in `opts`, saved in localStorage under KEY. */
+	const DEFAULTS = {
+		/** Toggle button position as window fractions {x, y}; null puts it bottom right. */
+		pos: null,
+		/** Seconds between beeps when a WaveBeep goes to several friends. */
+		gap: 1.5,
+		/** Whether 📍 (a join button for your room) starts switched on in a chat. */
+		shareRoom: true,
+		/** Whether WaveBeep keeps the ticked friends (`picked`) for next time. */
+		remember: true,
+		/** Member numbers ticked in WaveBeep. */
+		picked: [],
+		/** Chime for new messages. */
+		sound: true,
+		/** A card by the toggle for each new message. */
+		popups: true,
+		/** A system notification for new messages while the game tab is hidden. */
+		desktop: false,
+		/** Save chat history per account (see `hist`). */
+		keep: true,
+		/** Ids of news.json items already shown as cards. */
+		seenNews: null,
+		/** Last version that posted its update note in the room chat. */
+		lastVersion: null,
+		/** Night colours. */
+		night: false,
+		/** Follow a theme add-on's colours (Themed, BCNeko). */
+		themed: false,
+		/** Emoji for the picker's 🕘 tab, newest first. */
+		recentEmoji: [],
+		/** Chats that make no sound: 'n:<member number>' or 'g:<group id>'. */
+		muted: [],
+	};
+	/** Release notes, shown as cards and in update notes. */
 	const NEWS = 'https://proudkiller0015.github.io/slimebeep/news.json';
+	/** Most entries kept in `hist`. */
 	const KEEP_MAX = 2000;
+	/** localStorage key of `opts` (shared by every account in this browser). */
 	const KEY = 'slimebeep.options';
 	const opts = (() => {
 		try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) || '{}') }; } catch (e) { return { ...DEFAULTS }; }
 	})();
 	const saveOpts = () => { try { localStorage.setItem(KEY, JSON.stringify(opts)); } catch (e) { /* private window: options last this visit */ } };
 
-	/** @type {{ MemberNumber: number, MemberName: string, ChatRoomName?: string, ChatRoomSpace?: string, Private?: boolean, Type?: string }[]} */
+	/**
+	 * Online friends, from the last OnlineFriends query.
+	 * @type {{ MemberNumber: number, MemberName: string, ChatRoomName?: string, ChatRoomSpace?: string, Private?: boolean, Type?: string }[]}
+	 */
 	let friends = [];
+	/** Open panel tab: 'chats', 'groups', 'friends', 'wave', 'bug', 'options', 'newgc' or 'invitefor'. */
 	let tab = 'chats';
-	let thread = null; // the member number whose chat is open
+	/** Open chat: a member number, 'g:<group id>', or null for the lists. */
+	let thread = null;
+	/** Search box text on the list tabs. */
 	let search = '';
+	/** True while a WaveBeep is going out. */
 	let sending = false;
 
-	/*
-	 * The beeps, kept by SlimeBeep. The game's own beep log (FriendListBeepLog) starts empty at every
-	 * login; every beep in it is copied here, and with "keep" on the copies are saved in this browser
-	 * per account, so chats survive a relog. The game's log is only ever read, never changed, apart
-	 * from the same Read flag the game's own beep list sets.
+	/**
+	 * Every message shown in chats: beeps copied from the game's FriendListBeepLog (emptied at each
+	 * login), group messages and mailbox beeps, oldest first. Each entry has a unique key `k`.
+	 * Saved per account under histKey() when opts.keep is on.
 	 */
 	let hist = [];
+	/** Member number `hist` was loaded for. */
 	let histOwner = null;
+	/** Keys of the entries in `hist`. */
 	const histKeys = new Set();
-	const live = new Map(); // key -> the game's own beep object, for its Read flag
+	/** Key -> the game's own beep object, so opening a chat can set its Read flag. */
+	const live = new Map();
 	const histKey = () => `slimebeep.history.${Player.MemberNumber}`;
 
-	/*
-	 * Group chats run through SlimeBeep's relay (relay/ in the repository, on Cloudflare), not game
-	 * beeps, so they work between people who aren't friends and keep the last 200 messages for whoever
-	 * was offline. Each SlimeBeep signs in to its groups with its own key (made here, kept in this
-	 * browser per account). The relay enforces the rules; everything that comes from it is still shown
-	 * as plain text only.
-	 *
-	 * Hidden beeps (PROTO) are only used between friends now: "do you have SlimeBeep?", profile
-	 * pictures, key fingerprints (so a fake #number in a group gets a ⚠), and group invites.
-	 */
+	/** BeepType of the hidden beeps SlimeBeep friends exchange (see onHidden). */
 	const PROTO = 'SlimeBeep';
+	/** The relay (group chats and mailboxes). */
 	const RELAY = 'wss://slimebeep-relay.slimebeep-relay.workers.dev';
-	// A different relay for testing only (set by hand in the console); the real one otherwise.
-	// Always SlimeBeep's own relay. The only other address it takes is a relay on this computer, for testing.
+	/** RELAY, or a local relay set in localStorage 'slimebeep.relay' (the tests use this). */
 	const relayUrl = () => {
 		try {
 			const local = localStorage.getItem('slimebeep.relay');
 			return local && /^ws:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(local) ? local : RELAY;
 		} catch (e) { return RELAY; }
 	};
-	const LIMITS = { name: 40, text: 500, members: 40, admins: 10, groups: 30, perMinute: 60 };
-	let groups = {}; // id -> { id, name, owner, admins: [n], open, members: [{ n, name, kf }], last, picv }
-	let peers = new Set(); // friends known to have SlimeBeep
-	let peerKeys = {}; // friend -> the start of their key, as their own SlimeBeep sent it
-	let invitations = []; // [{ code, name, from, fromName, at }]: group invites from friends
-	const gcKey = () => `slimebeep.gc2.${Player.MemberNumber}`;
-	/*
-	 * Offline beeps (like EBC's): the game only delivers a beep to someone online, so a beep to an offline
-	 * friend waits here, kept in this browser per account, and goes out the moment the friend list shows
-	 * them online (checked every minute while any wait). It needs you online then too.
+	/** Limits (the first four match the relay's). */
+	const LIMITS = {
+		/** Longest group or member name. */
+		name: 40,
+		/** Longest group message. */
+		text: 500,
+		/** Most members in a group. */
+		members: 40,
+		/** Most admins in a group. */
+		admins: 10,
+		/** Most groups you can be in. */
+		groups: 30,
+		/** Hidden beeps accepted from one friend per minute. */
+		perMinute: 60,
+	};
+	/**
+	 * Groups you are in, by id: { id, name, owner, admins, open, members: [{ n, name, kf }],
+	 * online, last (newest message id seen), picv (your picture version sent there), pic }.
 	 */
-	let waiting = []; // [{ id, n, text, at }]
-	let friendsKnown = false; // the friend list has been read at least once
+	let groups = {};
+	/** Friends known to have SlimeBeep. */
+	let peers = new Set();
+	/** Friend -> first 16 chars of their public key, as their own SlimeBeep sent it. */
+	let peerKeys = {};
+	/** Group invites from friends not joined yet: [{ code, name, from, fromName, at }]. */
+	let invitations = [];
+	const gcKey = () => `slimebeep.gc2.${Player.MemberNumber}`;
+	/**
+	 * Beeps to offline friends not delivered yet, saved per account: [{ id, n, text, at }].
+	 * mailWaiting leaves them in the friend's mailbox; otherwise sendWaiting sends them when the friend is online.
+	 */
+	let waiting = [];
+	/** Whether an OnlineFriends answer has arrived, so `friends` can be trusted. */
+	let friendsKnown = false;
 	const waitKey = () => `slimebeep.waiting.${Player.MemberNumber}`;
 	const saveWaiting = () => { try { localStorage.setItem(waitKey(), JSON.stringify(waiting)); } catch (e) { /* this visit only */ } };
+	/** A group invite code: SB-<group id>-<invite secret>. */
 	const CODE_RE = /^SB-([a-z0-9]{8,24})-([A-Z2-9]{10})$/;
 	const isId = (x) => typeof x === 'string' && /^[a-z0-9]{8,24}$/.test(x);
 	const isNum = (n) => Number.isInteger(n) && n > 0 && n < 1e9;
+	/** A random id (8-16 lowercase letters and digits). */
 	const newId = () => {
 		const a = new Uint32Array(3);
 		crypto.getRandomValues(a);
 		return [...a].map((x) => x.toString(36)).join('').slice(0, 16).padEnd(8, '0');
 	};
-	// Plain text only: control characters out, trimmed, capped.
+	/** Text from outside, made safe to keep: control characters removed, trimmed, cut to `max`. */
 	const clean = (x, max) => (typeof x === 'string' ? x.replace(/[\u0000-\u0008\u000b-\u001f\u007f\uf124]/g, '').trim().slice(0, max) : '');
 	const isFriend = (n) => !!(Player.FriendNames && typeof Player.FriendNames.has === 'function' && Player.FriendNames.has(n)) || friends.some((f) => f.MemberNumber === n);
 	const myName = () => clean(Player.Nickname || Player.Name, LIMITS.name) || `#${Player.MemberNumber}`;
@@ -115,6 +160,7 @@
 		return (m && m.name) || nameOf(n);
 	};
 
+	/** Loads groups, peers, peer keys, invitations and waiting beeps for the logged-in account. */
 	function loadGC() {
 		for (const c of Object.values(conns)) { c.dead = true; try { if (c.ws) c.ws.close(); } catch (e) { /* gone */ } }
 		for (const k of Object.keys(conns)) delete conns[k];
@@ -141,25 +187,24 @@
 			for (const n of saved.peers || []) if (isNum(n)) peers.add(n);
 			for (const [k, v] of Object.entries(saved.peerKeys || {})) if (isNum(Number(k)) && typeof v === 'string') peerKeys[Number(k)] = v.slice(0, 16);
 			for (const i of saved.invitations || []) if (i && CODE_RE.test(i.code) && isNum(i.from)) invitations.push({ code: i.code, name: clean(i.name, LIMITS.name), from: i.from, fromName: clean(i.fromName, LIMITS.name), at: i.at });
-			// Friends found to have SlimeBeep before group chats moved to the relay.
+			// Peers saved under the older storage key.
 			const old = JSON.parse(localStorage.getItem(`slimebeep.gc.${Player.MemberNumber}`) || '{}');
 			for (const n of old.peers || []) if (isNum(n)) peers.add(n);
 		} catch (e) { /* unreadable: start fresh */ }
 	}
+	/** Saves groups, peers, peer keys and invitations for the logged-in account. */
 	function saveGC() {
 		try { localStorage.setItem(gcKey(), JSON.stringify({ groups, peers: [...peers], peerKeys, invitations: invitations.slice(-20) })); } catch (e) { /* the browser won't keep it */ }
 	}
+	/** The `hist` key of a game beep: its Id, or its sender, time, direction and start of text. */
 	const keyOf = (b) => (b.Id ? `id:${b.Id}` : `${b.MemberNumber}|${new Date(b.Time).getTime()}|${b.Sent ? 1 : 0}|${String(b.Message || '').slice(0, 40)}`);
 
 	const $ = (id) => document.getElementById(id);
 
-	/*
-	 * Everything SlimeBeep takes from the game, and what stops working without it. Every use is checked
-	 * on its own, so when a game update renames something only that part stops; this list says which,
-	 * in the 🐞 report and once as a card. The same list is checked against the live site every day by
-	 * .github/workflows/bc-check.yml, which fails (and emails) when the game changes under SlimeBeep.
+	/**
+	 * Game globals SlimeBeep uses: [name, typeof check, what stops working without it]. Shown by the
+	 * 🐞 report and a one-time card when missing; .github/workflows/bc-check.yml checks the live game daily.
 	 */
-	// typeof works on any global, var, let or function alike; each is written out so nothing is evaluated from text.
 	const NEEDS = [
 		['ServerSocket', () => typeof ServerSocket, 'everything (the connection to the game)'],
 		['Player', () => typeof Player, 'everything (who you are)'],
@@ -173,8 +218,9 @@
 		['MouseIn', () => typeof MouseIn, 'Settings > Extensions'],
 	];
 	const missing = () => NEEDS.filter(([, t]) => { try { return t() === 'undefined'; } catch (e) { return true; } });
-	// SlimeBeep's own caught errors, the last few, for the 🐞 report; also in the console as before.
+	/** The last 10 caught errors, for the 🐞 report. */
 	const errors = [];
+	/** Logs a caught error to the console and to `errors`. */
 	function warn(e, where = '') {
 		try {
 			const msg = `${where ? `${where}: ` : ''}${(e && e.message) || String(e)}`.slice(0, 200);
@@ -182,15 +228,16 @@
 			errors.push(`${new Date().toISOString().slice(11, 19)} ${msg}${at ? ` (${at.trim().slice(0, 120)})` : ''}`);
 			if (errors.length > 10) errors.shift();
 			console.warn('[SlimeBeep]', where, e);
-		} catch (x) { /* never let a report break anything */ }
+		} catch (x) { /* ignore */ }
 	}
 	const esc = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 	const loggedIn = () => typeof ServerSocket !== 'undefined' && ServerSocket && typeof Player !== 'undefined' && Player && Player.MemberNumber != null;
-	/** The chat room you are in, or null. */
+	/** Name of the chat room you are in, or null. */
 	const myRoom = () => (typeof ChatRoomData !== 'undefined' && ChatRoomData && ChatRoomData.Name) || null;
 	const gameLog = () => (typeof FriendListBeepLog !== 'undefined' && Array.isArray(FriendListBeepLog) ? FriendListBeepLog : []);
 	const log = () => hist;
 
+	/** Loads `hist` (and the group state) for the logged-in account. */
 	function loadHistory() {
 		hist = [];
 		histKeys.clear();
@@ -204,18 +251,21 @@
 		} catch (e) { /* unreadable: start fresh */ }
 	}
 
+	/** Saves `hist` when opts.keep is on; if storage is full, drops the older half. */
 	function saveHistory() {
 		if (!opts.keep) return;
 		try {
 			localStorage.setItem(histKey(), JSON.stringify(hist.slice(-KEEP_MAX)));
 		} catch (e) {
-			// Full: keep the newer half.
 			hist = hist.slice(-Math.floor(KEEP_MAX / 2));
 			try { localStorage.setItem(histKey(), JSON.stringify(hist)); } catch (e2) { /* the browser won't keep it */ }
 		}
 	}
 
-	/** Copies new beeps from the game's log. Returns the incoming ones that are new since the last time. */
+	/**
+	 * Copies beeps from the game's log into `hist`.
+	 * @returns {object[]} the received beeps added this time (no reactions)
+	 */
 	function sync() {
 		if (!loggedIn()) return [];
 		if (histOwner !== Player.MemberNumber) loadHistory();
@@ -239,40 +289,37 @@
 		}
 		return added.filter((h) => !h.Sent && !isReaction(h));
 	}
-	/** A beep's visible text, without the metadata the game appends. */
-	/*
-	 * A beep's text and its settings. Newer game versions put settings (name colour, message type) after
-	 * a marker character at the end of a beep, with FriendListBeepParseMessage to read them; R132 has no
-	 * such function and just cuts at the marker. So SlimeBeep reads it the same way itself, on any version.
-	 */
+	/** Character after which the game appends a beep's settings (JSON: name colour, message type). */
 	const MARK = '';
+	/**
+	 * Splits a beep's message into its text and the settings the game appended after MARK.
+	 * @returns {{ text: string, meta: object|null }}
+	 */
 	function parseBeep(msg) {
 		if (typeof msg !== 'string') return { text: '', meta: null };
 		let text = msg, raw = null;
 		const i = msg.indexOf(MARK);
 		if (i >= 0) { text = msg.slice(0, i); raw = msg.slice(msg.lastIndexOf(MARK) + 1); }
 		else {
-			// The marker lost on the way (some add-ons strip odd characters): a last line that is a settings object.
+			// MARK stripped by another add-on: a last line holding the settings object.
 			const m = /\n\s*(\{"messageType"[^\n]*\})\s*$/.exec(msg);
 			if (m) { text = msg.slice(0, m.index); raw = m[1]; }
 		}
 		let meta = null;
-		if (raw) try { const x = JSON.parse(raw); if (x && typeof x === 'object' && !Array.isArray(x)) meta = x; } catch (e) { /* not settings after all */ }
+		if (raw) try { const x = JSON.parse(raw); if (x && typeof x === 'object' && !Array.isArray(x)) meta = x; } catch (e) { /* not settings */ }
 		return { text: text.trimEnd(), meta };
 	}
-	/*
-	 * Other add-ons talk to each other over beeps too: "ReqRoom" (EBC), "KIKILINK/1 {...}" and the like.
-	 * Those are machine data, not something a person wrote, so SlimeBeep never shows them: a beep that is
-	 * a {...} or [...] block, a short code followed by one (NAME/1 {...}), or one joined-up word like ReqRoom.
-	 * A one-word message a person types ("beep", "hi") still comes through.
+	/**
+	 * Whether a beep is another add-on's data rather than a message (never shown): a JSON object or
+	 * array, optionally after a short tag ("KIKILINK/1 {...}"), or, with `typed` (the beep had its own
+	 * BeepType), a CamelCase word like "ReqRoom".
 	 */
 	function isSignal(msg, typed = false) {
 		if (typeof msg !== 'string') return false;
 		const t = parseBeep(msg).text.trim();
 		if (!t) return false;
-		// A joined-up word only counts as a signal when it came as another add-on's own beep type.
 		if (typed && /^[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+$/.test(t)) return true;
-		// Real data (it has to parse into something with named fields), alone or after one short code with no spaces.
+		// It has to parse into a non-empty object (or array after a tag).
 		const m = /^([^\s{[]{0,40})\s*([[{][\s\S]*[\]}])$/.exec(t);
 		if (!m) return false;
 		try {
@@ -281,27 +328,30 @@
 			return !!x && typeof x === 'object' && Object.keys(x).length > 0;
 		} catch (e) { return false; }
 	}
+	/** What a `hist` entry shows as its text. */
 	const textOf = (beep) => {
 		if (beep.group) return beep.sys === 'left' ? `${beep.MemberName} left the group` : beep.text;
 		if (typeof beep.Message !== 'string') return beep.ChatRoomName ? `📍 ${beep.ChatRoomName}` : '🔔 Beep!';
 		return parseBeep(beep.Message).text || '🔔 Beep!';
 	};
+	/** Whether a beep is a reaction (the game's messageType 'Reaction'); those are not listed. */
 	const isReaction = (beep) => {
 		const meta = typeof beep.Message === 'string' ? parseBeep(beep.Message).meta : null;
 		return !!meta && meta.messageType === 'Reaction';
 	};
-	// Unread is the game's own flag, so reading a beep here or in the game's beep list is the same thing.
-	// Beeps the game's list has use its own Read flag; ones only SlimeBeep caught (catchBeep) keep their own.
+	/** Whether a received entry is unread: the game's Read flag when the game has the beep, else `h.unread`. */
 	const unread = (h) => {
 		if (h.Sent || isReaction(h)) return false;
 		const b = live.get(h.k);
 		return b ? b.Read === false : !!h.unread;
 	};
+	/** Marks an entry read, in the game's log too. */
 	const markRead = (h) => {
 		const b = live.get(h.k);
 		if (b && b.Read === false) b.Read = true;
 		if (h.unread) { h.unread = false; saveHistory(); }
 	};
+	/** A member's name: from the online friends, the friend list, or the last beep they sent. */
 	const nameOf = (n) => {
 		const f = friends.find((x) => x.MemberNumber === n);
 		if (f) return f.MemberName;
@@ -310,16 +360,11 @@
 		const b = [...log()].reverse().find((x) => x.MemberNumber === n && !x.Sent);
 		return b ? b.MemberName : `#${n}`;
 	};
-	/*
-	 * Roleplay actions in a bubble, like the game's emotes: *giggles* in italics. A message that is only
-	 * an action gets a soft bubble of its own (sb-act). Escaped first, so it's still plain text.
-	 */
+	/** Whether a message is only an *action* (it gets the sb-act bubble). */
 	const isAction = (text) => /^\*{1,2}[^*\n]+\*{1,2}$/.test(String(text).trim());
+	/** Group invite codes inside a text. */
 	const CODE_IN = /SB-[a-z0-9]{8,24}-[A-Z2-9]{10}/g;
-	/*
-	 * A message as HTML: escaped first, then *actions* in italics, web links you can click (opened in a new
-	 * tab, never loaded or shown here, like the game's chat), and a Join button after a group code.
-	 */
+	/** A message as HTML: escaped, with *actions* in italics, clickable links (new tab) and a Join button after group codes. */
 	const rich = (text) => esc(text)
 		.replace(/\*{1,2}([^*\n]{1,300}?)\*{1,2}/g, '<i class="sb-emote">*$1*</i>')
 		.replace(/\bhttps?:\/\/[^\s<>"']+/g, (url) => {
@@ -328,24 +373,24 @@
 			return `<a class="sb-link" href="${link}" target="_blank" rel="noopener noreferrer nofollow">${link}</a>${tail}`;
 		})
 		.replace(CODE_IN, (code) => `${code} <button class="sb-pill sb-joincode" data-code="${code}">${groups[CODE_RE.exec(code)[1]] ? 'Open' : 'Join'}</button>`);
+	/** A time as hh:mm today, or as a date. */
 	const timeOf = (t) => {
 		const d = new Date(t);
 		if (isNaN(d)) return '';
 		const today = new Date().toDateString() === d.toDateString();
 		return today ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : d.toLocaleDateString([], { day: 'numeric', month: 'short' });
 	};
-	// A soft colour per person, for their bubble avatar.
+	/** Hue of a member's letter avatar. */
 	const hue = (n) => (Number(n) * 137) % 360;
-	/*
-	 * Profile pictures, between SlimeBeep users. Yours is shrunk to a small square in your browser and
-	 * sent in pieces over hidden beeps to SlimeBeep friends who ask for it. Only image data is ever kept
-	 * or shown (never a web address), so a picture loads nothing from anywhere and can run nothing.
-	 */
+	/** A profile picture: only image data URLs are accepted (never a web address). */
 	const PFP_RE = /^data:image\/(webp|jpeg|png);base64,[A-Za-z0-9+/]+=*$/;
-	// Pictures are 128×128 (96 if a busy one won't fit), sent to friends in beep-sized pieces.
+	/** Longest picture data URL accepted (a 128 px picture, smaller if needed). */
 	const PFP_MAX = 12000;
+	/** Characters of picture per hidden beep. */
 	const PFP_CHUNK = 900;
-	let pfps = null; // member number -> { v, data }
+	/** Friends' pictures received by hidden beeps: member number -> { v: version id, data }. Lazy, see loadPfps. */
+	let pfps = null;
+	/** `pfps`, loaded from localStorage on first use. */
 	function loadPfps() {
 		if (pfps) return pfps;
 		pfps = {};
@@ -355,15 +400,19 @@
 		} catch (e) { /* unreadable: none */ }
 		return pfps;
 	}
+	/** Saves `pfps`, keeping the last 300. */
 	function savePfps() {
 		const keys = Object.keys(pfps);
-		// Only the newest few hundred are kept.
 		for (const k of keys.slice(0, Math.max(0, keys.length - 300))) delete pfps[k];
 		try { localStorage.setItem('slimebeep.pfps', JSON.stringify(pfps)); } catch (e) { /* the browser won't keep it */ }
 	}
+	/** Your own picture { v, data }, or null. */
 	const myPfp = () => (opts.pfp && isId(opts.pfp.v) && typeof opts.pfp.data === 'string' && PFP_RE.test(opts.pfp.data) ? opts.pfp : null);
+	/** A member's picture: yours, a friend's from `pfps`, or one a group shared (`relayPics`). */
 	const pfpOf = (n) => (loggedIn() && n === Player.MemberNumber ? myPfp() : loadPfps()[n] || (relayPics[n] ? { data: relayPics[n] } : null)) || null;
+	/** A group's avatar HTML: its picture or 👥. */
 	const groupAv = (g) => (g.pic ? `<img class="sb-av sb-pic" src="${esc(g.pic)}" alt="">` : '<span class="sb-av sb-gav">👥</span>');
+	/** A member's avatar HTML: their picture or their initials. */
 	const avatar = (n, name) => {
 		const pic = pfpOf(n);
 		if (pic) return `<img class="sb-av sb-pic" src="${esc(pic.data)}" alt="">`;
@@ -506,7 +555,7 @@
 		.sb-card.news { background: linear-gradient(120deg, #fff0f8, #eafbff); border-color: #9fe8ff; }
 		@keyframes sb-in { from { opacity: 0; transform: translateY(10px) scale(.95); } }
 		@keyframes sb-out { to { opacity: 0; transform: translateX(30px); } }
-		/* 🌙 Night mode (asked for by Alyx): navy, with a night blue slime. Only SlimeBeep's own parts change. */
+		/* Night mode (html.sb-night): navy colours and a blue slime. */
 		html.sb-night #sb-toggle { background: #1a2142; border-color: #8fb3ff; box-shadow: 0 3px 12px #3b55c488; }
 		html.sb-night #sb-toggle img, html.sb-night .sb-head img, html.sb-night .sb-card.news > img { filter: hue-rotate(-105deg) saturate(1.15) brightness(.92); }
 		html.sb-night #sb-badge { background: #5b8cff; border-color: #1a2142; }
@@ -541,12 +590,7 @@
 		html.sb-night .sb-card.news { background: linear-gradient(120deg, #1a2142, #241f4f); border-color: #7a5cd6; }
 		html.sb-night #sb-toast { background: #dfe6ff; color: #1a2142; box-shadow: 0 4px 14px #0008; }
 		html.sb-night .sb-body::-webkit-scrollbar-thumb { background: #2f3b75; }
-		/*
-		 * 🎨 Matching a theme add-on. Each keeps its colours in CSS variables (Themed: --tmd-* on the page,
-		 * BCNeko: --bcn-* on the body); they're mapped onto SlimeBeep's own --sb-t-* here, on the body, where
-		 * both are visible, and everything below uses those. Another theme add-on is one more mapping.
-		 * After night mode, so it wins when both are on.
-		 */
+		/* Theme matching (html.sb-themed): a theme add-on's variables mapped onto --sb-t-*; after night mode so it wins. */
 		html.sb-theme-themed body { --sb-t-main: var(--tmd-main); --sb-t-element: var(--tmd-element); --sb-t-element-hover: var(--tmd-element-hover);
 			--sb-t-element-disabled: var(--tmd-element-disabled); --sb-t-accent: var(--tmd-accent); --sb-t-accent-hover: var(--tmd-accent-hover);
 			--sb-t-accent-disabled: var(--tmd-accent-disabled); --sb-t-text: var(--tmd-text); --sb-t-text-disabled: var(--tmd-text-disabled); }
@@ -599,8 +643,9 @@
 		.sb-opts input[type=number] { width: 54px; border: 1px solid #ffb3d9; border-radius: 8px; padding: 2px 4px; font: inherit; }
 	`;
 
+	/** Creates the toggle, panel, toast and card stack, wires them up and starts the 1 s tick. */
 	function build() {
-		// Listed with the game's mod SDK like other mods; SlimeBeep patches no game function, it only registers.
+		// Registered with the mod SDK for its mod list only; no game function is hooked.
 		try {
 			if (window.bcModSdk && typeof window.bcModSdk.registerMod === 'function') {
 				window.bcModSdk.registerMod({ name: 'SlimeBeep', fullName: 'SlimeBeep', version: VERSION, repository: 'https://github.com/Proudkiller0015/slimebeep' });
@@ -638,12 +683,9 @@
 			<div id="sb-view" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>`;
 		document.body.appendChild(panel);
 
-		/*
-		 * Drag to move; a press that barely moves is a click. Only a held left button drags: the bubble once
-		 * kept following the mouse after the release was lost (the game or another window took it), and moved
-		 * on its own whenever the pointer passed over it.
-		 */
+		/** Toggle drag in progress: pointer offset, start point and whether it moved past the click threshold. */
 		let drag = null;
+		/** Ends a drag (saving the position when `save`); returns whether it was a move rather than a click. */
 		const endDrag = (save) => {
 			if (!drag) return;
 			const moved = drag.moved;
@@ -656,10 +698,11 @@
 			if (e.button !== 0) return;
 			const r = toggle.getBoundingClientRect();
 			drag = { dx: e.clientX - r.left, dy: e.clientY - r.top, x0: e.clientX, y0: e.clientY, moved: false };
-			try { toggle.setPointerCapture(e.pointerId); } catch (err) { /* fine without */ }
+			try { toggle.setPointerCapture(e.pointerId); } catch (err) { /* works without capture */ }
 		});
 		toggle.addEventListener('pointermove', (e) => {
 			if (!drag) return;
+			// The release was lost (another window took it): stop instead of following the pointer.
 			if (!(e.buttons & 1)) return endDrag(true);
 			if (!drag.moved && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 8) return;
 			drag.moved = true;
@@ -681,7 +724,7 @@
 		$('sb-moon').addEventListener('click', () => setNight(!opts.night));
 		setNight(opts.night);
 		$('sb-gear').addEventListener('click', () => { tab = tab === 'options' ? 'chats' : 'options'; thread = null; render(); });
-		// A click on someone's picture shows it big (and doesn't also open what it sits on).
+		// Join buttons on group codes inside messages.
 		panel.addEventListener('click', (e) => {
 			const join = e.target.closest && e.target.closest('button.sb-joincode');
 			if (join) {
@@ -690,6 +733,7 @@
 				return joinCode(join.dataset.code, openJoined);
 			}
 		}, true);
+		// A click on a picture zooms it instead of opening the row it is in.
 		panel.addEventListener('click', (e) => {
 			const img = e.target.closest && e.target.closest('img.sb-pic');
 			if (!img || img.closest('#sb-me')) return;
@@ -698,12 +742,11 @@
 			zoomPic(img.src);
 		}, true);
 		$('sb-me').addEventListener('click', () => { if (!loggedIn()) return; tab = 'options'; thread = null; render(); });
-		// Typing in the panel must not reach the game's own key handlers.
+		// Keys typed in the panel stay out of the game's key handlers.
 		panel.addEventListener('keydown', (e) => e.stopPropagation());
 		panel.addEventListener('pointerdown', () => { lastPanelTouch = Date.now(); }, true);
 		toggle.addEventListener('pointerdown', () => { lastPanelTouch = Date.now(); }, true);
 
-		// Friends as the server reports them, whoever asked (the game asks too).
 		if (loggedIn()) listen();
 		place();
 		tickTimer = setInterval(tick, 1000);
@@ -711,21 +754,14 @@
 		registerSettings();
 	}
 
-	/*
-	 * Listening to the server. Other add-ons sometimes take events over (EBC: Alyx's beeps reached only
-	 * EBC, 16 Oct 2026), by removing the game's listeners or changing the data before the game sees it.
-	 * So SlimeBeep listens underneath them all where the connection allows it (socket.io's catch-all
-	 * listener, which removing an event's listeners leaves alone), copies each beep the moment it
-	 * arrives, and checks every few seconds that it is still attached. It only ever listens.
-	 */
-	let listening = null; // the socket SlimeBeep listens on
-	/*
-	 * ⏻ Quit: SlimeBeep goes away until the next reload, as if it had never been started: the slime,
-	 * the panel, the cards, its style, its listener on the server and its group chat connections. Nothing
-	 * saved is touched, and the bookmarklet (or a reload, with the userscript) starts it again.
-	 */
-	let stopped = false, tickTimer = null;
-	/** ⏻ asks first, inside the panel: one stray click must not turn SlimeBeep off. */
+	/** The ServerSocket our listeners are attached to (see listen). */
+	let listening = null;
+	let
+		/** Set by quit(); stops every timer callback and late reply from doing anything. */
+		stopped = false,
+		/** The 1 s tick interval, cleared by quit(). */
+		tickTimer = null;
+	/** Asks before quitting (⏻), in a box inside the panel. */
 	function askQuit() {
 		if (stopped || $('sb-ask')) return;
 		const box = document.createElement('div');
@@ -745,6 +781,10 @@
 		document.addEventListener('keydown', onKey, true);
 		$('sb-panel').appendChild(box);
 	}
+	/**
+	 * Removes SlimeBeep from the page until the next load: DOM, style, listeners, timers and relay
+	 * connections. Saved data is kept.
+	 */
 	function quit() {
 		if (stopped) return;
 		stopped = true;
@@ -767,7 +807,9 @@
 		delete window.SlimeBeep;
 		console.info('[SlimeBeep] quit until the next reload');
 	}
-	const seenBeeps = []; // the last few beeps as they arrived, for SlimeBeep.debug()
+	/** The last 20 beeps received (sender, type, start of text), for SlimeBeep.debug(). */
+	const seenBeeps = [];
+	/** Handles the two server messages SlimeBeep reads: AccountBeep and the OnlineFriends answer. Others are ignored. */
 	function onServer(event, data) {
 		try {
 			if (event === 'AccountQueryResult') {
@@ -778,7 +820,7 @@
 				if (isOpen() && tab !== 'chats') render();
 			} else if (event === 'AccountBeep') {
 				if (!data || typeof data !== 'object') return;
-				// A copy, before the game or anyone else trims or changes it.
+				// Copied before the game or another add-on changes it.
 				const d = { MemberNumber: data.MemberNumber, MemberName: data.MemberName, BeepType: data.BeepType, Message: data.Message,
 					ChatRoomName: data.ChatRoomName, ChatRoomSpace: data.ChatRoomSpace, Private: data.Private };
 				seenBeeps.push({ at: new Date().toISOString(), from: d.MemberNumber, type: d.BeepType || '', text: typeof d.Message === 'string' ? d.Message.slice(0, 80) : null });
@@ -788,21 +830,21 @@
 			}
 		} catch (e) { warn(e); }
 	}
-	/*
-	 * Listening to the game's connection. Only two kinds of message are ever looked at (onServer drops
-	 * everything else straight away): AccountBeep (beeps, and SlimeBeep's own hidden ones) and the
-	 * OnlineFriends answer. The catch-all, put first, is only there so a beep is copied before the game or
-	 * another add-on trims or changes it; where the socket has no catch-all, two plain listeners are used.
-	 */
+	/** Catch-all socket listener; onServer keeps only AccountBeep and AccountQueryResult. */
 	const anyListener = (event, data) => onServer(event, data);
+	/** Per-event listeners, for a socket without a catch-all. */
 	const beepListener = (data) => onServer('AccountBeep', data);
 	const queryListener = (data) => onServer('AccountQueryResult', data);
+	/**
+	 * Attaches the listeners to ServerSocket (called every tick, re-attaching if they were removed).
+	 * The catch-all goes first (prependAny) so a beep is read before another add-on can remove the
+	 * game's listener for it or change it; it survives other code removing per-event listeners.
+	 */
 	function listen() {
 		if (!loggedIn() || !ServerSocket || typeof ServerSocket.on !== 'function') return;
 		const sock = ServerSocket;
 		const any = typeof sock.prependAny === 'function' ? 'prependAny' : typeof sock.onAny === 'function' ? 'onAny' : null;
 		if (listening === sock) {
-			// Still attached? Something may have cleared the listeners since.
 			const has = any ? (typeof sock.listenersAny === 'function' ? sock.listenersAny().includes(anyListener) : true)
 				: (typeof sock.listeners === 'function' ? sock.listeners('AccountBeep').includes(beepListener) : true);
 			if (has) return;
@@ -817,20 +859,15 @@
 			sock.on('AccountQueryResult', queryListener);
 		}
 	}
-	/*
-	 * For other add-ons (CRABS first): window.SlimeBeep.api, read-only. Everything handed out is a
-	 * fresh copy, so nothing outside can change SlimeBeep's state. It tells who is in your SlimeBeep
-	 * group chats, their roles, who's online, and which friends have SlimeBeep, with events when that
-	 * changes. Message text isn't shared: that stays between the people in a chat. README "For other
-	 * add-ons" documents it; apiVersion goes up when something changes in a way that breaks old use.
-	 */
+	/** Other add-ons' listeners for api.on(), by event type. */
 	const apiListeners = { group: new Set(), groupGone: new Set(), presence: new Set(), slimeBeepFriend: new Set() };
+	/** Calls an api.on() event's listeners, each with its own copy of `data`. */
 	function emit(type, data) {
 		for (const fn of apiListeners[type] || []) {
 			try { fn(JSON.parse(JSON.stringify(data))); } catch (e) { warn(e, `another add-on's ${type} listener`); }
 		}
 	}
-	/** A group as other add-ons see it. */
+	/** A group as the API hands it out (see API.md). */
 	function groupView(g) {
 		const me = loggedIn() ? Player.MemberNumber : 0;
 		const online = new Set([...(g.online || []), me]);
@@ -841,10 +878,14 @@
 			picture: g.pic || null,
 		};
 	}
+	/**
+	 * The API for other add-ons, documented in API.md. Read-only: everything returned is a copy, and
+	 * message text is never exposed. apiVersion changes only on a breaking change.
+	 */
 	window.SlimeBeep.api = Object.freeze({
 		apiVersion: 1,
 		version: VERSION,
-		/** Your SlimeBeep group chats: [{ id, name, owner, admins, anyoneCanInvite, members: [{ memberNumber, name, online, role }] }]. */
+		/** Your group chats, as groupView. */
 		groups: () => (loggedIn() ? Object.values(groups).map(groupView) : []),
 		/** One group by id, or null. */
 		group: (id) => (loggedIn() && groups[id] ? groupView(groups[id]) : null),
@@ -876,10 +917,12 @@
 		},
 	});
 
+	/** State for bug reports, typed in the console. */
 	window.SlimeBeep.debug = () => ({ version: VERSION, missing: missing().map(([k]) => k), listening: !!listening, catchAll: !!(listening && typeof listening.onAny === 'function'), lastBeeps: seenBeeps.slice() });
 
-	// At most LIMITS.perMinute hidden beeps a minute from anyone; past that they are dropped.
+	/** Member number -> times of their recent hidden beeps (see allow). */
 	const recent = new Map();
+	/** Whether a hidden beep from `n` is accepted: at most LIMITS.perMinute a minute. */
 	function allow(n) {
 		const now = Date.now();
 		const list = (recent.get(n) || []).filter((t) => now - t < 60000);
@@ -887,12 +930,19 @@
 		recent.set(n, list);
 		return list.length <= LIMITS.perMinute;
 	}
+	/** Member number -> when we last answered their ping. */
 	const ponged = new Map();
 
-	const asked = new Map(); // who we asked for a picture, and when
-	const sentPic = new Map(); // who we sent ours to, and when
-	const pieces = new Map(); // member number -> { v, n, parts }
-	/** The picture side of a hidden beep: their version (ask if new), a request for ours, or a piece of theirs. */
+	/** Member number -> when we last asked them for their picture. */
+	const asked = new Map();
+	/** Member number -> when we last sent them ours. */
+	const sentPic = new Map();
+	/** Member number -> a picture being received in pieces: { v, n: piece count, parts }. */
+	const pieces = new Map();
+	/**
+	 * Picture fields of a hidden beep: `pv` (their picture version; 0 = none) makes us ask for a new one,
+	 * `pfreq` asks for ours, `pf` is one piece of theirs.
+	 */
 	function pictureNews(from, p) {
 		const known = loadPfps()[from];
 		if (p.pv === 0 && known) { delete pfps[from]; savePfps(); }
@@ -905,7 +955,7 @@
 			if (!pic || Date.now() - (sentPic.get(from) || 0) < 60000) return;
 			sentPic.set(from, Date.now());
 			const parts = Math.ceil(pic.data.length / PFP_CHUNK);
-			// A little apart, so a dozen pieces never look like a flood to the server.
+			// 250 ms apart.
 			for (let i = 0; i < parts; i++) setTimeout(() => sendHidden(from, { sb: 1, pf: { v: pic.v, i, n: parts, d: pic.data.slice(i * PFP_CHUNK, (i + 1) * PFP_CHUNK) } }), i * 250);
 		}
 		const pf = p.pf;
@@ -927,27 +977,28 @@
 		}
 	}
 
-	/*
-	 * Your picture: picked from a file, then placed in the circle by you (drag to move, wheel or slider to
-	 * zoom), shrunk to 48×48 and made small enough to send. The picked picture is kept (at most 320px, in
-	 * this browser only) so "Adjust" can place it again later.
-	 */
+	/** localStorage key of your picture's uncropped source (max 320 px), kept for "Adjust". */
 	const srcKey = () => `slimebeep.pfpsrc.${Player.MemberNumber}`;
+	/** Your picture's uncropped source, or null. */
 	const loadSrc = () => { try { const d = localStorage.getItem(srcKey()); return d && /^data:image\/(webp|jpeg|png);base64,/.test(d) ? d : null; } catch (e) { return null; } };
+	/**
+	 * Reads a picked image file, scales it to at most 320 px and opens the cropper on it.
+	 * @param {File} file
+	 * @param {?function(string)} onSave  gets the cropped picture instead of it becoming yours (group pictures)
+	 * @param {string} title  the cropper's heading
+	 */
 	function setPicture(file, onSave = null, title = '') {
 		if (!file || !/^image\//.test(file.type)) return notify('That is not a picture');
 		const url = URL.createObjectURL(file);
 		const img = new Image();
 		img.onload = () => {
 			try {
-				// Kept smaller, so it fits in storage and the cropper stays quick.
 				const k = Math.min(1, 320 / Math.max(img.naturalWidth, img.naturalHeight));
 				const c = document.createElement('canvas');
 				c.width = Math.max(1, Math.round(img.naturalWidth * k));
 				c.height = Math.max(1, Math.round(img.naturalHeight * k));
 				c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
 				const src = c.toDataURL('image/jpeg', 0.9);
-				// Only your own is kept for "Adjust"; a group picture is placed once.
 				if (!onSave) try { localStorage.setItem(srcKey(), src); } catch (e) { /* this visit only */ }
 				openCropper(src, onSave, title);
 			} catch (e) { notify('That picture could not be read'); } finally { URL.revokeObjectURL(url); }
@@ -955,6 +1006,7 @@
 		img.onerror = () => { URL.revokeObjectURL(url); notify('That picture could not be read'); };
 		img.src = url;
 	}
+	/** Opens the file picker, then setPicture. */
 	function pickPicture(onSave = null, title = '') {
 		const input = document.createElement('input');
 		input.type = 'file';
@@ -962,7 +1014,10 @@
 		input.addEventListener('change', () => setPicture(input.files && input.files[0], onSave, title));
 		input.click();
 	}
-	/** Place the picture in the circle; Save makes it your picture (or hands it to `onSave`: a group's). */
+	/**
+	 * The cropper: drag and zoom `src` inside a circle. Save makes the result (128 px, under PFP_MAX)
+	 * your picture, or passes it to `onSave`.
+	 */
 	function openCropper(src, onSave = null, title = '') {
 		if ($('sb-crop')) $('sb-crop').remove();
 		const SIZE = 200;
@@ -981,16 +1036,15 @@
 				<input type="range" min="1" max="4" step="0.01" value="1" aria-label="Zoom">
 				<div class="sb-crop-btns"><button class="sb-pill" data-act="cancel">Cancel</button><button class="sb-go" data-act="save">Save</button></div>
 			</div>`;
-			// Inside the panel, never over the game.
 			if (!isOpen()) setOpen(true);
 			$('sb-panel').appendChild(box);
-			// Ways out: Cancel, ✕, a click beside the card, Escape, or closing SlimeBeep.
+			// Closed by Cancel, ✕, a click outside the card, Escape, or the panel closing.
 			const onKey = (e) => { if (e.key === 'Escape' && document.body.contains(box)) { e.stopPropagation(); box.remove(); } };
 			document.addEventListener('keydown', onKey, true);
 			new MutationObserver((m, obs) => { if (!document.body.contains(box)) { document.removeEventListener('keydown', onKey, true); obs.disconnect(); } }).observe($('sb-panel'), { childList: true });
 			box.addEventListener('keydown', (e) => e.stopPropagation());
 			const cv = box.querySelector('canvas'), ctx = cv.getContext('2d'), slider = box.querySelector('input');
-			// Keeps the circle covered: the picture can't be dragged past its edges.
+			// The picture always covers the whole circle.
 			const clampXY = () => {
 				const sw = w * base * zoom, sh = h * base * zoom;
 				x = Math.max(-(sw - SIZE) / 2, Math.min((sw - SIZE) / 2, x));
@@ -1036,15 +1090,16 @@
 				notify('✓ New profile picture');
 				if (isOpen()) render(true);
 			});
-			// Tests reach in here.
+			// For the tests.
 			openCropper.state = () => ({ zoom, x, y });
 			openCropper.set = (z, nx, ny) => { x = nx; y = ny; setZoom(z); };
 		};
 		img.onerror = () => notify('That picture could not be read');
 		img.src = src;
 	}
-	/** Your picture on the game's canvas (the Extensions page), in a circle. */
+	/** Image element drawMyPic draws from. */
 	const picImg = new Image();
+	/** Draws your picture in a circle on the game's canvas (Extensions page). */
 	function drawMyPic(left, top, size) {
 		const pic = myPfp();
 		if (!pic || typeof MainCanvas === 'undefined' || !MainCanvas) return;
@@ -1082,11 +1137,14 @@
 		me.title = loggedIn() ? (myPfp() ? 'Your profile picture' : 'Choose a profile picture') : '';
 	}
 
-	/** A hidden SlimeBeep beep: a "do you have SlimeBeep?" ping, its answer, or something for a group chat. */
+	/**
+	 * A hidden beep (BeepType PROTO) from a friend: JSON with `sb: 1` and any of `kf` (their key start),
+	 * picture fields (pictureNews), `ping`/`pong` (SlimeBeep check) or `ginv` (group invite).
+	 * Ignored from non-friends; the sender's member number comes from the game server.
+	 */
 	function onHidden(d) {
 		if (!loggedIn() || !isNum(d.MemberNumber) || typeof d.Message !== 'string' || d.Message.length > 1000) return;
 		const from = d.MemberNumber;
-		// The server says who sent it, so this can't be faked; strangers are ignored outright.
 		if (from === Player.MemberNumber || !isFriend(from) || !allow(from)) return;
 		if (histOwner !== Player.MemberNumber) loadHistory();
 		let p;
@@ -1097,12 +1155,12 @@
 		pictureNews(from, p);
 		if (p.pfreq === 1 || p.pf) return;
 		if (p.ping === 1) {
-			// Answer once a minute at most, so nobody can use SlimeBeep to bounce beeps around.
+			// At most one answer a minute per friend.
 			if (Date.now() - (ponged.get(from) || 0) > 60000) { ponged.set(from, Date.now()); sendHidden(from, { sb: 1, pong: 1 }); }
 			return;
 		}
 		if (p.pong === 1) { if (isOpen() && tab === 'newgc') render(true); return; }
-		// A group invite from a friend: kept, and a card; joining is up to you.
+		// Kept in `invitations` with a card; nothing is joined automatically.
 		if (p.ginv && typeof p.ginv === 'object') {
 			const m = CODE_RE.exec(typeof p.ginv.code === 'string' ? p.ginv.code : '');
 			if (!m || groups[m[1]]) return;
@@ -1117,22 +1175,21 @@
 		}
 	}
 
-	/*
-	 * The relay side of group chats (relay/src/index.js says what the relay does and checks).
-	 * One connection per group while you're logged in; quiet, it hibernates on the relay and costs
-	 * nothing. A dropped connection comes back by itself, a little later each time (up to 5 minutes).
+	/**
+	 * One relay connection per group (reconnects with backoff, up to 5 min), by group id: { ws, ready (signed in), retry (reconnect count), queue (messages
+	 * waiting for sign-in), waiters (invite callbacks), create/invite (sent with the sign-in),
+	 * onWelcome/onFail, dead (closed on purpose), pinged (last keep-alive) }.
 	 */
-	const conns = {}; // group id -> { ws, ready, retry, queue, waiters, create, invite, onWelcome, onFail, dead, pinged }
-	let relayPics = {}; // member number -> the picture a group shared
+	const conns = {};
+	/** Member number -> picture shared in a group (for members who aren't friends). */
+	let relayPics = {};
+	/** This account's key: { owner, priv, pub: { x, y }, kf }. See getKey. */
 	let myKey = null;
 	const b64url = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
-	/*
-	 * Signing without the browser's crypto.subtle, which only exists on https pages: the game's sites also
-	 * open as plain http://, and there a player could not join or make any group ("could not reach the
-	 * group", 16 Oct 2026). The same P-256 ECDSA the relay checks, in plain JavaScript, with the browser's
-	 * own random numbers (crypto.getRandomValues works on http too). The key is kept in the same form, so it
-	 * is the same key either way. Used only when crypto.subtle is missing.
+	/**
+	 * ECDSA P-256 / SHA-256 in plain JavaScript, used only where crypto.subtle is missing (pages opened over
+	 * http://). Keys use the same JWK fields as WebCrypto's, so one stored key works with both.
 	 */
 	const softEc = (() => {
 		const P = 0xffffffff00000001000000000000000000000000ffffffffffffffffffffffffn;
@@ -1241,15 +1298,15 @@
 			sha256,
 		};
 	})();
+	/** Whether WebCrypto is available (https pages). */
 	const hasSubtle = () => typeof crypto !== 'undefined' && !!crypto.subtle;
 
-	/*
-	 * 📬 Mailboxes (on the relay): a beep for a SlimeBeep friend who is offline is left in their mailbox,
-	 * addressed to the key their own SlimeBeep told you about, and their SlimeBeep picks it up when they log
-	 * in (and every few minutes while online). Only that key can read it, and a beep whose sender's key is
-	 * not the one that friend's SlimeBeep sent you is thrown away. A friend without SlimeBeep (or whose key
-	 * isn't known yet), or a relay that can't be reached: the beep waits here as before and goes out when
-	 * you're both online.
+	/**
+	 * Opens a signed connection to `owner`'s mailbox on the relay. Mailboxes hold beeps for offline
+	 * SlimeBeep friends, addressed to the recipient's key start (peerKeys); see relay/src/index.js.
+	 * @param {number} owner  the mailbox's member number (yours to read, a friend's to leave a beep)
+	 * @param {function(object, WebSocket)} onMsg  gets every message from the relay
+	 * @returns {Promise<WebSocket>} resolves once signed in
 	 */
 	function mailOpen(owner, onMsg) {
 		return new Promise((resolve, reject) => {
@@ -1285,8 +1342,12 @@
 			ws.onclose = () => fin('closed');
 		});
 	}
-	/** Leaves waiting beeps for SlimeBeep friends in their mailboxes (each beep tried again 10 minutes later at most). */
+	/** True while mailWaiting runs. */
 	let mailing = false;
+	/**
+	 * Leaves `waiting` beeps for SlimeBeep friends in their mailboxes; delivered ones move to `hist` (📬).
+	 * A beep is retried after 10 minutes, or straight away with `now`.
+	 */
 	async function mailWaiting(now = false) {
 		if (mailing || stopped || !loggedIn() || !waiting.length) return;
 		const due = waiting.filter((w) => peers.has(w.n) && peerKeys[w.n] && (now || Date.now() - (w.tried || 0) > 600000));
@@ -1320,8 +1381,12 @@
 			}
 		} finally { mailing = false; }
 	}
-	/** Your own mailbox: what was left for you, checked at login and every 5 minutes. */
-	let mailChecked = 0, mailBusy = false;
+	let
+		/** When your mailbox was last checked. */
+		mailChecked = 0,
+		/** True while checkMail runs. */
+		mailBusy = false;
+	/** Fetches your mailbox (at login, then every 5 minutes from relayTick). */
 	async function checkMail() {
 		if (mailBusy || stopped || !loggedIn()) return;
 		mailBusy = true;
@@ -1331,6 +1396,7 @@
 			setTimeout(() => { try { ws.close(); } catch (e) { /* gone */ } }, 3000);
 		} catch (e) { /* tried again next time */ } finally { mailBusy = false; }
 	}
+	/** Adds mailbox beeps to `hist` and acks them. Beeps from non-friends or with a wrong sender key are dropped. */
 	function takeMail(list, sock) {
 		if (!Array.isArray(list) || !list.length) return;
 		const ids = [], fresh = [];
@@ -1339,7 +1405,7 @@
 			ids.push(m.id);
 			const from = m.from;
 			if (!isNum(from) || from === Player.MemberNumber || !isFriend(from)) continue;
-			// Their own SlimeBeep told us their key: a beep signed with another one is not from them.
+			// Signed with another key than the one their own SlimeBeep sent us: not from them.
 			const known = peerKeys[from];
 			if (known && known !== m.fromKf) continue;
 			const text = typeof m.text === 'string' ? m.text.slice(0, 1000) : '';
@@ -1361,13 +1427,16 @@
 		if (ids.length) try { sock.send(JSON.stringify({ t: 'ack', ids })); } catch (e) { /* again next time */ }
 	}
 
-	/** This account's key in this browser (made the first time it's needed). */
+	/**
+	 * This account's signing key in this browser, stored as JWK fields under slimebeep.key.<member number>;
+	 * made on first use. `kf` is the first 16 chars of the public x, the fingerprint friends compare.
+	 */
 	async function getKey() {
 		const me = Player.MemberNumber;
 		if (myKey && myKey.owner === me) return myKey;
 		const k = `slimebeep.key.${me}`;
 		if (!hasSubtle()) {
-			// A plain http:// page: the same key, signed by softEc.
+			// No WebCrypto (http:// page): the same stored key, used through softEc.
 			let saved = null;
 			try { saved = JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { /* make a new one */ }
 			if (!saved || !saved.d || !saved.x || !saved.y) {
@@ -1389,6 +1458,10 @@
 		return (myKey = { owner: me, priv: pair.privateKey, pub: { x: jwk.x, y: jwk.y }, kf: jwk.x.slice(0, 16) });
 	}
 
+	/**
+	 * Opens (or returns) the relay connection for a group. `extra` sets fields of the connection record
+	 * (see `conns`), such as `create` or `invite` for the sign-in.
+	 */
 	function connectGroup(gid, extra = {}) {
 		if (stopped) return { ws: null, ready: false, queue: [], waiters: [], dead: true };
 		const old = conns[gid];
@@ -1406,20 +1479,21 @@
 			c.ready = false;
 			if (c.dead || conns[gid] !== c) return;
 			if (!groups[gid]) { if (c.onFail) c.onFail('could not reach the group'); delete conns[gid]; return; }
-			// Back by itself: about 2 s, 4 s, ... up to 5 minutes, a little randomly so everyone doesn't come back at once.
+			// Reconnect after ~2 s, 4 s, 8 s... up to 5 min, with jitter.
 			c.retry = Math.min((c.retry || 0) + 1, 8);
 			const ms = Math.min(300000, 1000 * 2 ** c.retry) * (0.75 + Math.random() / 2);
 			setTimeout(() => { if (conns[gid] === c && groups[gid] && loggedIn()) connectGroup(gid); }, ms);
 		};
 		return c;
 	}
+	/** Sends to a group's relay connection, or queues it until signed in. */
 	function relaySend(gid, x) {
 		const c = conns[gid] || connectGroup(gid);
 		if (c.ready && c.ws && c.ws.readyState === 1) c.ws.send(JSON.stringify(x));
 		else c.queue.push(x);
 	}
 
-	/** Everything the relay says, checked before use. */
+	/** Handles one message from a group's relay connection (sign-in, roster, messages, pictures, invites, errors). */
 	async function onRelay(gid, c, p) {
 		if (!p || typeof p !== 'object' || conns[gid] !== c) return;
 		const me = Player.MemberNumber;
@@ -1495,7 +1569,7 @@
 		}
 	}
 
-	/** A group's member list from the relay, made safe; you must be in it. */
+	/** Stores a group's roster from the relay (cleaned); ignored if you are not in it. */
 	function takeRoster(gid, r) {
 		if (!r || typeof r !== 'object' || !Array.isArray(r.members)) return;
 		const old = groups[gid];
@@ -1512,7 +1586,10 @@
 		if (isOpen()) render(true);
 	}
 
-	/** Messages from the relay: live ones, or what you missed while away (one card for those). */
+	/**
+	 * Adds group messages to `hist`. `live`: they just arrived (a card each); otherwise they are history
+	 * from the sign-in (one card for all).
+	 */
 	function takeMsgs(gid, msgs, live) {
 		const g = groups[gid];
 		if (!g || !Array.isArray(msgs)) return;
@@ -1547,6 +1624,7 @@
 		if (isOpen() && tab !== 'options' && tab !== 'wave') render(true);
 	}
 
+	/** Forgets a group (left, removed or deleted): connection, state and messages; `note` shows as a card. */
 	function dropGroup(gid, note) {
 		const g = groups[gid];
 		delete groups[gid];
@@ -1563,6 +1641,11 @@
 	}
 
 	const sendGroup = (id, text) => relaySend(id, { t: 'say', text });
+	/**
+	 * Makes a group on the relay and invites the `picked` friends.
+	 * @param {boolean} open  anyone in it can invite (else admins only)
+	 * @param {function(string)} done  gets the new group id once it exists
+	 */
 	function createGroup(name, picked, open, done) {
 		const id = newId();
 		connectGroup(id, { create: { name: clean(name, LIMITS.name) || 'Group chat', open: !!open },
@@ -1570,15 +1653,16 @@
 			onFail: (why) => notify(`⚠ Couldn't make the group${why ? `: ${why}` : ''}`) });
 		return id;
 	}
+	/** Asks the relay for an invite code, for one member number (or anyone with `member` null); `cb(code, why)`. */
 	function requestInvite(id, member, cb) {
 		const c = conns[id] || connectGroup(id);
 		c.waiters.push(cb);
 		relaySend(id, { t: 'invite', member: member == null ? null : member });
 	}
 	/**
-	 * Invites one person to one group: a SlimeBeep friend gets the invite as a card (a hidden beep),
-	 * anyone else gets a code made for them alone, to pass on however you like. Resolves to
-	 * { ok, sent: 'invite' } or { ok, code } or { ok: false, why }.
+	 * Invites one member to a group with a code made for them alone. Friends get it delivered
+	 * (deliverInvite); for anyone else the code is returned to pass on.
+	 * @returns {Promise<{ ok: boolean, sent?: string, code?: string, why?: string }>}
 	 */
 	function inviteToGroup(id, n) {
 		const g = groups[id];
@@ -1592,26 +1676,30 @@
 			requestInvite(id, n, (code, why) => {
 				clearTimeout(timer);
 				if (!code) return resolve({ ok: false, why: why || 'refused' });
-				// A friend gets it from you directly (a card, or a beep with the code); anyone else gets the code to pass on.
 				if (isFriend(n)) resolve({ ok: true, sent: deliverInvite(n, code, g.name), code });
 				else resolve({ ok: true, code });
 			});
 		});
 	}
 
-	/** An invite made for one friend, sent to them as a hidden beep (only friends get those). */
+	/** Invites a friend to a group (a code for them, then deliverInvite). */
 	function inviteFriend(id, n) {
 		requestInvite(id, n, (code) => { if (code) deliverInvite(n, code, groups[id] ? groups[id].name : 'Group chat'); });
 	}
-	/*
-	 * A friend's invite: a card when they have SlimeBeep, otherwise a beep they can read without it. That
-	 * beep has no link (the owner, 16 Oct 2026: nothing that reads like an ad), and at most PLAIN_MAX go out a
-	 * minute, PLAIN_GAP apart, so inviting a crowd never becomes a burst of beeps. Returns how it went:
-	 * 'invite', 'beep', or 'later' (over the limit: no beep; the code still works when passed on).
-	 */
-	const PLAIN_MAX = 3, PLAIN_GAP = 3000;
+	const
+		/** Most invite beeps to friends without SlimeBeep per minute. */
+		PLAIN_MAX = 3,
+		/** Milliseconds between those beeps. */
+		PLAIN_GAP = 3000;
+	/** Times of the invite beeps sent in the last minute. */
 	const plainSent = [];
+	/** When the last scheduled invite beep goes out. */
 	let plainAt = 0;
+	/**
+	 * Delivers a friend's invite code: a hidden invite card if they have SlimeBeep, else a plain beep
+	 * with the code (rate limited by PLAIN_MAX / PLAIN_GAP).
+	 * @returns {'invite'|'beep'|'later'} 'later': over the limit, nothing sent
+	 */
 	function deliverInvite(n, code, name) {
 		if (peers.has(n)) {
 			sendHidden(n, { sb: 1, ginv: { code, name } });
@@ -1628,7 +1716,7 @@
 		setTimeout(() => beep(n, `👥 Come join my group chat "${name}" on SlimeBeep (a BC add-on, ask me where to get it). Group code: ${code}`, false), plainAt - now);
 		return 'beep';
 	}
-	/** In a pick list: at most PLAIN_MAX friends without SlimeBeep ticked at once. */
+	/** Disables pick-list boxes past PLAIN_MAX ticked friends without SlimeBeep (or all unticked ones when `full`). */
 	function capPlain(boxes, full) {
 		const plain = boxes.filter((b) => b.checked && !peers.has(Number(b.value))).length;
 		for (const b of boxes) {
@@ -1638,12 +1726,9 @@
 			b.title = capped ? `${PLAIN_MAX} friends without SlimeBeep at a time (they get a beep each)` : '';
 		}
 	}
-	/** After joining (or for a group you're already in): that group's chat. */
+	/** Opens a group's chat (after joining it). */
 	const openJoined = (gid) => { tab = 'groups'; thread = `g:${gid}`; if (!isOpen()) setOpen(true); else render(); };
-	/*
-	 * A group code anywhere in the game's own chat (a beep, someone pasting it): a Join button after it,
-	 * for SlimeBeep users only (nobody else has this). Each message is looked at once.
-	 */
+	/** Adds a Join button after group codes in the game's chat log; each message is scanned once (data-sb-seen). */
 	function joinButtonsInChat() {
 		const log = document.getElementById('TextAreaChatLog');
 		if (!log) return;
@@ -1660,6 +1745,7 @@
 			}
 		}
 	}
+	/** Joins a group with an invite code (SB-…); `done(gid)` runs once in, or at once if already a member. */
 	function joinCode(raw, done) {
 		const m = CODE_RE.exec(String(raw || '').trim());
 		if (!m) return notify('That is not a SlimeBeep group code');
@@ -1676,16 +1762,17 @@
 			},
 			onFail: (why) => notify(`⚠ Couldn't join${why ? `: ${why}` : ''}`) });
 	}
+	/** Leaves a group on the relay, then forgets it here. */
 	function leaveGroup(id) {
 		relaySend(id, { t: 'leave' });
 		setTimeout(() => dropGroup(id, null), 600);
 	}
-	/** Owner only: the group is deleted for everyone. */
+	/** Deletes a group for everyone (the relay accepts it from the owner only). */
 	function deleteGroup(id) {
 		relaySend(id, { t: 'disband' });
 		setTimeout(() => dropGroup(id, null), 600);
 	}
-	/** 🚪 asks first, in the panel: leave, or (the owner) delete the group for everyone. */
+	/** The 🚪 box: leave the group, or (owner) delete it. */
 	function askGroup(id) {
 		const g = groups[id];
 		if (!g || $('sb-ask')) return;
@@ -1713,14 +1800,15 @@
 		document.addEventListener('keydown', onKey, true);
 		$('sb-panel').appendChild(box);
 	}
-	/** Your picture changed: every group gets the new one. */
+	/** Sends your current picture to every group. */
 	function pushPicture() {
 		const pic = myPfp();
 		for (const id of Object.keys(groups)) { relaySend(id, { t: 'profile', pic: pic ? pic.data : null }); groups[id].picv = pic ? pic.v : undefined; }
 		saveGC();
 	}
+	/** When relayTick last ran. */
 	let lastRelayCheck = 0;
-	/** Every few seconds: connected to every group you're in, and a keep-alive every 4 minutes. */
+	/** Every 5 s: connects to each group, checks the mailbox, sends waiting mail and keep-alives (every 4 min). */
 	function relayTick() {
 		if (!loggedIn() || Date.now() - lastRelayCheck < 5000) return;
 		lastRelayCheck = Date.now();
@@ -1728,26 +1816,27 @@
 		for (const id of Object.keys(groups)) if (!conns[id]) connectGroup(id);
 		if (Date.now() - mailChecked > 300000) checkMail();
 		mailWaiting();
-		// Answered by the relay without waking the group (free).
+		// '{"t":"ping"}' is answered by the relay's auto-response.
 		for (const c of Object.values(conns)) if (c.ready && c.ws && c.ws.readyState === 1 && Date.now() - (c.pinged || 0) > 240000) { c.pinged = Date.now(); c.ws.send('{"t":"ping"}'); }
 	}
-	/** A ✓ when a friend's key in a group is the one their own SlimeBeep sent you, a ⚠ when it isn't. */
+	/** ✓ if a group member's key matches the one their own SlimeBeep sent you, ⚠ if not, '' if unknown. */
 	function keyMark(m) {
 		if (m.n === Player.MemberNumber || !peerKeys[m.n] || !m.kf) return '';
 		return peerKeys[m.n] === m.kf ? ' <span title="Checked: the same key their own SlimeBeep sent you">✓</span>'
 			: ' <span title="Not the key their own SlimeBeep sent you: this may not really be them">⚠</span>';
 	}
 
-	// Hidden beeps go out one at a time, a little apart, so a group message never floods the server.
+	/** Hidden beeps waiting to go out, sent 250 ms apart by drain: [member number, message]. */
 	const outbox = [];
+	/** Queues a hidden beep to a friend; every one also carries your picture version (`pv`) and key start (`kf`). */
 	function sendHidden(n, payload) {
 		if (stopped) return;
-		// Every hidden beep says which picture you have now (pv), so the other side can ask for it.
 		const pic = myPfp();
 		const kf = myKey && myKey.owner === Player.MemberNumber ? myKey.kf : undefined;
 		outbox.push([n, JSON.stringify({ ...payload, pv: pic ? pic.v : 0, ...(kf ? { kf } : {}) })]);
 		if (outbox.length === 1) drain();
 	}
+	/** Sends the next hidden beep in `outbox`. */
 	function drain() {
 		if (!outbox.length) return;
 		const [n, msg] = outbox[0];
@@ -1761,18 +1850,15 @@
 		for (const f of ask) sendHidden(f.MemberNumber, { sb: 1, ping: 1 });
 		return ask.length;
 	}
-	/*
-	 * Every incoming beep, straight from the server. The game's beep list (which the chats are built
-	 * from) only takes plain beeps, and another add-on can handle a beep before the game does, so it
-	 * never reaches that list (Alyx's beep, 16 Oct 2026: it only showed in EBC). A beep the game has
-	 * not listed a moment later is added here instead. Leash beeps and raw data are left alone.
+	/**
+	 * A beep from the server. If the game's beep log has not listed it 1.5 s later (another add-on took
+	 * it, or its BeepType kept it out), it is added to `hist` here. Leash beeps and add-on data are skipped.
 	 */
 	function catchBeep(d) {
 		if (!d || typeof d.MemberNumber !== 'number' || typeof d.MemberName !== 'string') return;
 		const type = typeof d.BeepType === 'string' ? d.BeepType : '';
 		if (/leash/i.test(type)) return;
 		const msg = typeof d.Message === 'string' ? d.Message : undefined;
-		// Another add-on's own signals (isSignal) are not beeps.
 		if (isSignal(msg, !!type)) return;
 		if (type && !parseBeep(msg).text) return;
 		const at = Date.now();
@@ -1796,13 +1882,16 @@
 			} catch (e) { warn(e); }
 		}, 1500);
 	}
+	/** Asks the server for the online friends (answered through onServer). */
 	const askFriends = () => {
 		if (!loggedIn()) return;
 		listen();
 		try { if (typeof ServerSend === 'function') ServerSend('AccountQuery', { Query: 'OnlineFriends' }); } catch (e) { warn(e, 'friends'); }
 	};
 
+	/** Whether the panel is open. */
 	const isOpen = () => $('sb-panel').style.display === 'flex';
+	/** Opens or closes the panel. */
 	function setOpen(on) {
 		if (!on) for (const id of ['sb-crop', 'sb-zoom', 'sb-ask', 'sb-emoji']) if ($(id)) $(id).remove();
 		$('sb-panel').style.display = on ? 'flex' : 'none';
@@ -1810,7 +1899,7 @@
 		place();
 	}
 
-	/** The button where it was dragged to (kept on screen), and the panel beside it. */
+	/** Positions the toggle (opts.pos, kept on screen) and the panel next to it. */
 	function place() {
 		const t = $('sb-toggle'), panel = $('sb-panel');
 		const size = t.offsetWidth || 46;
@@ -1824,16 +1913,15 @@
 		if (!isOpen()) return;
 		const w = panel.offsetWidth, h = Math.min(480, innerHeight - 16);
 		panel.style.height = `${h}px`;
-		// Beside the button: above it if it fits, otherwise below, else as close as the window allows.
+		// Above the toggle if it fits, else below, else clamped to the window.
 		panel.style.left = `${Math.max(8, Math.min(innerWidth - w - 8, left + size - w))}px`;
 		const above = top - h - 10, below = top + size + 10;
 		panel.style.top = `${above >= 8 ? above : below + h <= innerHeight - 8 ? below : Math.max(8, innerHeight - h - 8)}px`;
 		placeCards();
 	}
 
-	/** Every second: new beeps update the badge and the open chat. */
+	/** Runs every second: listeners, relay, update note, new beeps (badge, sound, cards, redraw). */
 	function tick() {
-		// Whatever goes wrong in here stays in here: never an error into the game or other add-ons.
 		try {
 			updateNote();
 			gameCheck();
@@ -1841,7 +1929,6 @@
 			if (!tick.n || ++tick.n % 5 === 0) applyThemed();
 			if (loggedIn()) joinButtonsInChat();
 			tick.n = tick.n || 1;
-			// Listen from login on, not only once the panel has been opened.
 			if (loggedIn()) listen();
 			if (loggedIn() && histOwner === Player.MemberNumber) relayTick();
 			const first = histOwner === null || (loggedIn() && histOwner !== Player.MemberNumber);
@@ -1850,7 +1937,7 @@
 			const badge = $('sb-badge');
 			badge.textContent = n > 99 ? '99+' : String(n);
 			badge.style.display = n ? 'block' : 'none';
-			// The beeps already there at login are not news.
+			// Beeps already in the log at login get no card or sound.
 			if (first || !fresh.length) { if (fresh.length && isOpen()) render(true); return; }
 			ding(fresh);
 			for (const h of fresh.slice(-4)) announce(h);
@@ -1860,9 +1947,8 @@
 		}
 	}
 
-	/** A new beep: a card by the slime (click opens the chat), and a desktop notification if the game is in the background. */
+	/** Shows a new message: a card (unless that chat is open) and, with opts.desktop, a system notification. */
 	function announce(h) {
-		// Already looking at that chat: it's right there.
 		if (isOpen() && thread === h.MemberNumber && !document.hidden) return;
 		const text = textOf(h);
 		const room = h.ChatRoomName && typeof h.Message === 'string' ? `📍 in ${h.ChatRoomName}` : '';
@@ -1881,7 +1967,7 @@
 		}
 	}
 
-	/** A card in the stack by the slime; gone after `ms` (0: stays until closed). At most four at once. */
+	/** Adds a card to the stack (at most 4); it closes after `ms`, or stays with 0. */
 	function card({ icon, title, text, sub = '', onClick, ms = 7000, cls = '' }) {
 		if (stopped) return;
 		const box = $('sb-cards');
@@ -1897,7 +1983,7 @@
 		if (ms) setTimeout(close, ms);
 	}
 
-	/** The card stack beside the slime (or the panel, when it's open), kept inside the window. */
+	/** Positions the card stack next to the toggle, or the panel when open. */
 	function placeCards() {
 		const box = $('sb-cards');
 		if (!box || !box.children.length) return;
@@ -1911,21 +1997,16 @@
 		box.style.top = `${Math.max(8, Math.min(innerHeight - h - 8, top))}px`;
 	}
 
-	/*
-	 * News from the repository (news.json): [{ "id": "...", "title": "...", "text": "...", "date": "..." }].
-	 * Each item shows once per browser, and stays until closed. A first install only gets the newest one.
-	 */
+	/** news.json items: [{ id, title, text, date }]. */
 	let newsItems = [];
 
-	/*
-	 * After an update (or a first install), one small line in the room chat the next time you are
-	 * in a room: the new version and, when news.json has an item with that version as its id, what's new.
-	 * Only you see it.
+	/**
+	 * After an update or first install, posts a local note (only you see it) in the room chat with the
+	 * version and its news.json item. Waits until the chat log has been up 3 s and the news has loaded,
+	 * and retries up to 5 times until the note is really in the log.
 	 */
 	function updateNote() {
 		if (opts.lastVersion === VERSION || !loggedIn() || typeof ChatRoomSendLocal !== 'function' || updateNote.pending) return;
-		// In a room with its chat log on screen for a few seconds, and the news read (or given up on):
-		// right after a login the game says "in a room" before the log exists, and a note sent then is lost.
 		const log = document.getElementById('TextAreaChatLog');
 		const inRoom = !!log && (typeof ServerPlayerIsInChatRoom === 'function' ? ServerPlayerIsInChatRoom() : !!myRoom());
 		if (!inRoom) { updateNote.since = 0; return; }
@@ -1941,7 +2022,6 @@
 		ChatRoomSendLocal(`<div class="sb-update-note" data-v="${esc(VERSION)}" style="margin:2px 0;padding:4px 10px;border-radius:10px;background:#ffe6f3;color:#a3155c;border-left:4px solid #ff4fa3;font-size:.9em">` +
 			`<img src="${ICON}" style="width:1.3em;height:1.3em;vertical-align:middle;border-radius:50%;margin-right:4px${opts.night ? ';filter:hue-rotate(-105deg)' : ''}" alt="">` +
 			`<b>${head}</b>${body ? ` ${body}` : ''}</div>`);
-		// Only counted as shown once it is really in the chat log; otherwise tried again (five times at most).
 		setTimeout(() => {
 			updateNote.pending = false;
 			const shown = !!document.querySelector(`#TextAreaChatLog .sb-update-note[data-v="${CSS.escape(VERSION)}"]`);
@@ -1949,10 +2029,7 @@
 			if (shown || updateNote.tries >= 5) { opts.lastVersion = VERSION; saveOpts(); }
 		}, 1500);
 	}
-	/**
-	 * Once logged in: if a game update removed something SlimeBeep uses, one card (per version and
-	 * per set of missing parts) says what won't work until SlimeBeep is updated. Nothing else changes.
-	 */
+	/** Once per load: a card listing what won't work if game globals in NEEDS are missing (once per version and set). */
 	function gameCheck() {
 		if (gameCheck.done || !loggedIn()) return;
 		gameCheck.done = true;
@@ -1965,9 +2042,12 @@
 		card({ icon: `<img src="${ICON}" style="width:34px;height:34px;border-radius:50%;flex:none" alt="">`, title: '🫧 SlimeBeep',
 			text: `A game update changed something SlimeBeep uses, so this may not work until SlimeBeep updates: ${what}. Everything else works as usual.`, ms: 0, cls: 'news' });
 	}
+	/** Whether news() has finished (loaded or failed). */
 	let newsLoaded = false;
+	/** Load time, for updateNote's wait. */
 	const started = Date.now();
 
+	/** Loads news.json and shows unseen items as cards (a first install gets only the newest). */
 	function news() {
 		fetch(`${NEWS}?t=${Date.now()}`, { cache: 'no-store' })
 			.then((r) => (r.ok ? r.json() : []))
@@ -1983,26 +2063,26 @@
 				opts.seenNews = valid.map((i) => i.id);
 				saveOpts();
 			})
-			.catch(() => { /* no news is fine */ })
+			.catch(() => { /* no news */ })
 			.finally(() => { newsLoaded = true; });
 	}
 
-	/** A soft two-note pop for a new beep. */
-	/*
-	 * 🔕 Muted chats: no sound for that person or group (the card and the unread count still come).
-	 * opts.muted holds 'n:<member number>' and 'g:<group id>'.
-	 */
+	/** The opts.muted key of a message's chat. */
 	const muteKey = (h) => (h.group ? `g:${h.group}` : `n:${h.MemberNumber}`);
+	/** Whether a chat is muted (no sound; cards and unread counts still come). */
 	const isMuted = (key) => Array.isArray(opts.muted) && opts.muted.includes(key);
-	/** The sound for new messages, unless every one of them is from a muted chat. */
+	/** Chimes for new messages unless all of them are from muted chats. */
 	const ding = (list) => { if (opts.sound && list.some((h) => !isMuted(muteKey(h)))) chime(); };
+	/** Mutes or unmutes a chat. */
 	function toggleMute(key, name) {
 		const on = !isMuted(key);
 		setOpt('muted', [...(Array.isArray(opts.muted) ? opts.muted : []).filter((k) => k !== key), ...(on ? [key] : [])].slice(-500));
 		notify(on ? `🔕 No sound for ${name}` : `🔔 Sound back on for ${name}`);
 		if (isOpen()) render(true);
 	}
+	/** The 🔔/🔕 button for a chat header. */
 	const muteButton = (key) => `<button id="sb-mute" title="${isMuted(key) ? 'Muted: no sound for this chat. Click for sound again' : 'Mute: no sound for this chat'}">${isMuted(key) ? '🔕' : '🔔'}</button>`;
+	/** Plays a short two-note sound. */
 	function chime() {
 		try {
 			const ac = chime.ac || (chime.ac = new AudioContext());
@@ -2020,7 +2100,7 @@
 		} catch (e) { /* no sound, no matter */ }
 	}
 
-	/** One chat per person, newest first: { n, name, last, unread }. */
+	/** One-to-one chats from `hist`, newest first: [{ n, name, last (newest entry), unread (count) }]. */
 	function chats() {
 		const by = new Map();
 		for (const b of log()) {
@@ -2034,12 +2114,14 @@
 		return [...by.values()].map((c) => ({ ...c, name: c.name || nameOf(c.n) })).sort((a, b) => new Date(b.last.Time) - new Date(a.last.Time));
 	}
 
+	/** Where an online friend is, for the lists. */
 	const where = (f) => (!f ? 'Offline' : f.ChatRoomName ? (f.Private ? `🔒 ${f.ChatRoomName}` : `📍 ${f.ChatRoomName}`) : f.Private ? '🔒 Private room' : '🏠 Not in a room');
 
+	/** Redraws the panel for the current `tab` and `thread`; `keepScroll` keeps an open chat's scroll position. */
 	function render(keepScroll) {
 		if (stopped) return;
 		const view = $('sb-view');
-		// The picker belongs to a chat; it goes once no chat is open (checked after drawing).
+		// The emoji picker closes when no chat box is left after the redraw.
 		setTimeout(() => { if (!$('sb-text')) closeEmoji(); }, 0);
 		showMe();
 		if (!loggedIn()) {
@@ -2050,7 +2132,6 @@
 		const unreadChats = log().filter((h) => !h.group && unread(h)).length;
 		const unreadGroups = log().filter((h) => h.group && unread(h)).length;
 		const on = (t) => (tab === t || (t === 'groups' && tab === 'newgc') ? 'on' : '');
-		// 💬 one-to-one chats, 👥 group chats, 💖 who's online, 🌊 WaveBeep: one beep to many friends.
 		const tabs = `<div class="sb-tabs">
 			<button data-tab="chats" class="${on('chats')}" title="Chats">💬 Chats${unreadChats ? `<i>${unreadChats}</i>` : ''}</button>
 			<button data-tab="groups" class="${on('groups')}" title="Group chats">👥 Groups${unreadGroups ? `<i>${unreadGroups}</i>` : ''}</button>
@@ -2097,6 +2178,7 @@
 		if (tab === 'options') wireOptions();
 	}
 
+	/** Rows of the 💬 Chats tab, filtered by search `q`. */
 	function chatRows(q) {
 		const rows = chats().filter((c) => !q || c.name.toLowerCase().includes(q) || String(c.n).includes(q)).map((c) => {
 			const online = friends.some((f) => f.MemberNumber === c.n);
@@ -2109,7 +2191,7 @@
 		return rows.sort((a, b) => b.time - a.time).map((r) => r.html).join('');
 	}
 
-	/** The group chats, newest message first. */
+	/** Rows of the 👥 Groups tab, newest message first, filtered by `q`. */
 	function groupRows(q) {
 		const rows = [];
 		for (const g of Object.values(groups)) {
@@ -2125,7 +2207,7 @@
 		return rows.sort((a, b) => b.time - a.time).map((r) => r.html).join('');
 	}
 
-	/** Friends to pick from: online ones, SlimeBeep users first and only they can be ticked. */
+	/** Checkbox list of online friends (SlimeBeep users first) for inviting, without the member numbers in `exclude`. */
 	function pickList(exclude = []) {
 		return friends.filter((f) => !exclude.includes(f.MemberNumber))
 			.sort((a, b) => Number(peers.has(b.MemberNumber)) - Number(peers.has(a.MemberNumber)) || a.MemberName.localeCompare(b.MemberName))
@@ -2136,6 +2218,7 @@
 				<span class="sb-sub" style="display:block">${has ? 'Has SlimeBeep: gets an invite card' : `Gets a beep with the code (${PLAIN_MAX} like that at a time)`}</span></span></label>`;
 			}).join('') || '<div class="sb-empty">🌙 No online friends to add right now.</div>';
 	}
+	/** Wires the 🔍 button that asks friends whether they have SlimeBeep (findPeers). */
 	function wireFind() {
 		$('sb-gc-find').addEventListener('click', () => {
 			const n = findPeers();
@@ -2144,7 +2227,7 @@
 		});
 	}
 
-	/** The top of 👥 Groups: invites from friends, and joining with a code. */
+	/** HTML for the top of 👥 Groups: pending invitations and the join-by-code box. */
 	function groupsTop() {
 		const inv = invitations.filter((i) => !groups[CODE_RE.exec(i.code)[1]]).map((i, n) => `<div class="sb-row" style="cursor:default">${avatar(i.from, i.fromName)}
 			<div class="sb-main"><div class="sb-name">${esc(i.name)}</div><div class="sb-sub">Invite from ${esc(i.fromName)}</div></div>
@@ -2153,6 +2236,7 @@
 			<div class="sb-line" style="margin:0 0 6px"><input class="sb-search" id="sb-join-code" placeholder="Have a code? SB-…" style="margin:0"><button class="sb-pill" id="sb-join">Join</button></div>
 			${inv ? `<div class="sb-hint" style="margin:2px 2px 0">📨 Invitations</div>${inv}` : ''}`;
 	}
+	/** Wires groupsTop's buttons. */
 	function wireGroupsTop() {
 		const list = invitations.filter((i) => !groups[CODE_RE.exec(i.code)[1]]);
 		for (const b of $('sb-view').querySelectorAll('[data-join]')) b.addEventListener('click', () => {
@@ -2169,6 +2253,7 @@
 		$('sb-join-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('sb-join').click(); });
 	}
 
+	/** HTML of the new group form. */
 	function newGroupHtml() {
 		return `<div class="sb-line"><button class="sb-pill" id="sb-gc-back">‹ Back</button><b>👥 New group chat</b></div>
 			<div class="sb-hint" style="margin:4px 0 6px">Up to ${LIMITS.members} people with SlimeBeep, friends or not. Tick friends to invite them now (🫧 have SlimeBeep already); anyone else can join with a code from the group's 👥 page.</div>
@@ -2179,6 +2264,7 @@
 			<div class="sb-line" style="position:sticky;bottom:-10px;background:#fff7fb;padding:6px 0"><span id="sb-gc-count"></span><button class="sb-go" id="sb-gc-make">Create 👥</button></div>`;
 	}
 
+	/** Wires the new group form. */
 	function wireNewGroup() {
 		const boxes = () => [...$('sb-body').querySelectorAll('label input[type=checkbox][value]:not(:disabled)')];
 		const update = () => {
@@ -2205,7 +2291,7 @@
 		update();
 	}
 
-	/** The last invite code made on the members page, under its button. */
+	/** Shows the last invite code made on the members page (renderMembers.code). */
 	function showCode() {
 		const out = $('sb-gm-out');
 		const k = renderMembers.code;
@@ -2218,14 +2304,14 @@
 		});
 	}
 
-	/** The members page of a group: roles, inviting, and what you're allowed to change. */
+	/** A group's members page: roles, name, picture, invite settings, invite codes and friend invites. */
 	function renderMembers(id) {
 		const g = groups[id];
 		const me = Player.MemberNumber;
 		const admin = isAdmin(g, me);
 		const owner = g.owner === me;
 		const view = $('sb-view');
-		// What is being typed survives a redraw (someone joining, a presence change), as does where the cursor is.
+		// Typed text and focus survive the redraw.
 		const typing = {};
 		for (const k of ['sb-gm-name', 'sb-gm-for']) if ($(k) && $(k).dataset.touched) typing[k] = $(k).value;
 		const focused = document.activeElement && document.activeElement.id;
@@ -2292,7 +2378,7 @@
 				const forWho = isNum(want) ? want : null;
 				requestInvite(id, forWho, (code) => {
 					if (!code) return;
-					// Kept, so it stays on screen when the page redraws (someone joining, say).
+					// Kept across redraws.
 					renderMembers.code = { id, code, forWho };
 					showCode();
 				});
@@ -2316,6 +2402,7 @@
 		}
 	}
 
+	/** Draws an open group chat. */
 	function renderGroupThread(keepScroll) {
 		const mayFocus = wantsFocus();
 		const id = thread.slice(2);
@@ -2367,6 +2454,7 @@
 		if (mayFocus) ta.focus();
 	}
 
+	/** Rows of the 💖 tab: online friends, then offline ones greyed out, filtered by `q`. */
 	function friendRows(q) {
 		const match = (name, n, room = '') => !q || name.toLowerCase().includes(q) || String(n).includes(q) || room.toLowerCase().includes(q);
 		const on = friends.filter((f) => match(f.MemberName, f.MemberNumber, f.ChatRoomName || ''))
@@ -2375,7 +2463,6 @@
 				<div class="sb-main"><div class="sb-name"><span class="sb-on"></span>${esc(f.MemberName)}${f.Type === 'Lover' ? ' 💞' : f.Type === 'Submissive' ? ' 🎀' : ''}${peers.has(f.MemberNumber) ? ' <span title="Has SlimeBeep">🫧</span>' : ''}</div>
 				<div class="sb-sub">${esc(where(f))}${f.ChatRoomMemberCount ? ` · ${f.ChatRoomMemberCount}/${f.ChatRoomLimit || '?'}` : ''}</div></div>
 				<div class="sb-side">#${f.MemberNumber}</div></div>`);
-		// Everyone else on your friend list, greyed out: beeps only reach them once they're online.
 		const onlineNums = new Set(friends.map((f) => f.MemberNumber));
 		const all = Player.FriendNames && typeof Player.FriendNames.forEach === 'function' ? [...Player.FriendNames.entries()] : [];
 		const off = all.filter(([n, name]) => isNum(n) && !onlineNums.has(n) && n !== Player.MemberNumber && match(String(name || ''), n))
@@ -2386,7 +2473,7 @@
 		return [...on, ...(off.length ? [`<div class="sb-hint" style="margin:8px 4px 2px">Offline (${off.length})</div>`, ...off] : [])].join('');
 	}
 
-	/** The room under a bubble: only when there is one, and only when it changed since that side's last beep. */
+	/** The 📍 room line under a beep (with Join), shown when the room differs from that side's previous beep. */
 	function roomLine(b, msgs, i) {
 		const room = typeof b.Message === 'string' && typeof b.ChatRoomName === 'string' ? b.ChatRoomName.trim() : '';
 		if (!room) return '';
@@ -2395,12 +2482,12 @@
 		return `<span class="sb-room">📍 ${b.Sent ? 'invited to' : 'in'} ${esc(room)}${b.Sent ? '' : ` <button class="sb-pill sb-joinroom" data-room="${esc(room)}">Join</button>`}</span>`;
 	}
 
-	/*
-	 * Join the chat room a beep came from, the way the game's own chat search does: leave the room you're
-	 * in (only when the game would let you walk out right now), then ask the server to join. The game
-	 * itself takes you in when the server says yes, and its own messages say why when it doesn't.
-	 */
+	/** When joinRoom last ran (one try per 3 s). */
 	let joiningRoom = 0;
+	/**
+	 * Joins a chat room like the game's chat search: leaves the current room if the game allows it now,
+	 * then sends ServerRoomJoin; the game handles the answer.
+	 */
 	async function joinRoom(name) {
 		name = String(name || '').trim();
 		if (!name || !loggedIn() || Date.now() - joiningRoom < 3000) return;
@@ -2421,7 +2508,7 @@
 			notify(`📍 Joining ${name}…`);
 			if (typeof ServerRoomJoin === 'function') {
 				const r = await ServerRoomJoin(name);
-				// A failure carries the server's answer (RoomFull, RoomLocked, CannotFindRoom…) as the error's name.
+				// On failure, the error's name is the server's answer (RoomFull, RoomLocked, CannotFindRoom…).
 				if (r && r.error) {
 					if (typeof ChatSearchSendToast === 'function') ChatSearchSendToast(r.error.name);
 					notify(`⚠ Couldn't join ${name}${/^[A-Za-z]+$/.test(r.error.name || '') ? ` (${r.error.name.replace(/^Room|Error$/g, '').replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase()})` : ''}`);
@@ -2435,13 +2522,14 @@
 		}
 	}
 
+	/** Draws an open chat (one-to-one, or hands over to renderGroupThread). */
 	function renderThread(keepScroll) {
 		if (typeof thread === 'string') return renderGroupThread(keepScroll);
 		const mayFocus = wantsFocus();
 		const n = thread;
 		const view = $('sb-view');
 		const msgs = log().filter((b) => b.MemberNumber === n && !isReaction(b));
-		// Opening the chat reads it, the same flag the game's own beep list uses.
+		// Opening the chat marks it read (in the game's log too).
 		for (const b of msgs) markRead(b);
 		const f = friends.find((x) => x.MemberNumber === n);
 		const old = $('sb-msgs');
@@ -2490,10 +2578,10 @@
 				ta.value = '';
 				return render(true);
 			}
-			// Read now, not when the chat was drawn: a quick second Enter must not invite again.
+			// Read at send time so a quick second Enter doesn't add the room again.
 			const invite = !!myRoom() && (renderThread.pin ?? opts.shareRoom);
 			beep(n, text, invite);
-			// An invite goes once; the next beeps in the chat are just beeps unless 📍 is pressed again.
+			// 📍 applies to one beep.
 			renderThread.pin = false;
 			sync();
 			notify(`✓ Beep sent to ${nameOf(n)}${invite ? ' 📍' : ''}`);
@@ -2505,8 +2593,9 @@
 		if (mayFocus) ta.focus();
 	}
 
+	/** Whether a friend is known to be offline. */
 	const isOffline = (n) => friendsKnown && isFriend(n) && !friends.some((f) => f.MemberNumber === n);
-	/** A beep for an offline friend: kept until they're online. */
+	/** Adds a beep for an offline friend to `waiting` and tries their mailbox. */
 	function queueBeep(n, text) {
 		if (waiting.length >= 100) return notify('⚠ Too many beeps waiting already');
 		waiting.push({ id: newId(), n, text: text.slice(0, 1000), at: Date.now() });
@@ -2514,8 +2603,9 @@
 		notify(`⏳ ${nameOf(n)} is offline: it goes out when they're back`);
 		mailWaiting(true);
 	}
-	/** Sends every waiting beep whose friend is online now, a WaveBeep gap apart. */
+	/** True while sendWaiting runs. */
 	let sendingWaiting = false;
+	/** Sends the `waiting` beeps whose friend is now online, opts.gap seconds apart. */
 	async function sendWaiting() {
 		if (sendingWaiting || !waiting.length || !loggedIn()) return;
 		const ready = waiting.filter((w) => friends.some((f) => f.MemberNumber === w.n));
@@ -2536,10 +2626,7 @@
 		} finally { sendingWaiting = false; }
 	}
 
-	/*
-	 * 😊 Emoji: a picker above the chat box, in tabs, with the ones you use most kept first under 🕘.
-	 * It puts the emoji where the cursor is.
-	 */
+	/** Emoji picker tabs: tab icon -> space-separated emoji. */
 	const EMOJI = {
 		'😊': '😀 😁 😂 🤣 😊 😇 🙂 😉 😍 🥰 😘 😋 😛 😜 🤪 😏 😌 😴 🥺 😳 😱 😭 😢 😤 😡 🤬 🙄 😬 🤔 🤭 🤫 😶 😈 👿 🤤 🥵 🥴 😵 🤯 🥳 😎 🤓 🫠 🫣 🫢',
 		'❤️': '❤️ 🧡 💛 💚 💙 💜 🖤 🤍 🤎 💖 💗 💓 💕 💞 💘 💝 💔 ❣️ 💋 💌 💐 🌹 🌸 💍 🔥 ✨ 💫 ⭐ 🌟',
@@ -2547,9 +2634,13 @@
 		'🐱': '🐱 😺 😸 😻 😼 🙀 🐶 🐰 🐇 🦊 🐺 🐻 🐼 🐨 🐯 🦁 🐮 🐷 🐸 🐵 🐔 🐧 🐦 🦋 🐝 🐞 🐙 🦄 🐉 🐍 🦇',
 		'🎀': '🎀 🎁 🎉 🎈 🎂 🍰 🧁 🍭 🍬 🍫 🍓 🍒 🍑 🍆 🍌 🍷 🍸 🍹 🧋 ☕ 🍵 🍕 🍔 🍟 🌮 🍣 🍜 🔗 ⛓️ 🔒 🔑 🗝️ 🪢 🧸 👑 💎 🕯️ 🎶 🎮',
 	};
+	/** opts.recentEmoji, validated. */
 	const loadRecent = () => (Array.isArray(opts.recentEmoji) ? opts.recentEmoji.filter((e) => typeof e === 'string' && e.length <= 16).slice(0, 24) : []);
+	/** Open emoji tab; null opens 🕘 when there are recent ones. */
 	let emojiTab = null;
+	/** Closes the emoji picker. */
 	function closeEmoji() { const el = $('sb-emoji'); if (el) el.remove(); }
+	/** Opens or closes the emoji picker. */
 	function toggleEmoji() {
 		if ($('sb-emoji')) return closeEmoji();
 		const box = document.createElement('div');
@@ -2558,6 +2649,7 @@
 		$('sb-panel').appendChild(box);
 		drawEmoji();
 	}
+	/** Draws the picker; a click inserts the emoji at the cursor. */
 	function drawEmoji() {
 		const box = $('sb-emoji');
 		if (!box) return;
@@ -2584,11 +2676,7 @@
 		};
 	}
 
-	/*
-	 * Chat commands, typed in any chat box: /me does an action, /shrug, /roll and /help. What comes back
-	 * is the text to send, or null when there's nothing to send. An unknown command is never sent
-	 * (it's most likely a typo); //text sends "/text".
-	 */
+	/** Chat commands for /help: [usage, description]. */
 	const COMMANDS = [
 		['/me <action>', 'Does an action: /me waves sends *waves*'],
 		['/shrug [text]', 'Adds ¯\\_(ツ)_/¯'],
@@ -2597,6 +2685,10 @@
 		['/help', 'This list'],
 		['//text', 'Sends a message that starts with /'],
 	];
+	/**
+	 * Applies a chat command to typed text.
+	 * @returns {?string} the text to send, or null for nothing (/help, or an unknown command)
+	 */
 	function command(raw) {
 		const text = String(raw || '').trim();
 		if (!text.startsWith('/')) return raw;
@@ -2618,6 +2710,7 @@
 			default: notify(`Unknown command /${name || '?'}: try /help`); return null;
 		}
 	}
+	/** Shows the /help box in the panel. */
 	function showHelp() {
 		if ($('sb-ask')) return;
 		const box = document.createElement('div');
@@ -2635,20 +2728,20 @@
 		$('sb-panel').appendChild(box);
 	}
 
-	/*
-	 * SlimeBeep's chat box takes the cursor only when you're already in SlimeBeep or just clicked in
-	 * it: a redraw (a new beep, the friend list) must never pull you out of the game's own chat box, or
-	 * the rest of what you type there ends up in SlimeBeep and gets sent from it.
-	 */
+	/** Last pointerdown on the panel or toggle. */
 	let lastPanelTouch = 0;
+	/**
+	 * Whether a redraw may focus SlimeBeep's chat box: only if focus is already in the panel or it was
+	 * touched in the last 1.5 s, so it never takes the cursor from the game's chat input.
+	 */
 	function wantsFocus() {
 		const a = document.activeElement, panel = $('sb-panel');
 		if (a && a !== document.body && panel && panel.contains(a)) return true;
-		if (a && a !== document.body) return false; // typing somewhere else (the game's chat)
+		if (a && a !== document.body) return false; // focus is elsewhere, e.g. the game's chat
 		return Date.now() - lastPanelTouch < 1500;
 	}
 
-	/** A short note that something happened, by the slime, and a bounce. */
+	/** Shows a short toast by the toggle. */
 	function notify(text) {
 		if (stopped) return;
 		const t = $('sb-toast'), s = $('sb-toggle');
@@ -2664,7 +2757,7 @@
 		notify.timer = setTimeout(() => t.classList.remove('show'), 2200);
 	}
 
-	/** The game's own beep sender: same format, length limit and beep log as the friend list. */
+	/** Sends a beep with the game's own ServerSendBeepMessage (its format, limits and beep log); `includeRoom` adds your room. */
 	function beep(n, text, includeRoom) {
 		if (stopped) return;
 		try {
@@ -2674,6 +2767,7 @@
 		} catch (e) { warn(e, 'beep'); notify('⚠ That beep could not be sent'); }
 	}
 
+	/** HTML of the 🌊 WaveBeep tab. */
 	function groupHtml() {
 		const room = myRoom();
 		const picked = new Set(groupHtml.picked || opts.picked);
@@ -2690,6 +2784,7 @@
 			<div class="sb-hint" id="sb-gstatus"></div>`;
 	}
 
+	/** Wires the WaveBeep tab and sends the beeps, opts.gap seconds apart. */
 	function wireGroup() {
 		const boxes = () => [...$('sb-body').querySelectorAll('label input[type=checkbox]:not(#sb-groom)')];
 		const chosen = () => boxes().filter((b) => b.checked).map((b) => Number(b.value));
@@ -2697,7 +2792,7 @@
 			const n = chosen().length;
 			groupHtml.picked = chosen();
 			if (opts.remember) {
-				// Friends who are offline now stay remembered for when they're back.
+				// Offline friends stay in `picked`.
 				const online = new Set(friends.map((f) => f.MemberNumber));
 				opts.picked = [...new Set([...opts.picked.filter((m) => !online.has(m)), ...groupHtml.picked])];
 				saveOpts();
@@ -2708,7 +2803,7 @@
 		for (const b of boxes()) b.addEventListener('change', count);
 		$('sb-all').addEventListener('click', () => { for (const b of boxes()) b.checked = true; count(); });
 		$('sb-none').addEventListener('click', () => { for (const b of boxes()) b.checked = false; count(); });
-		// Only the friends in the same room as you.
+		// 📍 My room: ticks only the friends in your room.
 		if ($('sb-myroom')) $('sb-myroom').addEventListener('click', () => {
 			const here = new Set(friends.filter((f) => f.ChatRoomName && f.ChatRoomName === myRoom()).map((f) => f.MemberNumber));
 			for (const b of boxes()) b.checked = here.has(Number(b.value));
@@ -2742,25 +2837,18 @@
 		count();
 	}
 
-	/*
-	 * SlimeBeep in the game's own Settings > Extensions, beside the other add-ons: the same options
-	 * as the ⚙, shown over the settings screen. Registered through the game's API, so it is listed
-	 * like any other extension and leaves the rest of the screen alone.
-	 */
-	/*
-	 * SlimeBeep in the game's own Settings > Extensions, drawn the way the game draws its settings
-	 * pages (and the other extensions theirs): a title, white checkboxes, buttons and the exit door,
-	 * all on the game's canvas, so themes recolour it like the rest. Same options as the ⚙ tab.
+	/**
+	 * Registers SlimeBeep's page in the game's Settings > Extensions, drawn on the game's canvas with its
+	 * own checkbox and button helpers. Same options as the ⚙ tab.
 	 */
 	function registerSettings() {
 		if (typeof PreferenceRegisterExtensionSetting !== 'function') return;
 		if (typeof PreferenceExtensionsSettings === 'object' && PreferenceExtensionsSettings && PreferenceExtensionsSettings.SlimeBeep) return;
 		const EXIT = [1815, 75, 90, 90];
-		// Rows fit the 1000-high game screen with every option and button.
 		const LEFT = 500, TOP = 190, ROW = 72;
 		const boxes = [
 			['night', 'Night mode (a night blue slime)', () => opts.night, (on) => setNight(on)],
-			// Only with a theme add-on running (the owner: no toggle for something that isn't there).
+			// Listed only while a theme add-on is running.
 			['themed', () => `Match my ${(themeSource() || {}).name || 'theme'} colours`, () => opts.themed, (on) => setThemed(on), () => !!themeSource()],
 			['sound', 'Pop sound for new beeps', () => opts.sound, (on) => setOpt('sound', on)],
 			['popups', 'A card by the slime for each new beep', () => opts.popups, (on) => setOpt('popups', on)],
@@ -2769,10 +2857,10 @@
 			['remember', 'Remember who I picked for WaveBeeps', () => opts.remember, (on) => { setOpt('remember', on); if (!on) setOpt('picked', []); }],
 			['keep', 'Keep my beeps in this browser after I log out', () => opts.keep, (on) => setKeep(on)],
 		];
-		// The boxes on the page right now (some only show when they apply).
+		// Boxes shown right now (an entry's 5th item decides).
 		const shown = () => boxes.filter((b) => !b[4] || b[4]());
 		const gapY = () => TOP + shown().length * ROW;
-		// Laid out again on every frame, since the list of boxes can change.
+		// Recomputed every frame: the shown boxes can change.
 		const layout = () => {
 			const g = gapY(), btnY = g + ROW;
 			return { g, MINUS: [LEFT, g, 64, 64], PLUS: [LEFT + 80, g, 64, 64], RESET: [LEFT, btnY, 420, 64], CLEAR: [LEFT + 450, btnY, 420, 64],
@@ -2784,7 +2872,7 @@
 			ButtonText: 'SlimeBeep',
 			Image: ICON,
 			load: () => {
-				// The ⚙ tab and this page show the same options; leave the panel on its chats.
+				// Leaves the panel's ⚙ tab so both don't show the same options.
 				if (tab === 'options') { tab = 'chats'; if (isOpen()) render(); }
 			},
 			run: () => {
@@ -2811,7 +2899,7 @@
 					if (myPfp()) DrawButton(...NOPIC, 'Remove profile picture', 'White');
 					DrawButton(...EXIT, '', 'White', 'Icons/Exit.png');
 				} catch (e) {
-					// Drawing is the game's; never break its frame.
+					// Never throw inside the game's draw loop.
 				} finally {
 					if (typeof MainCanvas !== 'undefined' && MainCanvas) MainCanvas.textAlign = 'center';
 				}
@@ -2835,12 +2923,13 @@
 	}
 
 	/* The options, changed the same way from the ⚙ tab and from Settings > Extensions. */
+	/** Sets and saves one option. */
 	function setOpt(name, value) {
 		opts[name] = value;
 		saveOpts();
 	}
 
-	/** Desktop notifications: the browser asks once, and a "no" there turns this back off. */
+	/** Turns desktop notifications on or off; asks the browser for permission and turns off if refused. */
 	async function setDesktop(on) {
 		setOpt('desktop', !!on);
 		if (on && typeof Notification !== 'undefined' && Notification.permission !== 'granted') {
@@ -2851,13 +2940,14 @@
 		if (box) box.checked = opts.desktop;
 	}
 
+	/** Turns saving of chat history on or off. */
 	function setKeep(on) {
 		setOpt('keep', !!on);
 		if (opts.keep) saveHistory();
 		else try { localStorage.removeItem(histKey()); } catch (err) { /* nothing kept anyway */ }
 	}
 
-	/** Forget the kept beeps; this session's stay, as the game itself still has them. */
+	/** Deletes the saved history (this session's beeps stay, the game still has them). */
 	function clearKept() {
 		try { localStorage.removeItem(histKey()); } catch (err) { /* nothing kept anyway */ }
 		hist = hist.filter((h) => live.has(h.k));
@@ -2867,22 +2957,19 @@
 		if (isOpen()) render();
 	}
 
-	/** 🌙 on or off: one class on the page, which only SlimeBeep's own styles look at. */
-	/*
-	 * The theme add-on that's running, if any: [id, name]. Themed puts --tmd-* on the page, BCNeko
-	 * --bcn-* on the body. The first one found is used.
-	 */
+	/** Supported theme add-ons: [id, name, probe returning one of its CSS variables]. */
 	const THEME_SOURCES = [
 		['themed', 'Themed', () => getComputedStyle(document.documentElement).getPropertyValue('--tmd-main')],
 		['bcneko', 'BCNeko', () => document.body && getComputedStyle(document.body).getPropertyValue('--bcn-panel')],
 	];
+	/** The first running theme add-on: { id, name }, or null. */
 	function themeSource() {
 		for (const [id, name, probe] of THEME_SOURCES) {
 			try { if (String(probe() || '').trim()) return { id, name }; } catch (e) { /* not this one */ }
 		}
 		return null;
 	}
-	/** A theme add-on's colours when asked for and one is there (checked again every few seconds: it may load later or stop). */
+	/** Sets the classes that map a theme add-on's colours onto SlimeBeep's (re-run every 5 s from tick). Returns the source. */
 	function applyThemed() {
 		const src = opts.themed ? themeSource() : null;
 		const root = document.documentElement;
@@ -2890,11 +2977,13 @@
 		for (const [id] of THEME_SOURCES) root.classList.toggle(`sb-theme-${id}`, !!src && src.id === id);
 		return src;
 	}
+	/** Turns theme matching on or off. */
 	function setThemed(on) {
 		setOpt('themed', !!on);
 		applyThemed();
 	}
 
+	/** Turns night mode on or off (the sb-night class on <html>). */
 	function setNight(on) {
 		opts.night = !!on;
 		saveOpts();
@@ -2905,14 +2994,11 @@
 		if (box) box.checked = opts.night;
 	}
 
-	/*
-	 * 🐞 Bug reports. The player writes what went wrong; SlimeBeep adds what helps find it (its version,
-	 * the game's, the browser, other mods, its own recent errors) and nothing about anyone else. It goes
-	 * out how the player chooses: a GitHub issue, the clipboard, or a beep to SlimeQueenSamantha, which
-	 * only arrives if she has them on her friend list (the game's beep rule).
-	 */
-	const OWNER = 255659; // SlimeQueenSamantha
+	/** Member number that 🐞 reports can be beeped to (SlimeQueenSamantha). */
+	const OWNER = 255659;
+	/** New GitHub issue page, for 🐞 reports. */
 	const ISSUES = 'https://github.com/Proudkiller0015/slimebeep/issues/new';
+	/** Report details: versions, browser, other mods, recent errors (and your member number with `withNumber`). */
 	function details(withNumber) {
 		const mods = (() => {
 			try {
@@ -2932,12 +3018,14 @@
 			errors.length ? `Recent errors:\n${errors.map((x) => `- ${x}`).join('\n')}` : 'Recent errors: none',
 		].filter(Boolean).join('\n');
 	}
+	/** The full 🐞 report: what the player wrote, then details(). */
 	function reportText() {
 		const what = clean($('sb-bug-what').value, 1500);
 		const how = clean($('sb-bug-how').value, 800);
 		return { what, how, full: `What happened:\n${what || '(not filled in)'}\n\nWhat I was doing:\n${how || '(not filled in)'}\n\n---\n${details($('sb-bug-num').checked)}` };
 	}
 
+	/** HTML of the 🐞 tab. */
 	function bugHtml() {
 		const draft = bugHtml.draft || {};
 		return `<div class="sb-line" style="margin-top:2px"><b>🐞 Report a bug</b></div>
@@ -2954,6 +3042,7 @@
 			<div class="sb-hint" id="sb-bug-status"></div>`;
 	}
 
+	/** Wires the 🐞 tab: open a GitHub issue, copy, or beep the report. */
 	function wireBug() {
 		const keep = () => { bugHtml.draft = { what: $('sb-bug-what').value, how: $('sb-bug-how').value, num: $('sb-bug-num').checked }; };
 		const status = (t) => { const x = $('sb-bug-status'); if (x) x.textContent = t; };
@@ -2981,7 +3070,7 @@
 			const r = ready();
 			if (!r) return;
 			if (!loggedIn()) return status('Log in first.');
-			// One beep holds 1000 characters: the words first, then as much of the details as fits.
+			// A beep holds 1000 characters: the description first, then as many details as fit.
 			const text = `🐞 SlimeBeep bug report\n${r.what}${r.how ? `\nDoing: ${r.how}` : ''}\n— ${details($('sb-bug-num').checked)}`.slice(0, 990);
 			beep(OWNER, text, false);
 			notify('🐞 Report beeped');
@@ -2990,7 +3079,9 @@
 	}
 
 	/* "Invite <them> to…": every group you can invite to, an Invite button each (opened by other add-ons too). */
-	let inviteFor = null; // { n, results: { groupId: text } }
+	/** State of the "Invite <member> to…" page (api.openInvite): { n, results: group id -> result text }. */
+	let inviteFor = null;
+	/** HTML of the "Invite <member> to…" page. */
 	function inviteForHtml() {
 		if (!inviteFor) return '';
 		const n = inviteFor.n;
@@ -3008,6 +3099,7 @@
 			<div class="sb-hint" style="margin:2px 0 6px">${isFriend(n) ? (peers.has(n) ? `${esc(name)} has SlimeBeep: they get an invite card.` : `${esc(name)} gets a beep with the code and where to get SlimeBeep.`) : `They get a code to paste in 👥 Groups, made for #${n} only.`}</div>
 			${rows || '<div class="sb-empty">👥 No group chats you can invite to yet.</div>'}`;
 	}
+	/** Wires the "Invite <member> to…" page. */
 	function wireInviteFor() {
 		$('sb-if-back').addEventListener('click', () => { inviteFor = null; tab = 'groups'; render(); });
 		for (const b of $('sb-body').querySelectorAll('[data-invite]')) b.addEventListener('click', async () => {
@@ -3020,6 +3112,7 @@
 		});
 	}
 
+	/** HTML of the ⚙ tab. */
 	function optionsHtml() {
 		return `<div class="sb-opts">
 			<b style="display:block;margin:6px 2px">⚙ Options</b>
@@ -3039,6 +3132,7 @@
 		</div>`;
 	}
 
+	/** Wires the ⚙ tab. */
 	function wireOptions() {
 		$('sb-o-pic').addEventListener('click', (e) => { e.preventDefault(); pickPicture(); });
 		if ($('sb-o-fit')) $('sb-o-fit').addEventListener('click', (e) => { e.preventDefault(); const src = loadSrc(); if (src) openCropper(src); });
@@ -3058,19 +3152,20 @@
 		$('sb-o-reset').addEventListener('click', () => { setOpt('pos', null); place(); });
 	}
 
-	/*
-	 * The installed loader fetches this file from raw.githubusercontent.com, which can hand out an old
-	 * copy for a few minutes after an update. GitHub Pages (where FUSAM loads it) has the new one within
-	 * a minute, so before starting, this copy asks Pages which version is current and, if that one is
-	 * newer, runs it instead. Without an answer within 4 seconds, it just starts. A copy that came from
-	 * Pages itself (FUSAM, the bookmarklet) is already the newest and starts straight away, with no fetch.
+	/**
+	 * Start-up. A copy loaded from PAGES (FUSAM, the bookmarklet) starts at once. Otherwise (the
+	 * userscript loader reads raw.githubusercontent.com, which can serve an old copy for a few minutes)
+	 * it asks PAGES for the current version first and runs that one instead if it is newer; with no answer
+	 * within 4 s it starts as is.
 	 */
 	const PAGES = 'https://proudkiller0015.github.io/slimebeep/slimebeep.js';
+	/** Whether version string `a` is newer than `b`. */
 	const newer = (a, b) => {
 		const x = a.split('.').map(Number), y = b.split('.').map(Number);
 		for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
 		return false;
 	};
+	/** Builds SlimeBeep. */
 	function start() {
 		try {
 			build();
@@ -3088,7 +3183,7 @@
 				clearTimeout(timer);
 				const m = /const VERSION = '(\d+\.\d+\.\d+)'/.exec(code);
 				if (!m || !newer(m[1], VERSION)) return start();
-				// A newer SlimeBeep: it takes over from here (this one never builds anything).
+				// Run the newer copy instead of this one.
 				window.SlimeBeepHopped = true;
 				delete window.SlimeBeep;
 				const script = document.createElement('script');

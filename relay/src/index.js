@@ -1,50 +1,81 @@
-/*
- * SlimeBeep's group chat relay (Cloudflare Worker + one Durable Object per group).
+/**
+ * SlimeBeep relay: a Cloudflare Worker with two Durable Object classes.
  *
- * Group chats don't use game beeps, so they work between people who aren't friends. Each player's
- * SlimeBeep connects to the groups it is in over a WebSocket. A group keeps its members, roles,
- * invites and its last LIMITS.keep messages, so whoever was offline catches up when they connect.
+ * Group (/ws?g=<group id>): a group chat's members, roles, invites and last LIMITS.keep messages.
+ * Mailbox (/ws?m=<member number>): beeps left for an offline player, readable only with the key they
+ * were addressed to.
  *
- * Who is who: every SlimeBeep makes its own key pair. Connecting means signing a one-time challenge
- * with it; a member's number is tied to their key when they join (with an invite from an admin, or
- * anyone when the group lets everyone invite). An invite made for one person only works for that
- * person, and is the only way to move a member to a new key (a new browser).
+ * Clients sign in by signing a one-time nonce with their own P-256 key. In a group, a member number is
+ * bound to a key when it joins with an invite; an invite made for one member number is the only way to
+ * bind a new key. All rules are enforced here; messages are plain text.
  *
- * Rules are enforced here, not in the add-on: owner > admins > members, at most LIMITS.members
- * people, plain text only, sizes capped, rate limited. Nothing a client sends is ever run.
- *
- * Staying inside Cloudflare's free plan (which never bills; past a limit requests just fail until the
- * daily reset): connections hibernate, so an idle group costs nothing; keep-alive pings are answered
- * by Cloudflare itself without waking the group (setWebSocketAutoResponse); a group takes at most
- * LIMITS.perDay messages a day; storage is a few small rows per group and the last LIMITS.keep messages.
- *
- * Mailboxes (one Durable Object per player, /ws?m=<member number>): beeps left for a SlimeBeep friend who
- * is offline. A beep is addressed to the start of the key the friend's own SlimeBeep told the sender
- * about, and only someone signing in as that member with that key reads it, so claiming somebody's
- * number gets nothing. The sender's key start goes with it, for the reader to check against the one their
- * friend's SlimeBeep sent. At most MAIL.box beeps wait per box, MAIL.perSender a day from one sender,
- * MAIL.days days at most; read beeps are deleted.
+ * Free-plan limits: sockets hibernate, keep-alive pings get an auto-response without waking the
+ * object, and each group takes at most LIMITS.perDay messages a day.
  */
 
 import { DurableObject } from 'cloudflare:workers';
 
-const MAIL = { text: 1000, box: 100, perSender: 50, days: 14, ack: 100 };
+/** Mailbox limits. */
+const MAIL = {
+	/** Longest beep. */
+	text: 1000,
+	/** Most beeps waiting in one mailbox. */
+	box: 100,
+	/** Most beeps one sender may leave in one mailbox per 24 h. */
+	perSender: 50,
+	/** Days before an unread beep is deleted. */
+	days: 14,
+	/** Most ids in one ack. */
+	ack: 100,
+};
+/** A key fingerprint: the first 16 chars of a public key's x. */
 const KF_RE = /^[A-Za-z0-9_-]{16}$/;
-const LIMITS = { name: 40, text: 500, members: 40, admins: 10, keep: 200, pic: 12000, burst: 20, sockets: 80, inviteDays: 7, openUses: 20, perDay: 2000 };
+/** Group limits. */
+const LIMITS = {
+	/** Longest group or member name. */
+	name: 40,
+	/** Longest message. */
+	text: 500,
+	/** Most members in a group. */
+	members: 40,
+	/** Most admins in a group. */
+	admins: 10,
+	/** Messages kept per group. */
+	keep: 200,
+	/** Longest picture data URL. */
+	pic: 12000,
+	/** Most messages per connection in 10 s. */
+	burst: 20,
+	/** Most open connections per object. */
+	sockets: 80,
+	/** Days an invite stays valid. */
+	inviteDays: 7,
+	/** Uses of an open (not member-bound) invite. */
+	openUses: 20,
+	/** Most messages a group takes per day. */
+	perDay: 2000,
+};
+/** A group id. */
 const ID_RE = /^[a-z0-9]{8,24}$/;
+/** An invite secret, also used for mailbox beep ids. */
 const SECRET_RE = /^[A-Z2-9]{10}$/;
+/** A picture: an image data URL only. */
 const PIC_RE = /^data:image\/(webp|jpeg|png);base64,[A-Za-z0-9+/]+=*$/;
+/** A base64url key coordinate or signature. */
 const B64URL = /^[A-Za-z0-9_-]{16,128}$/;
-// Only the game's own pages (a browser always sends its page's origin; this keeps other websites out), over https or
-// plain http: the mirrors also open as http://, and a player there could not join any group (16 Oct 2026).
-// Any subdomain of the game's known sites, so a move to a new mirror or subdomain keeps working.
-// The European mirror is spelt both ways: bondage-europe.com and bondageeurope.com (a player there could not join, 16 Oct 2026).
+/**
+ * Page origins allowed to connect: the game's sites and their subdomains (http or https; the European
+ * mirror is spelt with and without the hyphen), and localhost for tests.
+ */
 const ORIGINS = [/^https?:\/\/([a-z0-9-]+\.)*bondageprojects\.elementfx\.com$/, /^https?:\/\/([a-z0-9-]+\.)*bondageprojects\.com$/,
 	/^https?:\/\/([a-z0-9-]+\.)*bondage-?europe\.com$/, /^https?:\/\/([a-z0-9-]+\.)*bondage-asia\.com$/,
 	/^http:\/\/localhost(:\d+)?$/, /^http:\/\/127\.0\.0\.1(:\d+)?$/];
 
+/** A plausible member number. */
 const isNum = (n) => Number.isInteger(n) && n > 0 && n < 1e9;
+/** A string with control characters removed, trimmed and cut to `max`; '' for anything else. */
 const clean = (x, max) => (typeof x === 'string' ? x.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').trim().slice(0, max) : '');
+/** A random 10-character secret (no look-alike letters). */
 const secret = () => {
 	const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 	const a = new Uint8Array(10);
@@ -55,13 +86,14 @@ const b64url = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replac
 const unb64url = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
 
 export default {
+	/** Checks the origin and hands the WebSocket to the group (?g=) or mailbox (?m=) object. */
 	async fetch(req, env) {
 		const url = new URL(req.url);
 		if (url.pathname === '/') return new Response('SlimeBeep group chat relay', { headers: { 'content-type': 'text/plain' } });
 		if (url.pathname !== '/ws') return new Response('Not found', { status: 404 });
 		if (req.headers.get('Upgrade') !== 'websocket') return new Response('Expected a WebSocket', { status: 426 });
 		const origin = req.headers.get('Origin') || '';
-		// ALLOW_ANY_ORIGIN is only ever set for local testing (npm run dev:test), never on the live relay.
+		// ALLOW_ANY_ORIGIN is set only by the local test server.
 		if (env.ALLOW_ANY_ORIGIN !== '1' && !ORIGINS.some((re) => re.test(origin))) return new Response('Forbidden', { status: 403 });
 		const box = Number(url.searchParams.get('m'));
 		if (url.searchParams.has('m')) {
@@ -74,23 +106,28 @@ export default {
 	},
 };
 
+/**
+ * One group chat. Storage: 'meta' { name, owner, admins, open, created, pic }, 'members' (member number ->
+ * { n, name, pub, joined, pic }), 'invites' (secret -> { member, by, exp, uses }) and 'msg:<seq>' messages.
+ */
 export class Group extends DurableObject {
 	constructor(ctx, env) {
 		super(ctx, env);
-		// Keep-alive pings answered without waking this group up (free, and not counted as a request).
+		// Pings are answered without waking the object.
 		ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('{"t":"ping"}', '{"t":"pong"}'));
 		ctx.blockConcurrencyWhile(async () => {
 			this.meta = (await ctx.storage.get('meta')) || null;
 			this.members = (await ctx.storage.get('members')) || {};
 			this.invites = (await ctx.storage.get('invites')) || {};
-			// The last message's number, from the newest message kept (no separate counter to write).
+			// Message counter, from the newest stored message.
 			const newest = await ctx.storage.list({ prefix: 'msg:', reverse: true, limit: 1 });
 			this.seq = newest.size ? [...newest.values()][0].id : (await ctx.storage.get('seq')) || 0;
-			// Today's count lives in memory only: one write less per message (it starts again if the group sleeps, which is fine).
+			// Messages today, in memory only (restarts if the object is evicted).
 			this.today = { day: '', n: 0 };
 		});
 	}
 
+	/** Accepts a WebSocket and sends it a sign-in nonce. */
 	async fetch(req) {
 		const gid = new URL(req.url).searchParams.get('g');
 		if (this.ctx.getWebSockets().length >= LIMITS.sockets) return new Response('Busy', { status: 503 });
@@ -102,11 +139,14 @@ export class Group extends DurableObject {
 		return new Response(null, { status: 101, webSocket: client });
 	}
 
+	/**
+	 * A client message (JSON with `t`). Before sign-in only 'auth'; then 'say', 'history', 'invite', 'kick',
+	 * 'admin', 'owner', 'rename', 'open', 'profile', 'gpic', 'leave' and 'disband'. Rate limited per connection.
+	 */
 	async webSocketMessage(ws, raw) {
 		let att = ws.deserializeAttachment();
 		try {
 			if (typeof raw !== 'string' || raw.length > 16000) return this.fail(ws, 'too big');
-			// A burst limit per connection: LIMITS.burst messages in ten seconds.
 			const now = Date.now();
 			att.hits = (att.hits || []).filter((t) => now - t < 10000);
 			att.hits.push(now);
@@ -120,7 +160,7 @@ export class Group extends DurableObject {
 				return await this.auth(ws, att, p);
 			}
 			const me = this.members[att.member];
-			// Removed meanwhile: out.
+			// Removed since signing in.
 			if (!me || !this.meta) return this.fail(ws, 'not a member');
 			switch (p.t) {
 				case 'say': return await this.say(att.member, p);
@@ -144,10 +184,10 @@ export class Group extends DurableObject {
 
 	webSocketClose(ws) { this.gone(ws); }
 	webSocketError(ws) { this.gone(ws); }
+	/** A connection closed: tells the others who is online now. */
 	gone(ws) {
 		const a = ws.deserializeAttachment();
 		try { ws.close(); } catch (e) { /* already closed */ }
-		// Someone went offline: everyone else's 🟢 list changes (nothing is written for this).
 		if (a && a.member && this.meta) this.broadcast({ t: 'presence', online: this.online(ws) });
 	}
 	/** Members with a live, signed-in connection right now (`except`: one that is closing). */
@@ -161,8 +201,10 @@ export class Group extends DurableObject {
 		return [...on];
 	}
 
-	// ---- signing in, making, joining
-
+	/**
+	 * Signs a connection in: verifies the signed nonce, then creates the group (p.create), joins it with
+	 * an invite (p.invite) or checks the key of an existing member. Sends the roster, pictures and history.
+	 */
 	async auth(ws, att, p) {
 		const member = p.member;
 		if (!isNum(member) || !p.pub || !B64URL.test(p.pub.x || '') || !B64URL.test(p.pub.y || '') || !B64URL.test(p.sig || '')) return this.fail(ws, 'bad sign-in');
@@ -203,12 +245,10 @@ export class Group extends DurableObject {
 		this.broadcast({ t: 'roster', roster: this.roster() });
 	}
 
-	// ---- messages
-
+	/** Posts a message (within LIMITS.perDay). */
 	async say(member, p) {
 		const text = clean(p.text, LIMITS.text);
 		if (!text) return;
-		// At most LIMITS.perDay messages a day per group, so one busy group can't use up the free plan.
 		const day = new Date().toISOString().slice(0, 10);
 		if (this.today.day !== day) this.today = { day, n: 0 };
 		if (++this.today.n > LIMITS.perDay) return this.broadcast({ t: 'error', why: 'this group has sent enough messages for today; back tomorrow' });
@@ -216,35 +256,35 @@ export class Group extends DurableObject {
 		await this.append({ from: member, name: m.name, text, ref: typeof p.ref === 'string' ? p.ref.slice(0, 24) : undefined });
 	}
 
+	/** Posts a system line ("X joined"). */
 	async note(text) { await this.append({ sys: true, text }); }
 
+	/** Stores a message, drops the oldest past LIMITS.keep, and sends it to everyone connected. */
 	async append(msg) {
 		this.seq += 1;
 		const m = { id: this.seq, at: Date.now(), ...msg };
-		// One row per message, and one old one deleted once there are more than LIMITS.keep: about two writes a message.
 		await this.ctx.storage.put(`msg:${String(this.seq).padStart(10, '0')}`, m);
-		// Only the last LIMITS.keep are kept.
 		if (this.seq > LIMITS.keep) await this.ctx.storage.delete(`msg:${String(this.seq - LIMITS.keep).padStart(10, '0')}`);
 		this.broadcast({ t: 'msg', m });
 	}
 
+	/** Sends the stored messages after id `after`. */
 	async history(ws, after) {
 		const from = Number.isInteger(after) && after >= 0 ? after : 0;
 		const list = await this.ctx.storage.list({ prefix: 'msg:', start: `msg:${String(from + 1).padStart(10, '0')}`, limit: LIMITS.keep });
 		this.send(ws, { t: 'history', msgs: [...list.values()] });
 	}
 
-	// ---- members and roles
-
+	/** Makes an invite: for one member number (p.member) or open. Admins only unless the group is open. */
 	async invite(ws, member, p) {
 		const admin = this.meta.admins.includes(member);
 		if (!admin && !this.meta.open) return this.send(ws, { t: 'error', why: 'only admins can invite here' });
 		if (Object.keys(this.members).length >= LIMITS.members) return this.send(ws, { t: 'error', why: 'group is full' });
 		const target = p.member == null ? null : p.member;
 		if (target !== null && !isNum(target)) return this.send(ws, { t: 'error', why: 'bad member number' });
-		// A new key for someone already in: only an admin can arrange that.
+		// Re-keying an existing member needs an admin.
 		if (target !== null && this.members[target] && !admin) return this.send(ws, { t: 'error', why: 'already a member' });
-		// Old invites go first; at most 50 at a time.
+		// Expired invites are dropped; at most 50 are kept.
 		for (const [k, v] of Object.entries(this.invites)) if (v.exp < Date.now()) delete this.invites[k];
 		const keys = Object.keys(this.invites);
 		if (keys.length >= 50) delete this.invites[keys[0]];
@@ -254,6 +294,7 @@ export class Group extends DurableObject {
 		this.send(ws, { t: 'invite', code, member: target, ref: typeof p.ref === 'string' ? p.ref.slice(0, 24) : undefined });
 	}
 
+	/** Removes a member (admins; only the owner can remove admins). */
 	async kick(by, target) {
 		const g = this.meta;
 		if (!isNum(target) || !this.members[target] || target === g.owner || target === by) return;
@@ -268,6 +309,7 @@ export class Group extends DurableObject {
 		this.broadcast({ t: 'roster', roster: this.roster() });
 	}
 
+	/** Grants admin (any admin) or takes it (owner only). */
 	async setAdmin(by, target, on) {
 		const g = this.meta;
 		if (!isNum(target) || !this.members[target] || target === g.owner) return;
@@ -279,6 +321,7 @@ export class Group extends DurableObject {
 		this.broadcast({ t: 'roster', roster: this.roster() });
 	}
 
+	/** Hands the group to another member (owner only). */
 	async setOwner(by, target) {
 		const g = this.meta;
 		if (by !== g.owner || !isNum(target) || !this.members[target] || target === by) return;
@@ -289,6 +332,7 @@ export class Group extends DurableObject {
 		this.broadcast({ t: 'roster', roster: this.roster() });
 	}
 
+	/** Renames the group (admins). */
 	async rename(by, name) {
 		const n = clean(name, LIMITS.name);
 		if (!this.meta.admins.includes(by) || !n || n === this.meta.name) return;
@@ -298,6 +342,7 @@ export class Group extends DurableObject {
 		this.broadcast({ t: 'roster', roster: this.roster() });
 	}
 
+	/** Lets every member invite, or admins only (admins). */
 	async setOpen(by, on) {
 		if (!this.meta.admins.includes(by) || this.meta.open === on) return;
 		this.meta.open = on;
@@ -306,6 +351,7 @@ export class Group extends DurableObject {
 		this.broadcast({ t: 'roster', roster: this.roster() });
 	}
 
+	/** Updates a member's name and picture (null removes it). */
 	async profile(member, p) {
 		const m = this.members[member];
 		if (typeof p.name === 'string') m.name = clean(p.name, LIMITS.name) || m.name;
@@ -327,6 +373,7 @@ export class Group extends DurableObject {
 		this.broadcast({ t: 'gpic', data: this.meta.pic || null });
 	}
 
+	/** A member leaves; ownership passes on, and an empty group is deleted. */
 	async leave(member) {
 		const g = this.meta;
 		const name = this.members[member].name;
@@ -334,14 +381,14 @@ export class Group extends DurableObject {
 		g.admins = g.admins.filter((n) => n !== member);
 		const left = Object.values(this.members);
 		if (!left.length) {
-			// The last one out: the group goes, messages and all.
+			// Last member out: delete everything.
 			this.closeMember(member, 'left');
 			await this.ctx.storage.deleteAll();
 			this.meta = null; this.members = {}; this.invites = {}; this.seq = 0;
 			return;
 		}
 		if (g.owner === member) {
-			// The group passes to an admin, or else whoever has been in it longest.
+			// Ownership passes to an admin, else the longest member.
 			g.owner = g.admins[0] || left.sort((a, b) => a.joined - b.joined)[0].n;
 			if (!g.admins.includes(g.owner)) g.admins.push(g.owner);
 		}
@@ -351,7 +398,7 @@ export class Group extends DurableObject {
 		this.broadcast({ t: 'roster', roster: this.roster() });
 	}
 
-	/** The owner deletes the group for everyone: messages, members and invites all go. */
+	/** Deletes the group and closes every connection (owner only). */
 	async disband(by) {
 		if (!this.meta || by !== this.meta.owner) return;
 		for (const ws of this.ctx.getWebSockets()) {
@@ -362,16 +409,17 @@ export class Group extends DurableObject {
 		this.meta = null; this.members = {}; this.invites = {}; this.seq = 0;
 	}
 
-	// ---- helpers
-
+	/** The roster sent to clients; each member's `kf` lets friends compare it with the key they know. */
 	roster() {
 		const g = this.meta;
 		return { name: g.name, owner: g.owner, admins: g.admins, open: g.open, online: this.online(),
-			// kf: the start of each member's key, so a friend's SlimeBeep can check it against the one it knows.
 			members: Object.values(this.members).map((m) => ({ n: m.n, name: m.name, kf: m.pub.x.slice(0, 16) })) };
 	}
+	/** Saves meta, members and invites. */
 	async save() { await this.ctx.storage.put({ meta: this.meta, members: this.members, invites: this.invites }); }
+	/** Sends JSON to one connection (ignored if it is closed). */
 	send(ws, x) { try { ws.send(JSON.stringify(x)); } catch (e) { /* gone */ } }
+	/** Sends to every signed-in member. */
 	broadcast(x) {
 		const s = JSON.stringify(x);
 		for (const ws of this.ctx.getWebSockets()) {
@@ -379,19 +427,21 @@ export class Group extends DurableObject {
 			if (a && a.member && this.members[a.member]) try { ws.send(s); } catch (e) { /* gone */ }
 		}
 	}
+	/** Closes a member's connections with a 'gone' message. */
 	closeMember(member, why) {
 		for (const ws of this.ctx.getWebSockets()) {
 			const a = ws.deserializeAttachment();
 			if (a && a.member === member) { this.send(ws, { t: 'gone', why }); try { ws.close(4000, why); } catch (e) { /* gone */ } }
 		}
 	}
+	/** Sends a fatal error and closes the connection. */
 	fail(ws, why) { this.send(ws, { t: 'error', why, fatal: true }); try { ws.close(4001, why); } catch (e) { /* gone */ } }
 }
 
-/*
- * One player's mailbox. Everyone signs in the same way as in a group (a signed one-time challenge). The
- * owner (signing in as the box's member number) gets the beeps addressed to their key and acks them away;
- * anyone else may leave one.
+/**
+ * One player's mailbox. Storage: 'm:<id>' -> { id, from, name, fromKf, kf, text, at }, where `kf` is the
+ * recipient key the beep is addressed to and `fromKf` the sender's. Signed in as the box's member number,
+ * a connection reads (and acks) the beeps for its own key; any other signed-in connection may leave one.
  */
 export class Mailbox extends DurableObject {
 	constructor(ctx, env) {
@@ -399,6 +449,7 @@ export class Mailbox extends DurableObject {
 		ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('{"t":"ping"}', '{"t":"pong"}'));
 	}
 
+	/** Accepts a WebSocket (at most 20 at once) and sends it a sign-in nonce. */
 	async fetch(req) {
 		const owner = Number(new URL(req.url).searchParams.get('m'));
 		if (this.ctx.getWebSockets().length >= 20) return new Response('Busy', { status: 503 });
@@ -410,6 +461,10 @@ export class Mailbox extends DurableObject {
 		return new Response(null, { status: 101, webSocket: client });
 	}
 
+	/**
+	 * A client message: 'auth' first (the owner then gets its beeps as 'mail'), then 'put' (leave a beep),
+	 * 'ack' (owner: delete read beeps) or 'check' (owner: fetch again). Rate limited per connection.
+	 */
 	async webSocketMessage(ws, raw) {
 		const att = ws.deserializeAttachment();
 		try {
@@ -443,7 +498,7 @@ export class Mailbox extends DurableObject {
 		}
 	}
 
-	/** Everything waiting, oldest first; anything past MAIL.days goes. */
+	/** All stored beeps, oldest first, after deleting those older than MAIL.days. */
 	async all() {
 		const rows = [...(await this.ctx.storage.list({ prefix: 'm:' })).entries()];
 		const old = Date.now() - MAIL.days * 864e5;
@@ -451,10 +506,12 @@ export class Mailbox extends DurableObject {
 		if (gone.length) await this.ctx.storage.delete(gone);
 		return rows.filter(([, m]) => m && m.at >= old).map(([, m]) => m).sort((a, b) => a.at - b.at);
 	}
+	/** The beeps addressed to key `kf`. */
 	async mine(kf) {
 		return (await this.all()).filter((m) => m.kf === kf).map(({ id, from, name, fromKf, text, at }) => ({ id, from, name, fromKf, text, at }));
 	}
 
+	/** Leaves a beep (not in your own box), within MAIL limits; delivered at once if the owner is connected with that key. */
 	async put(ws, att, p) {
 		if (att.member === att.owner) return this.send(ws, { t: 'error', why: 'that is your own mailbox' });
 		const text = clean(p.text, MAIL.text);
@@ -467,18 +524,17 @@ export class Mailbox extends DurableObject {
 		const m = { id: secret(), from: att.member, name: att.name, fromKf: att.kf, kf: p.kf, text, at: Date.now() };
 		await this.ctx.storage.put(`m:${m.id}`, m);
 		this.send(ws, { t: 'ok', ref, id: m.id });
-		// The owner connected right now with that key: straight to them.
 		for (const o of this.ctx.getWebSockets()) {
 			const a = o.deserializeAttachment();
 			if (a && a.member === a.owner && a.kf === m.kf) this.send(o, { t: 'mail', list: [{ id: m.id, from: m.from, name: m.name, fromKf: m.fromKf, text: m.text, at: m.at }] });
 		}
 	}
 
+	/** Deletes read beeps (owner only, and only beeps for their key). */
 	async ack(att, ids) {
 		if (att.member !== att.owner || !Array.isArray(ids)) return;
 		const keys = ids.slice(0, MAIL.ack).filter((id) => typeof id === 'string' && SECRET_RE.test(id)).map((id) => `m:${id}`);
 		if (!keys.length) return;
-		// Only beeps for this key.
 		const rows = await this.ctx.storage.get(keys);
 		const mine = [...rows.entries()].filter(([, m]) => m && m.kf === att.kf).map(([k]) => k);
 		if (mine.length) await this.ctx.storage.delete(mine);
@@ -490,8 +546,10 @@ export class Mailbox extends DurableObject {
 	fail(ws, why) { this.send(ws, { t: 'error', why, fatal: true }); try { ws.close(4001, why); } catch (e) { /* gone */ } }
 }
 
+/** Whether two public keys are the same. */
 const samePub = (a, b) => !!a && !!b && a.x === b.x && a.y === b.y;
 
+/** Verifies an ECDSA P-256 / SHA-256 signature (base64url r||s) of `text`. */
 async function verify(pub, sig, text) {
 	try {
 		const key = await crypto.subtle.importKey('jwk', { kty: 'EC', crv: 'P-256', x: pub.x, y: pub.y, ext: true }, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
