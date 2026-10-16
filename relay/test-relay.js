@@ -3,7 +3,10 @@
 const BASE = process.env.RELAY || 'ws://127.0.0.1:8787';
 const ORIGIN = 'https://www.bondageprojects.elementfx.com';
 let failed = 0;
-const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if (!ok) failed++; };
+const check = (ok, what) => {
+	console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`);
+	if (!ok) failed++;
+};
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const b64url = (buf) => Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
@@ -19,14 +22,38 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 	const ws = new WebSocket(`${BASE}/ws?${gid.startsWith('mbox:') ? `m=${gid.slice(5)}` : `g=${gid}`}`, { headers: { Origin: origin } });
 	const c = { ws, got: [], closed: null };
 	ws.onmessage = (e) => c.got.push(JSON.parse(e.data));
-	ws.onclose = (e) => { c.closed = e.code || 'closed'; };
-	ws.onerror = () => { c.closed = c.closed || 'error'; };
-	await new Promise((res) => { const t = setInterval(() => { if (c.got.length || c.closed) { clearInterval(t); res(); } }, 20); });
+	ws.onclose = (e) => {
+		c.closed = e.code || 'closed';
+	};
+	ws.onerror = () => {
+		c.closed = c.closed || 'error';
+	};
+	await new Promise((res) => {
+		const t = setInterval(() => {
+			if (c.got.length || c.closed) {
+				clearInterval(t);
+				res();
+			}
+		}, 20);
+	});
 	if (c.closed) return c;
 	const hello = c.got.find((x) => x.t === 'hello');
 	const member = extra.as || who.member;
-	const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, (extra.signWith || who).k.privateKey, new TextEncoder().encode(`${hello.nonce}|${gid}|${member}`));
-	ws.send(JSON.stringify({ t: 'auth', member, name: who.name, pub: who.pub, sig: extra.badSig ? b64url(new Uint8Array(64)) : b64url(sig), ...extra.fields }));
+	const sig = await crypto.subtle.sign(
+		{ name: 'ECDSA', hash: 'SHA-256' },
+		(extra.signWith || who).k.privateKey,
+		new TextEncoder().encode(`${hello.nonce}|${gid}|${member}`),
+	);
+	ws.send(
+		JSON.stringify({
+			t: 'auth',
+			member,
+			name: who.name,
+			pub: who.pub,
+			sig: extra.badSig ? b64url(new Uint8Array(64)) : b64url(sig),
+			...extra.fields,
+		}),
+	);
 	await wait(250);
 	c.send = (x) => ws.send(JSON.stringify(x));
 	c.last = (t) => [...c.got].reverse().find((x) => x.t === t);
@@ -80,12 +107,18 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 	await wait(200);
 	const forCat2 = a.last('invite').code;
 	const c2 = await connect(gid, cat, { fields: { invite: forCat2, after: 0 } });
-	check(c2.last('welcome') && c2.texts().some((t) => /hi squad/.test(t)), 'Cat joins with a fresh invite and sees what was said before she joined');
+	check(
+		c2.last('welcome') && c2.texts().some((t) => /hi squad/.test(t)),
+		'Cat joins with a fresh invite and sees what was said before she joined',
+	);
 	const z = await connect(gid, zed, { fields: { invite: open } });
 	check(z.last('welcome') && z.last('roster').roster.members.length === 3, 'Zed, not a friend of anyone, joins with the open invite');
 	z.send({ t: 'say', text: 'hello from a stranger' });
 	await wait(300);
-	check(c2.texts().includes('hello from a stranger') && a.texts().includes('hello from a stranger'), 'everyone gets messages, friends or not');
+	check(
+		c2.texts().includes('hello from a stranger') && a.texts().includes('hello from a stranger'),
+		'everyone gets messages, friends or not',
+	);
 
 	// Offline: Cat goes, three messages, Cat comes back asking for what came after the last one she saw.
 	const lastSeen = Math.max(...c2.got.flatMap((x) => (x.t === 'msg' ? [x.m.id] : x.t === 'history' ? x.msgs.map((m) => m.id) : [0])));
@@ -101,13 +134,19 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 	z.send({ t: 'kick', member: 13 });
 	z.send({ t: 'invite' });
 	await wait(300);
-	check(a.last('roster').roster.members.length === 3 && /only admins/.test(z.last('error').why), "a member can't remove anyone or invite in an admin-only group");
+	check(
+		a.last('roster').roster.members.length === 3 && /only admins/.test(z.last('error').why),
+		"a member can't remove anyone or invite in an admin-only group",
+	);
 	a.send({ t: 'admin', member: 13, on: true });
 	await wait(200);
 	c3.send({ t: 'admin', member: 11, on: false });
 	c3.send({ t: 'kick', member: 11 });
 	await wait(200);
-	check(a.last('roster').roster.admins.join() === '11,13' && a.last('roster').roster.owner === 11, "an admin can't demote or remove the owner");
+	check(
+		a.last('roster').roster.admins.join() === '11,13' && a.last('roster').roster.owner === 11,
+		"an admin can't demote or remove the owner",
+	);
 	c3.send({ t: 'kick', member: 99 });
 	await wait(300);
 	check(z.last('gone') && z.closed, 'an admin removes a member, whose connection is closed');
@@ -117,7 +156,10 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 	// Limits.
 	for (let i = 0; i < 25; i++) a.send({ t: 'say', text: `spam ${i}` });
 	await wait(500);
-	check(a.got.some((x) => x.t === 'error' && x.why === 'slow down'), 'flooding gets "slow down"');
+	check(
+		a.got.some((x) => x.t === 'error' && x.why === 'slow down'),
+		'flooding gets "slow down"',
+	);
 	a.send({ t: 'profile', pic: 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=' });
 	await wait(200);
 	check(!a.got.some((x) => x.t === 'pic' && x.data && /svg/.test(x.data)), 'an SVG is never taken as a picture');
@@ -129,7 +171,10 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 	const png = 'data:image/png;base64,iVBORw0KGgo=';
 	c3.send({ t: 'gpic', pic: png });
 	await wait(300);
-	check(a.last('gpic') && a.last('gpic').data === png && a.texts().some((t) => /changed the group picture/.test(t)), 'an admin sets the group picture and everyone gets it');
+	check(
+		a.last('gpic') && a.last('gpic').data === png && a.texts().some((t) => /changed the group picture/.test(t)),
+		'an admin sets the group picture and everyone gets it',
+	);
 	c3.send({ t: 'gpic', pic: 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=' });
 	await wait(300);
 	check(a.last('gpic').data === png, 'an SVG is never taken as the group picture');
@@ -166,14 +211,18 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 		await wait(300);
 		check(e1.last('error') && /bad beep/.test(e1.last('error').why), 'a beep without a proper key start is refused');
 		const fake = await connect(box, eve, { as: 11 });
-		check(fake.last('mail') && fake.last('mail').list.length === 1 && fake.last('mail').list[0].text === 'for the wrong key',
-			"signing in as Ann with Eve's key only gets what was addressed to Eve's key, never Ann's beeps");
+		check(
+			fake.last('mail') && fake.last('mail').list.length === 1 && fake.last('mail').list[0].text === 'for the wrong key',
+			"signing in as Ann with Eve's key only gets what was addressed to Eve's key, never Ann's beeps",
+		);
 		fake.send({ t: 'ack', ids: [c1.last('ok').id] });
 		await wait(300);
 		const a1 = await connect(box, ann);
 		const got = a1.last('mail') ? a1.last('mail').list : [];
-		check(got.length === 1 && got[0].from === 13 && got[0].name === 'Cat' && got[0].fromKf === kf(cat) && got[0].text === 'miss you <b>x</b>',
-			`Ann signs in and gets Cat's beep (Eve's acks of it did nothing), with Cat's key start to check (${JSON.stringify(got)})`);
+		check(
+			got.length === 1 && got[0].from === 13 && got[0].name === 'Cat' && got[0].fromKf === kf(cat) && got[0].text === 'miss you <b>x</b>',
+			`Ann signs in and gets Cat's beep (Eve's acks of it did nothing), with Cat's key start to check (${JSON.stringify(got)})`,
+		);
 		c1.send({ t: 'put', kf: kf(ann), text: 'and another', ref: 'r2' });
 		await wait(300);
 		check(a1.last('mail').list[0].text === 'and another', 'a beep left while Ann is connected reaches her straight away');
@@ -185,7 +234,12 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 		c1.send({ t: 'put', kf: kf(ann), text: 'x'.repeat(5000) });
 		await wait(300);
 		check(c1.last('error') && c1.last('error').fatal, 'an oversized message is refused');
-		for (const c of [c1, e1, fake, a2]) try { c.ws.close(); } catch (e) { /* closed */ }
+		for (const c of [c1, e1, fake, a2])
+			try {
+				c.ws.close();
+			} catch (e) {
+				/* closed */
+			}
 	}
 
 	console.log(failed ? `\n${failed} FAILED` : '\nall passed');

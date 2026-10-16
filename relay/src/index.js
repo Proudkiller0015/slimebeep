@@ -67,14 +67,25 @@ const B64URL = /^[A-Za-z0-9_-]{16,128}$/;
  * Page origins allowed to connect: the game's sites and their subdomains (http or https; the European
  * mirror is spelt with and without the hyphen), and localhost for tests.
  */
-const ORIGINS = [/^https?:\/\/([a-z0-9-]+\.)*bondageprojects\.elementfx\.com$/, /^https?:\/\/([a-z0-9-]+\.)*bondageprojects\.com$/,
-	/^https?:\/\/([a-z0-9-]+\.)*bondage-?europe\.com$/, /^https?:\/\/([a-z0-9-]+\.)*bondage-asia\.com$/,
-	/^http:\/\/localhost(:\d+)?$/, /^http:\/\/127\.0\.0\.1(:\d+)?$/];
+const ORIGINS = [
+	/^https?:\/\/([a-z0-9-]+\.)*bondageprojects\.elementfx\.com$/,
+	/^https?:\/\/([a-z0-9-]+\.)*bondageprojects\.com$/,
+	/^https?:\/\/([a-z0-9-]+\.)*bondage-?europe\.com$/,
+	/^https?:\/\/([a-z0-9-]+\.)*bondage-asia\.com$/,
+	/^http:\/\/localhost(:\d+)?$/,
+	/^http:\/\/127\.0\.0\.1(:\d+)?$/,
+];
 
 /** A plausible member number. */
 const isNum = (n) => Number.isInteger(n) && n > 0 && n < 1e9;
 /** A string with control characters removed, trimmed and cut to `max`; '' for anything else. */
-const clean = (x, max) => (typeof x === 'string' ? x.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').trim().slice(0, max) : '');
+const clean = (x, max) =>
+	typeof x === 'string'
+		? x
+				.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '')
+				.trim()
+				.slice(0, max)
+		: '';
 /** A random 10-character secret (no look-alike letters). */
 const secret = () => {
 	const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -82,8 +93,13 @@ const secret = () => {
 	crypto.getRandomValues(a);
 	return [...a].map((x) => abc[x % abc.length]).join('');
 };
-const b64url = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-const unb64url = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
+const b64url = (buf) =>
+	btoa(String.fromCharCode(...new Uint8Array(buf)))
+		.replace(/\+/g, '-')
+		.replace(/\//g, '_')
+		.replace(/=+$/, '');
+const unb64url = (s) =>
+	Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
 
 export default {
 	/** Checks the origin and hands the WebSocket to the group (?g=) or mailbox (?m=) object. */
@@ -153,7 +169,11 @@ export class Group extends DurableObject {
 			ws.serializeAttachment(att);
 			if (att.hits.length > LIMITS.burst) return this.send(ws, { t: 'error', why: 'slow down' });
 			let p;
-			try { p = JSON.parse(raw); } catch (e) { return this.fail(ws, 'not JSON'); }
+			try {
+				p = JSON.parse(raw);
+			} catch (e) {
+				return this.fail(ws, 'not JSON');
+			}
 			if (!p || typeof p !== 'object' || Array.isArray(p) || typeof p.t !== 'string') return this.fail(ws, 'bad message');
 			if (!att.member) {
 				if (p.t !== 'auth') return this.fail(ws, 'sign in first');
@@ -163,31 +183,52 @@ export class Group extends DurableObject {
 			// Removed since signing in.
 			if (!me || !this.meta) return this.fail(ws, 'not a member');
 			switch (p.t) {
-				case 'say': return await this.say(att.member, p);
-				case 'history': return this.history(ws, p.after);
-				case 'invite': return await this.invite(ws, att.member, p);
-				case 'kick': return await this.kick(att.member, p.member);
-				case 'admin': return await this.setAdmin(att.member, p.member, p.on === true);
-				case 'owner': return await this.setOwner(att.member, p.member);
-				case 'rename': return await this.rename(att.member, p.name);
-				case 'open': return await this.setOpen(att.member, p.on === true);
-				case 'profile': return await this.profile(att.member, p);
-				case 'gpic': return await this.groupPic(att.member, p.pic);
-				case 'leave': return await this.leave(att.member);
-				case 'disband': return await this.disband(att.member);
-				default: return this.send(ws, { t: 'error', why: 'unknown' });
+				case 'say':
+					return await this.say(att.member, p);
+				case 'history':
+					return this.history(ws, p.after);
+				case 'invite':
+					return await this.invite(ws, att.member, p);
+				case 'kick':
+					return await this.kick(att.member, p.member);
+				case 'admin':
+					return await this.setAdmin(att.member, p.member, p.on === true);
+				case 'owner':
+					return await this.setOwner(att.member, p.member);
+				case 'rename':
+					return await this.rename(att.member, p.name);
+				case 'open':
+					return await this.setOpen(att.member, p.on === true);
+				case 'profile':
+					return await this.profile(att.member, p);
+				case 'gpic':
+					return await this.groupPic(att.member, p.pic);
+				case 'leave':
+					return await this.leave(att.member);
+				case 'disband':
+					return await this.disband(att.member);
+				default:
+					return this.send(ws, { t: 'error', why: 'unknown' });
 			}
 		} catch (e) {
 			this.send(ws, { t: 'error', why: 'server error' });
 		}
 	}
 
-	webSocketClose(ws) { this.gone(ws); }
-	webSocketError(ws) { this.gone(ws); }
+	webSocketClose(ws) {
+		this.gone(ws);
+	}
+	webSocketError(ws) {
+		this.gone(ws);
+	}
 	/** A connection closed: tells the others who is online now. */
 	gone(ws) {
 		const a = ws.deserializeAttachment();
-		try { ws.close(); } catch (e) { /* already closed */ }
+		try {
+			ws.close();
+		} catch (e) {
+			/* already closed */
+		}
 		if (a && a.member && this.meta) this.broadcast({ t: 'presence', online: this.online(ws) });
 	}
 	/** Members with a live, signed-in connection right now (`except`: one that is closing). */
@@ -207,14 +248,21 @@ export class Group extends DurableObject {
 	 */
 	async auth(ws, att, p) {
 		const member = p.member;
-		if (!isNum(member) || !p.pub || !B64URL.test(p.pub.x || '') || !B64URL.test(p.pub.y || '') || !B64URL.test(p.sig || '')) return this.fail(ws, 'bad sign-in');
+		if (!isNum(member) || !p.pub || !B64URL.test(p.pub.x || '') || !B64URL.test(p.pub.y || '') || !B64URL.test(p.sig || ''))
+			return this.fail(ws, 'bad sign-in');
 		const pub = { x: p.pub.x, y: p.pub.y };
 		const ok = await verify(pub, p.sig, `${att.nonce}|${att.gid}|${member}`);
 		if (!ok) return this.fail(ws, 'bad signature');
 		const name = clean(p.name, LIMITS.name) || `#${member}`;
 		if (p.create) {
 			if (this.meta) return this.fail(ws, 'group exists');
-			this.meta = { name: clean(p.create.name, LIMITS.name) || 'Group chat', owner: member, admins: [member], open: p.create.open === true, created: Date.now() };
+			this.meta = {
+				name: clean(p.create.name, LIMITS.name) || 'Group chat',
+				owner: member,
+				admins: [member],
+				open: p.create.open === true,
+				created: Date.now(),
+			};
 			this.members = { [member]: { n: member, name, pub, joined: Date.now() } };
 			await this.save();
 			await this.note(`${name} made the group`);
@@ -234,7 +282,10 @@ export class Group extends DurableObject {
 		} else {
 			const known = this.members[member];
 			if (!known || !samePub(known.pub, pub)) return this.fail(ws, 'not a member');
-			if (known.name !== name) { known.name = name; await this.save(); }
+			if (known.name !== name) {
+				known.name = name;
+				await this.save();
+			}
 		}
 		att.member = member;
 		ws.serializeAttachment(att);
@@ -251,13 +302,16 @@ export class Group extends DurableObject {
 		if (!text) return;
 		const day = new Date().toISOString().slice(0, 10);
 		if (this.today.day !== day) this.today = { day, n: 0 };
-		if (++this.today.n > LIMITS.perDay) return this.broadcast({ t: 'error', why: 'this group has sent enough messages for today; back tomorrow' });
+		if (++this.today.n > LIMITS.perDay)
+			return this.broadcast({ t: 'error', why: 'this group has sent enough messages for today; back tomorrow' });
 		const m = this.members[member];
 		await this.append({ from: member, name: m.name, text, ref: typeof p.ref === 'string' ? p.ref.slice(0, 24) : undefined });
 	}
 
 	/** Posts a system line ("X joined"). */
-	async note(text) { await this.append({ sys: true, text }); }
+	async note(text) {
+		await this.append({ sys: true, text });
+	}
 
 	/** Stores a message, drops the oldest past LIMITS.keep, and sends it to everyone connected. */
 	async append(msg) {
@@ -317,7 +371,11 @@ export class Group extends DurableObject {
 		if (!on && (by !== g.owner || !g.admins.includes(target))) return;
 		g.admins = on ? [...g.admins, target] : g.admins.filter((n) => n !== target);
 		await this.save();
-		await this.note(on ? `${this.members[by].name} made ${this.members[target].name} admin` : `${this.members[by].name} took admin from ${this.members[target].name}`);
+		await this.note(
+			on
+				? `${this.members[by].name} made ${this.members[target].name} admin`
+				: `${this.members[by].name} took admin from ${this.members[target].name}`,
+		);
 		this.broadcast({ t: 'roster', roster: this.roster() });
 	}
 
@@ -365,9 +423,13 @@ export class Group extends DurableObject {
 	/** The group's own picture: admins set or remove it (null). Kept in meta, sent to everyone. */
 	async groupPic(by, pic) {
 		if (!this.meta.admins.includes(by)) return;
-		if (pic === null) { if (!this.meta.pic) return; delete this.meta.pic; }
-		else if (typeof pic === 'string' && pic.length <= LIMITS.pic && PIC_RE.test(pic)) { if (pic === this.meta.pic) return; this.meta.pic = pic; }
-		else return;
+		if (pic === null) {
+			if (!this.meta.pic) return;
+			delete this.meta.pic;
+		} else if (typeof pic === 'string' && pic.length <= LIMITS.pic && PIC_RE.test(pic)) {
+			if (pic === this.meta.pic) return;
+			this.meta.pic = pic;
+		} else return;
 		await this.save();
 		await this.note(pic ? `${this.members[by].name} changed the group picture` : `${this.members[by].name} removed the group picture`);
 		this.broadcast({ t: 'gpic', data: this.meta.pic || null });
@@ -384,7 +446,10 @@ export class Group extends DurableObject {
 			// Last member out: delete everything.
 			this.closeMember(member, 'left');
 			await this.ctx.storage.deleteAll();
-			this.meta = null; this.members = {}; this.invites = {}; this.seq = 0;
+			this.meta = null;
+			this.members = {};
+			this.invites = {};
+			this.seq = 0;
 			return;
 		}
 		if (g.owner === member) {
@@ -403,39 +468,79 @@ export class Group extends DurableObject {
 		if (!this.meta || by !== this.meta.owner) return;
 		for (const ws of this.ctx.getWebSockets()) {
 			this.send(ws, { t: 'gone', why: 'deleted' });
-			try { ws.close(4000, 'deleted'); } catch (e) { /* gone */ }
+			try {
+				ws.close(4000, 'deleted');
+			} catch (e) {
+				/* gone */
+			}
 		}
 		await this.ctx.storage.deleteAll();
-		this.meta = null; this.members = {}; this.invites = {}; this.seq = 0;
+		this.meta = null;
+		this.members = {};
+		this.invites = {};
+		this.seq = 0;
 	}
 
 	/** The roster sent to clients; each member's `kf` lets friends compare it with the key they know. */
 	roster() {
 		const g = this.meta;
-		return { name: g.name, owner: g.owner, admins: g.admins, open: g.open, online: this.online(),
-			members: Object.values(this.members).map((m) => ({ n: m.n, name: m.name, kf: m.pub.x.slice(0, 16) })) };
+		return {
+			name: g.name,
+			owner: g.owner,
+			admins: g.admins,
+			open: g.open,
+			online: this.online(),
+			members: Object.values(this.members).map((m) => ({ n: m.n, name: m.name, kf: m.pub.x.slice(0, 16) })),
+		};
 	}
 	/** Saves meta, members and invites. */
-	async save() { await this.ctx.storage.put({ meta: this.meta, members: this.members, invites: this.invites }); }
+	async save() {
+		await this.ctx.storage.put({ meta: this.meta, members: this.members, invites: this.invites });
+	}
 	/** Sends JSON to one connection (ignored if it is closed). */
-	send(ws, x) { try { ws.send(JSON.stringify(x)); } catch (e) { /* gone */ } }
+	send(ws, x) {
+		try {
+			ws.send(JSON.stringify(x));
+		} catch (e) {
+			/* gone */
+		}
+	}
 	/** Sends to every signed-in member. */
 	broadcast(x) {
 		const s = JSON.stringify(x);
 		for (const ws of this.ctx.getWebSockets()) {
 			const a = ws.deserializeAttachment();
-			if (a && a.member && this.members[a.member]) try { ws.send(s); } catch (e) { /* gone */ }
+			if (a && a.member && this.members[a.member])
+				try {
+					ws.send(s);
+				} catch (e) {
+					/* gone */
+				}
 		}
 	}
 	/** Closes a member's connections with a 'gone' message. */
 	closeMember(member, why) {
 		for (const ws of this.ctx.getWebSockets()) {
 			const a = ws.deserializeAttachment();
-			if (a && a.member === member) { this.send(ws, { t: 'gone', why }); try { ws.close(4000, why); } catch (e) { /* gone */ } }
+			if (a && a.member === member) {
+				this.send(ws, { t: 'gone', why });
+				try {
+					ws.close(4000, why);
+				} catch (e) {
+					/* gone */
+				}
+			}
 		}
 	}
 	/** Sends a fatal error and closes the connection. */
-	fail(ws, why) { this.send(ws, { t: 'error', why, fatal: true }); try { ws.close(4001, why); } catch (e) { /* gone */ } }
+	fail(ws, why) {
+		this.send(ws, { t: 'error', why, fatal: true });
+		try {
+			ws.close(4001, why);
+		} catch (e) {
+			/* gone */
+		}
+	}
 }
 
 /**
@@ -475,13 +580,19 @@ export class Mailbox extends DurableObject {
 			ws.serializeAttachment(att);
 			if (att.hits.length > LIMITS.burst) return this.send(ws, { t: 'error', why: 'slow down' });
 			let p;
-			try { p = JSON.parse(raw); } catch (e) { return this.fail(ws, 'not JSON'); }
+			try {
+				p = JSON.parse(raw);
+			} catch (e) {
+				return this.fail(ws, 'not JSON');
+			}
 			if (!p || typeof p !== 'object' || Array.isArray(p) || typeof p.t !== 'string') return this.fail(ws, 'bad message');
 			if (!att.member) {
 				if (p.t !== 'auth') return this.fail(ws, 'sign in first');
 				const member = p.member;
-				if (!isNum(member) || !p.pub || !B64URL.test(p.pub.x || '') || !B64URL.test(p.pub.y || '') || !B64URL.test(p.sig || '')) return this.fail(ws, 'bad sign-in');
-				if (!(await verify({ x: p.pub.x, y: p.pub.y }, p.sig, `${att.nonce}|mbox:${att.owner}|${member}`))) return this.fail(ws, 'bad signature');
+				if (!isNum(member) || !p.pub || !B64URL.test(p.pub.x || '') || !B64URL.test(p.pub.y || '') || !B64URL.test(p.sig || ''))
+					return this.fail(ws, 'bad sign-in');
+				if (!(await verify({ x: p.pub.x, y: p.pub.y }, p.sig, `${att.nonce}|mbox:${att.owner}|${member}`)))
+					return this.fail(ws, 'bad signature');
 				att.member = member;
 				att.kf = p.pub.x.slice(0, 16);
 				att.name = clean(p.name, LIMITS.name) || `#${member}`;
@@ -504,11 +615,16 @@ export class Mailbox extends DurableObject {
 		const old = Date.now() - MAIL.days * 864e5;
 		const gone = rows.filter(([, m]) => !m || m.at < old).map(([k]) => k);
 		if (gone.length) await this.ctx.storage.delete(gone);
-		return rows.filter(([, m]) => m && m.at >= old).map(([, m]) => m).sort((a, b) => a.at - b.at);
+		return rows
+			.filter(([, m]) => m && m.at >= old)
+			.map(([, m]) => m)
+			.sort((a, b) => a.at - b.at);
 	}
 	/** The beeps addressed to key `kf`. */
 	async mine(kf) {
-		return (await this.all()).filter((m) => m.kf === kf).map(({ id, from, name, fromKf, text, at }) => ({ id, from, name, fromKf, text, at }));
+		return (await this.all())
+			.filter((m) => m.kf === kf)
+			.map(({ id, from, name, fromKf, text, at }) => ({ id, from, name, fromKf, text, at }));
 	}
 
 	/** Leaves a beep (not in your own box), within MAIL limits; delivered at once if the owner is connected with that key. */
@@ -520,30 +636,60 @@ export class Mailbox extends DurableObject {
 		const list = await this.all();
 		if (list.length >= MAIL.box) return this.send(ws, { t: 'error', why: 'their mailbox is full', ref });
 		const day = Date.now() - 864e5;
-		if (list.filter((m) => m.from === att.member && m.at > day).length >= MAIL.perSender) return this.send(ws, { t: 'error', why: 'enough beeps left for today', ref });
+		if (list.filter((m) => m.from === att.member && m.at > day).length >= MAIL.perSender)
+			return this.send(ws, { t: 'error', why: 'enough beeps left for today', ref });
 		const m = { id: secret(), from: att.member, name: att.name, fromKf: att.kf, kf: p.kf, text, at: Date.now() };
 		await this.ctx.storage.put(`m:${m.id}`, m);
 		this.send(ws, { t: 'ok', ref, id: m.id });
 		for (const o of this.ctx.getWebSockets()) {
 			const a = o.deserializeAttachment();
-			if (a && a.member === a.owner && a.kf === m.kf) this.send(o, { t: 'mail', list: [{ id: m.id, from: m.from, name: m.name, fromKf: m.fromKf, text: m.text, at: m.at }] });
+			if (a && a.member === a.owner && a.kf === m.kf)
+				this.send(o, { t: 'mail', list: [{ id: m.id, from: m.from, name: m.name, fromKf: m.fromKf, text: m.text, at: m.at }] });
 		}
 	}
 
 	/** Deletes read beeps (owner only, and only beeps for their key). */
 	async ack(att, ids) {
 		if (att.member !== att.owner || !Array.isArray(ids)) return;
-		const keys = ids.slice(0, MAIL.ack).filter((id) => typeof id === 'string' && SECRET_RE.test(id)).map((id) => `m:${id}`);
+		const keys = ids
+			.slice(0, MAIL.ack)
+			.filter((id) => typeof id === 'string' && SECRET_RE.test(id))
+			.map((id) => `m:${id}`);
 		if (!keys.length) return;
 		const rows = await this.ctx.storage.get(keys);
 		const mine = [...rows.entries()].filter(([, m]) => m && m.kf === att.kf).map(([k]) => k);
 		if (mine.length) await this.ctx.storage.delete(mine);
 	}
 
-	webSocketClose(ws) { try { ws.close(); } catch (e) { /* closed */ } }
-	webSocketError(ws) { try { ws.close(); } catch (e) { /* closed */ } }
-	send(ws, x) { try { ws.send(JSON.stringify(x)); } catch (e) { /* gone */ } }
-	fail(ws, why) { this.send(ws, { t: 'error', why, fatal: true }); try { ws.close(4001, why); } catch (e) { /* gone */ } }
+	webSocketClose(ws) {
+		try {
+			ws.close();
+		} catch (e) {
+			/* closed */
+		}
+	}
+	webSocketError(ws) {
+		try {
+			ws.close();
+		} catch (e) {
+			/* closed */
+		}
+	}
+	send(ws, x) {
+		try {
+			ws.send(JSON.stringify(x));
+		} catch (e) {
+			/* gone */
+		}
+	}
+	fail(ws, why) {
+		this.send(ws, { t: 'error', why, fatal: true });
+		try {
+			ws.close(4001, why);
+		} catch (e) {
+			/* gone */
+		}
+	}
 }
 
 /** Whether two public keys are the same. */
@@ -552,7 +698,13 @@ const samePub = (a, b) => !!a && !!b && a.x === b.x && a.y === b.y;
 /** Verifies an ECDSA P-256 / SHA-256 signature (base64url r||s) of `text`. */
 async function verify(pub, sig, text) {
 	try {
-		const key = await crypto.subtle.importKey('jwk', { kty: 'EC', crv: 'P-256', x: pub.x, y: pub.y, ext: true }, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+		const key = await crypto.subtle.importKey(
+			'jwk',
+			{ kty: 'EC', crv: 'P-256', x: pub.x, y: pub.y, ext: true },
+			{ name: 'ECDSA', namedCurve: 'P-256' },
+			false,
+			['verify'],
+		);
 		return await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, unb64url(sig), new TextEncoder().encode(text));
 	} catch (e) {
 		return false;
