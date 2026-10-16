@@ -112,5 +112,11 @@
     "date": "16 Oct 2026",
     "title": "📢 SlimeBeep 2.13",
     "text": "✨ *giggles* and other actions now show in italics in your chats and group chats."
+  },
+  {
+    "id": "2.14.0",
+    "date": "16 Oct 2026",
+    "title": "📢 SlimeBeep 2.14",
+    "text": "🖼 Fit your profile picture in the circle (drag and zoom), see yours in the header, and click anyone's picture to see it big. 📍 Beeps from a room now have a Join button that really takes you there."
   }
 ]

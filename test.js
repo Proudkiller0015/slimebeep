@@ -549,6 +549,30 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	const [chooser] = await Promise.all([p.waitForFileChooser(), p.click('#sb-o-pic')]);
 	await chooser.accept([__dirname + '/icon-256.png']);
 	await wait(800);
+	// The cropper: place it in the circle, then Save.
+	check(!!await p.$('#sb-crop canvas'), 'choosing a picture opens the circle to place it in');
+	const before = await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.options')).pfp.v);
+	const ring = await (await p.$('#sb-crop canvas')).boundingBox();
+	await p.evaluate(() => { const r = document.querySelector('#sb-crop input'); r.value = '2'; r.dispatchEvent(new Event('input')); });
+	await p.mouse.move(ring.x + 120, ring.y + 120);
+	await p.mouse.down();
+	await p.mouse.move(ring.x + 160, ring.y + 100, { steps: 4 });
+	await p.mouse.up();
+	await shot('cropper');
+	await p.click('#sb-crop [data-act=save]');
+	await wait(300);
+	check(!await p.$('#sb-crop') && await p.evaluate((v) => JSON.parse(localStorage.getItem('slimebeep.options')).pfp.v !== v, before), 'zooming, dragging and Save make it the picture');
+	check(await p.$eval('#sb-me', (e) => !!e.querySelector('img.sb-pic')), 'my own picture shows in the SlimeBeep header');
+	check(!!await p.$('#sb-o-fit'), 'and an Adjust button can place it again');
+	await p.evaluate(() => { const i = document.querySelector('.sb-opts img.sb-pic'); i.click(); });
+	await wait(150);
+	check(!!await p.$('#sb-zoom img'), 'clicking a picture shows it big');
+	await p.click('#sb-zoom');
+	check(!await p.$('#sb-zoom'), 'and a click closes it');
+	await p.click('#sb-o-fit');
+	await wait(300);
+	check(!!await p.$('#sb-crop canvas'), 'Adjust opens the circle again');
+	await p.click('#sb-crop [data-act=cancel]');
 	const chosen = await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.options')).pfp);
 	check(chosen && chosen.v !== 'mypic00001' && /^data:image\/(webp|jpeg);base64,/.test(chosen.data) && chosen.data.length <= 6000, `choosing a picture shrinks it to send (${chosen && chosen.data.length} characters)`);
 	await shot('mypic');
@@ -603,6 +627,30 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 		});
 		check(r.inline && r.whole, '*giggles* shows in italics, and a beep that is only an action gets a soft bubble');
 		check(r.safe, 'and it is still plain text (HTML inside stars does nothing)');
+		await tap('#sb-back');
+	}
+
+	// ---- 📍 Join: a beep from a room has a Join button that leaves your room and joins theirs.
+	{
+		await p.evaluate(() => {
+			window.joins = []; window.left = 0; window.screens = [];
+			window.ChatRoomCanLeave = () => true;
+			window.ChatRoomLeave = () => { left++; ChatRoomData = null; };
+			window.CommonSetScreen = (a, b) => screens.push(`${a}/${b}`);
+			window.CurrentScreen = 'ChatRoom';
+			window.ServerRoomJoin = async (n) => { joins.push(n); return n === 'Full Room' ? { value: null, error: { name: 'RoomFull' } } : { value: n, error: null }; };
+			FriendListBeepLog.push({ MemberNumber: 11, MemberName: 'Ann', Sent: false, Read: true, Time: new Date(), Message: 'come play!', ChatRoomName: 'Pokepark' });
+		});
+		await wait(1200);
+		await p.evaluate(() => SlimeBeep.api.openChat(11));
+		await wait(250);
+		const btn = await p.$('.sb-joinroom[data-room="Pokepark"]');
+		check(!!btn, 'a beep from a room has a Join button');
+		await btn.click();
+		await wait(300);
+		const r = await p.evaluate(() => ({ joins, left, screens }));
+		check(r.left === 1 && r.screens[0] === 'Online/ChatSearch' && r.joins[0] === 'Pokepark', `Join leaves my room and asks to join theirs (${JSON.stringify(r)})`);
+		await p.evaluate(() => { ChatRoomData = { Name: 'Velvet Lounge' }; delete window.ChatRoomCanLeave; delete window.ChatRoomLeave; delete window.CommonSetScreen; delete window.ServerRoomJoin; delete window.CurrentScreen; });
 		await tap('#sb-back');
 	}
 

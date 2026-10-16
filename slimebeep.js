@@ -13,7 +13,7 @@
 (function () {
 	'use strict';
 
-	const VERSION = '2.13.0';
+	const VERSION = '2.14.0';
 	// Loaded once per page, whatever loads it.
 	if (window.SlimeBeep) return;
 	window.SlimeBeep = { version: VERSION };
@@ -402,6 +402,19 @@
 		.sb-b.me em { text-align: right; }
 		.sb-b .sb-room { display: block; font-size: 11px; margin-top: 3px; opacity: .85; }
 		.sb-emote { font-style: italic; opacity: .85; }
+		.sb-joinroom { margin-left: 4px; padding: 1px 8px !important; font-size: 11px !important; }
+		#sb-me { display: flex; cursor: pointer; }
+		img.sb-pic { cursor: zoom-in; }
+		#sb-zoom { position: fixed; inset: 0; z-index: 100002; background: #000a; display: flex; align-items: center; justify-content: center; cursor: zoom-out; }
+		#sb-zoom img { width: min(240px, 70vw); height: min(240px, 70vw); border-radius: 50%; border: 4px solid #fff; box-shadow: 0 10px 40px #000a; background: #fff; }
+		#sb-me .sb-av { width: 28px; height: 28px; border: 2px solid #fff; font-size: 11px; }
+		#sb-crop { position: fixed; inset: 0; z-index: 100002; background: #0007; display: flex; align-items: center; justify-content: center; font-family: inherit; }
+		#sb-crop .sb-crop-card { background: #fff; color: #5a2a48; border-radius: 18px; padding: 16px; display: flex; flex-direction: column; align-items: center; gap: 10px; box-shadow: 0 10px 40px #0008; max-width: calc(100vw - 32px); }
+		#sb-crop .sb-crop-ring { border-radius: 50%; overflow: hidden; border: 3px solid #ff7ac0; background: repeating-conic-gradient(#eee 0 25%, #fff 0 50%) 0 0 / 16px 16px; touch-action: none; }
+		#sb-crop canvas { display: block; cursor: grab; }
+		#sb-crop canvas:active { cursor: grabbing; }
+		#sb-crop input[type=range] { width: 240px; accent-color: #ff4fa3; }
+		#sb-crop .sb-crop-btns { display: flex; gap: 8px; }
 		.sb-b.sb-act { font-style: italic; background: transparent !important; border: 1px dashed currentColor !important; color: inherit; opacity: .85; }
 		.sb-b.sb-wait { opacity: .7; border: 2px dashed #ffb3d9; }
 		.sb-b.sb-wait a { color: inherit; text-decoration: underline; }
@@ -562,6 +575,7 @@
 			<div class="sb-head">
 				<img src="${ICON}" alt="">
 				<b>SlimeBeep <small>v${VERSION}</small></b>
+				<span id="sb-me"></span>
 				<button id="sb-moon" title="Night mode">🌙</button>
 				<button id="sb-gear" title="Options">⚙</button>
 				<button id="sb-close" title="Close">✕</button>
@@ -597,6 +611,15 @@
 		$('sb-moon').addEventListener('click', () => setNight(!opts.night));
 		setNight(opts.night);
 		$('sb-gear').addEventListener('click', () => { tab = tab === 'options' ? 'chats' : 'options'; thread = null; render(); });
+		// A click on someone's picture shows it big (and doesn't also open what it sits on).
+		panel.addEventListener('click', (e) => {
+			const img = e.target.closest && e.target.closest('img.sb-pic');
+			if (!img || img.closest('#sb-me')) return;
+			e.preventDefault();
+			e.stopPropagation();
+			zoomPic(img.src);
+		}, true);
+		$('sb-me').addEventListener('click', () => { if (!loggedIn()) return; tab = 'options'; thread = null; render(); });
 		// Typing in the panel must not reach the game's own key handlers.
 		panel.addEventListener('keydown', (e) => e.stopPropagation());
 
@@ -768,29 +791,29 @@
 		}
 	}
 
-	/** Your picture from a file: cropped square, shrunk to 48×48, and made small enough to send. */
+	/*
+	 * Your picture: picked from a file, then placed in the circle by you (drag to move, wheel or slider to
+	 * zoom), shrunk to 48×48 and made small enough to send. The picked picture is kept (at most 320px, in
+	 * this browser only) so "Adjust" can place it again later.
+	 */
+	const srcKey = () => `slimebeep.pfpsrc.${Player.MemberNumber}`;
+	const loadSrc = () => { try { const d = localStorage.getItem(srcKey()); return d && /^data:image\/(webp|jpeg|png);base64,/.test(d) ? d : null; } catch (e) { return null; } };
 	function setPicture(file) {
 		if (!file || !/^image\//.test(file.type)) return notify('That is not a picture');
 		const url = URL.createObjectURL(file);
 		const img = new Image();
 		img.onload = () => {
 			try {
+				// Kept smaller, so it fits in storage and the cropper stays quick.
+				const k = Math.min(1, 320 / Math.max(img.naturalWidth, img.naturalHeight));
 				const c = document.createElement('canvas');
-				c.width = c.height = 48;
-				const side = Math.min(img.naturalWidth, img.naturalHeight);
-				c.getContext('2d').drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, 48, 48);
-				let data = '';
-				for (const q of [0.8, 0.6, 0.45, 0.3]) {
-					data = c.toDataURL('image/webp', q);
-					if (!data.startsWith('data:image/webp')) data = c.toDataURL('image/jpeg', q);
-					if (data.length <= PFP_MAX) break;
-				}
-				if (data.length > PFP_MAX || !PFP_RE.test(data)) return notify('That picture is too big, try another');
-				setOpt('pfp', { v: newId(), data });
-				pushPicture();
-				notify('✓ New profile picture');
-				if (isOpen()) render(true);
-			} finally { URL.revokeObjectURL(url); }
+				c.width = Math.max(1, Math.round(img.naturalWidth * k));
+				c.height = Math.max(1, Math.round(img.naturalHeight * k));
+				c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+				const src = c.toDataURL('image/jpeg', 0.9);
+				try { localStorage.setItem(srcKey(), src); } catch (e) { /* this visit only */ }
+				openCropper(src);
+			} catch (e) { notify('That picture could not be read'); } finally { URL.revokeObjectURL(url); }
 		};
 		img.onerror = () => { URL.revokeObjectURL(url); notify('That picture could not be read'); };
 		img.src = url;
@@ -801,6 +824,113 @@
 		input.accept = 'image/*';
 		input.addEventListener('change', () => setPicture(input.files && input.files[0]));
 		input.click();
+	}
+	/** Place the picture in the circle; Save makes it your picture. */
+	function openCropper(src) {
+		if ($('sb-crop')) $('sb-crop').remove();
+		const SIZE = 240;
+		const img = new Image();
+		img.onload = () => {
+			const w = img.naturalWidth, h = img.naturalHeight;
+			const base = SIZE / Math.min(w, h); // zoom 1: the short side fills the circle
+			let zoom = 1, x = 0, y = 0; // x, y: the picture's centre offset from the circle's, in screen px
+			const box = document.createElement('div');
+			box.id = 'sb-crop';
+			box.innerHTML = `<div class="sb-crop-card">
+				<b>Fit your picture in the circle</b>
+				<div class="sb-crop-ring" style="width:${SIZE}px;height:${SIZE}px"><canvas width="${SIZE}" height="${SIZE}"></canvas></div>
+				<span class="sb-hint">Drag to move it, scroll or slide to zoom.</span>
+				<input type="range" min="1" max="4" step="0.01" value="1" aria-label="Zoom">
+				<div class="sb-crop-btns"><button class="sb-pill" data-act="cancel">Cancel</button><button class="sb-go" data-act="save">Save</button></div>
+			</div>`;
+			document.body.appendChild(box);
+			box.addEventListener('keydown', (e) => e.stopPropagation());
+			const cv = box.querySelector('canvas'), ctx = cv.getContext('2d'), slider = box.querySelector('input');
+			// Keeps the circle covered: the picture can't be dragged past its edges.
+			const clampXY = () => {
+				const sw = w * base * zoom, sh = h * base * zoom;
+				x = Math.max(-(sw - SIZE) / 2, Math.min((sw - SIZE) / 2, x));
+				y = Math.max(-(sh - SIZE) / 2, Math.min((sh - SIZE) / 2, y));
+			};
+			const draw = (to = ctx, size = SIZE) => {
+				const k = size / SIZE, sw = w * base * zoom * k, sh = h * base * zoom * k;
+				to.clearRect(0, 0, size, size);
+				to.drawImage(img, size / 2 + x * k - sw / 2, size / 2 + y * k - sh / 2, sw, sh);
+			};
+			const setZoom = (z) => { zoom = Math.max(1, Math.min(4, z)); slider.value = String(zoom); clampXY(); draw(); };
+			draw();
+			let drag = null;
+			cv.addEventListener('pointerdown', (e) => { drag = { px: e.clientX, py: e.clientY, x, y }; cv.setPointerCapture(e.pointerId); });
+			cv.addEventListener('pointermove', (e) => { if (!drag) return; x = drag.x + e.clientX - drag.px; y = drag.y + e.clientY - drag.py; clampXY(); draw(); });
+			cv.addEventListener('pointerup', () => { drag = null; });
+			cv.addEventListener('wheel', (e) => { e.preventDefault(); setZoom(zoom * (e.deltaY < 0 ? 1.08 : 1 / 1.08)); }, { passive: false });
+			slider.addEventListener('input', () => setZoom(Number(slider.value)));
+			box.addEventListener('click', (e) => {
+				const act = e.target.dataset && e.target.dataset.act;
+				if (e.target === box || act === 'cancel') return box.remove();
+				if (act !== 'save') return;
+				const out = document.createElement('canvas');
+				out.width = out.height = 48;
+				const octx = out.getContext('2d');
+				octx.imageSmoothingQuality = 'high';
+				draw(octx, 48);
+				let data = '';
+				for (const q of [0.8, 0.6, 0.45, 0.3]) {
+					data = out.toDataURL('image/webp', q);
+					if (!data.startsWith('data:image/webp')) data = out.toDataURL('image/jpeg', q);
+					if (data.length <= PFP_MAX) break;
+				}
+				if (data.length > PFP_MAX || !PFP_RE.test(data)) return notify('That picture is too big, try another');
+				box.remove();
+				setOpt('pfp', { v: newId(), data });
+				pushPicture();
+				showMe();
+				notify('✓ New profile picture');
+				if (isOpen()) render(true);
+			});
+			// Tests reach in here.
+			openCropper.state = () => ({ zoom, x, y });
+			openCropper.set = (z, nx, ny) => { x = nx; y = ny; setZoom(z); };
+		};
+		img.onerror = () => notify('That picture could not be read');
+		img.src = src;
+	}
+	/** Your picture on the game's canvas (the Extensions page), in a circle. */
+	const picImg = new Image();
+	function drawMyPic(left, top, size) {
+		const pic = myPfp();
+		if (!pic || typeof MainCanvas === 'undefined' || !MainCanvas) return;
+		if (picImg.src !== pic.data) picImg.src = pic.data;
+		if (!picImg.complete || !picImg.naturalWidth) return;
+		MainCanvas.save();
+		MainCanvas.beginPath();
+		MainCanvas.arc(left + size / 2, top + size / 2, size / 2, 0, Math.PI * 2);
+		MainCanvas.clip();
+		MainCanvas.drawImage(picImg, left, top, size, size);
+		MainCanvas.restore();
+	}
+	/** A picture shown big, until clicked or Escape. */
+	function zoomPic(src) {
+		if (!PFP_RE.test(src)) return;
+		if ($('sb-zoom')) $('sb-zoom').remove();
+		const box = document.createElement('div');
+		box.id = 'sb-zoom';
+		const img = document.createElement('img');
+		img.src = src;
+		img.alt = '';
+		box.appendChild(img);
+		const close = () => { box.remove(); document.removeEventListener('keydown', onKey, true); };
+		const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+		box.addEventListener('click', close);
+		document.addEventListener('keydown', onKey, true);
+		document.body.appendChild(box);
+	}
+	/** Your own picture (or initials) in the panel header; clicking it opens the options. */
+	function showMe() {
+		const me = $('sb-me');
+		if (!me) return;
+		me.innerHTML = loggedIn() ? avatar(Player.MemberNumber, myName()) : '';
+		me.title = loggedIn() ? (myPfp() ? 'Your profile picture' : 'Choose a profile picture') : '';
 	}
 
 	/** A hidden SlimeBeep beep: a "do you have SlimeBeep?" ping, its answer, or something for a group chat. */
@@ -1402,6 +1532,7 @@
 
 	function render(keepScroll) {
 		const view = $('sb-view');
+		showMe();
 		if (!loggedIn()) {
 			view.innerHTML = '<div class="sb-empty">💤 Log in and SlimeBeep wakes up.</div>';
 			return;
@@ -1737,7 +1868,47 @@
 		if (!room) return '';
 		const prev = msgs.slice(0, i).reverse().find((x) => x.Sent === b.Sent);
 		if (prev && (prev.ChatRoomName || '').trim() === room) return '';
-		return `<span class="sb-room">📍 ${b.Sent ? 'invited to' : 'in'} ${esc(room)}</span>`;
+		return `<span class="sb-room">📍 ${b.Sent ? 'invited to' : 'in'} ${esc(room)}${b.Sent ? '' : ` <button class="sb-pill sb-joinroom" data-room="${esc(room)}">Join</button>`}</span>`;
+	}
+
+	/*
+	 * Join the chat room a beep came from, the way the game's own chat search does: leave the room you're
+	 * in (only when the game would let you walk out right now), then ask the server to join. The game
+	 * itself takes you in when the server says yes, and its own messages say why when it doesn't.
+	 */
+	let joiningRoom = 0;
+	async function joinRoom(name) {
+		name = String(name || '').trim();
+		if (!name || !loggedIn() || Date.now() - joiningRoom < 3000) return;
+		if (myRoom() === name) return notify(`You're already in ${name}`);
+		const inRoom = typeof ChatRoomData !== 'undefined' && ChatRoomData;
+		if (inRoom) {
+			if (typeof CurrentScreen !== 'undefined' && CurrentScreen !== 'ChatRoom') return notify('Go back to your room first, then join');
+			if (typeof ChatRoomCanLeave === 'function' && !ChatRoomCanLeave()) return notify("You can't leave this room right now");
+			if (typeof Player.IsSlow === 'function' && Player.IsSlow()) return notify("You're too slow to just walk out: leave the room first");
+			if (typeof ChatRoomLeave !== 'function' || typeof CommonSetScreen !== 'function') return notify('⚠ The game changed: join from the room list');
+		}
+		joiningRoom = Date.now();
+		try {
+			if (inRoom) {
+				ChatRoomLeave();
+				CommonSetScreen('Online', 'ChatSearch');
+			}
+			notify(`📍 Joining ${name}…`);
+			if (typeof ServerRoomJoin === 'function') {
+				const r = await ServerRoomJoin(name);
+				// A failure carries the server's answer (RoomFull, RoomLocked, CannotFindRoom…) as the error's name.
+				if (r && r.error) {
+					if (typeof ChatSearchSendToast === 'function') ChatSearchSendToast(r.error.name);
+					notify(`⚠ Couldn't join ${name}${/^[A-Za-z]+$/.test(r.error.name || '') ? ` (${r.error.name.replace(/^Room|Error$/g, '').replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase()})` : ''}`);
+				}
+			} else if (typeof ServerSend === 'function') {
+				ServerSend('ChatRoomJoin', { Name: name });
+			}
+		} catch (e) {
+			warn(e, 'join room');
+			notify(`⚠ Couldn't join ${name}`);
+		}
 	}
 
 	function renderThread(keepScroll) {
@@ -1773,6 +1944,7 @@
 		ta.value = draft;
 		$('sb-back').addEventListener('click', () => { thread = null; renderThread.pin = undefined; render(); });
 		$('sb-pin').addEventListener('click', () => { renderThread.pin = !pinOn; render(true); });
+		for (const b of view.querySelectorAll('.sb-joinroom')) b.addEventListener('click', (e) => { e.preventDefault(); joinRoom(b.dataset.room); });
 		for (const a of view.querySelectorAll('[data-cancel]')) a.addEventListener('click', (e) => {
 			e.preventDefault();
 			waiting = waiting.filter((w) => w.id !== a.dataset.cancel);
@@ -1983,6 +2155,7 @@
 					DrawButton(...RESET, 'Reset slime position', 'White');
 					DrawButton(...CLEAR, `Clear kept beeps (${hist.length})`, 'White');
 					DrawButton(...PIC, myPfp() ? 'Change profile picture' : 'Choose profile picture', 'White');
+					drawMyPic(PIC[0] - 90, PIC[1], 64);
 					if (myPfp()) DrawButton(...NOPIC, 'Remove profile picture', 'White');
 					DrawButton(...EXIT, '', 'White', 'Icons/Exit.png');
 				} catch (e) {
@@ -2001,7 +2174,7 @@
 					if (mouse(RESET)) { setOpt('pos', null); place(); }
 					if (mouse(CLEAR)) clearKept();
 					if (mouse(PIC)) pickPicture();
-					if (myPfp() && mouse(NOPIC)) { setOpt('pfp', null); pushPicture(); }
+					if (myPfp() && mouse(NOPIC)) { setOpt('pfp', null); try { localStorage.removeItem(srcKey()); } catch (err) { /* fine */ } pushPicture(); }
 				} catch (e) { warn(e); }
 			},
 			exit: () => true,
@@ -2198,7 +2371,7 @@
 		return `<div class="sb-opts">
 			<b style="display:block;margin:6px 2px">⚙ Options</b>
 			<label style="display:flex;align-items:center;gap:8px">${avatar(Player.MemberNumber, myName())}<span style="flex:1">Profile picture<span class="sb-hint" style="display:block">SlimeBeep friends see it.</span></span>
-				<button class="sb-pill" id="sb-o-pic">Choose</button>${myPfp() ? '<button class="sb-pill" id="sb-o-nopic">Remove</button>' : ''}</label>
+				<button class="sb-pill" id="sb-o-pic">Choose</button>${myPfp() && loadSrc() ? '<button class="sb-pill" id="sb-o-fit">Adjust</button>' : ''}${myPfp() ? '<button class="sb-pill" id="sb-o-nopic">Remove</button>' : ''}</label>
 			<label><input type="checkbox" id="sb-o-night" ${opts.night ? 'checked' : ''}>🌙 Night mode (a night blue slime)</label>
 			<label><input type="checkbox" id="sb-o-sound" ${opts.sound ? 'checked' : ''}>Pop sound for new beeps</label>
 			<label><input type="checkbox" id="sb-o-popups" ${opts.popups ? 'checked' : ''}>💌 A card by the slime for each new beep</label>
@@ -2215,7 +2388,8 @@
 
 	function wireOptions() {
 		$('sb-o-pic').addEventListener('click', (e) => { e.preventDefault(); pickPicture(); });
-		if ($('sb-o-nopic')) $('sb-o-nopic').addEventListener('click', (e) => { e.preventDefault(); setOpt('pfp', null); pushPicture(); notify('Profile picture removed'); render(); });
+		if ($('sb-o-fit')) $('sb-o-fit').addEventListener('click', (e) => { e.preventDefault(); const src = loadSrc(); if (src) openCropper(src); });
+		if ($('sb-o-nopic')) $('sb-o-nopic').addEventListener('click', (e) => { e.preventDefault(); setOpt('pfp', null); try { localStorage.removeItem(srcKey()); } catch (err) { /* fine */ } pushPicture(); notify('Profile picture removed'); render(); });
 		$('sb-o-night').addEventListener('change', (e) => setNight(e.target.checked));
 		$('sb-o-sound').addEventListener('change', (e) => setOpt('sound', e.target.checked));
 		$('sb-o-popups').addEventListener('change', (e) => setOpt('popups', e.target.checked));
