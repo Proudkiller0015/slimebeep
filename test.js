@@ -129,8 +129,11 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 		'its settings page is drawn on the game canvas like the others (title, checkboxes, exit), no floating window');
 	check(await p.evaluate(() => MainCanvas.textAlign === 'center'), 'and it leaves the canvas text alignment as it found it');
 	await shot('settings');
-	// Click the second checkbox (pop sound): the rows start at 200 and are 85 apart.
-	await p.evaluate(() => { MouseX = 520; MouseY = 200 + 85 + 20; PreferenceExtensionsSettings.SlimeBeep.click(); });
+	check(await p.evaluate(() => { const ys = []; const real = DrawButton; DrawButton = (l, tp, w, h, ...r) => { ys.push(tp + h); return real(l, tp, w, h, ...r); }; PreferenceExtensionsSettings.SlimeBeep.run(); DrawButton = real; return Math.max(...ys) <= 1000; }),
+		'everything on the settings page fits the game screen');
+	// Click the second checkbox (pop sound, after night mode; no theme add-on, so no theme box): rows start at 190, 72 apart.
+	check(!/Match my/.test(page), 'without a theme add-on there is no theme toggle');
+	await p.evaluate(() => { MouseX = 520; MouseY = 190 + 72 + 20; PreferenceExtensionsSettings.SlimeBeep.click(); });
 	check(await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.options')).sound === false), 'clicking a checkbox there changes and saves it');
 	await p.evaluate(() => { PreferenceExtensionsSettings.SlimeBeep.click(); });
 	await p.evaluate(() => { MouseX = 1850; MouseY = 100; PreferenceExtensionsSettings.SlimeBeep.click(); });
@@ -280,7 +283,7 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 		try { a.groups = null; } catch (e) { frozen = true; }
 		return { v: a.apiVersion, frozen: frozen || a.groups !== null, fns: Object.keys(a).sort().join(',') };
 	});
-	check(api0.v === 1 && api0.frozen && api0.fns === 'apiVersion,group,groups,hasSlimeBeep,inviteToGroup,on,openChat,openGroup,openInvite,slimeBeepFriends,version', `window.SlimeBeep.api is there for other add-ons, and can't be changed (${api0.fns})`);
+	check(api0.v === 1 && api0.frozen && api0.fns === 'apiVersion,group,groups,hasSlimeBeep,inviteToGroup,matchTheme,matchingTheme,on,openChat,openGroup,openInvite,slimeBeepFriends,version', `window.SlimeBeep.api is there for other add-ons, and can't be changed (${api0.fns})`);
 	await hide(11, 'Ann', { sb: 1, pong: 1 });
 	await hide(13, 'Cat', { sb: 1, ping: 1 });
 	await wait(400);
@@ -428,6 +431,46 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 		check(!!z.last('gone') && z.closed, 'removing Zed closes his connection');
 		await tap('#sb-back');
 		await tap('#sb-back');
+	}
+
+	// ---- 🎨 Theme add-ons: off by default, a toggle on the Extensions page only when one is running,
+	// and SlimeBeep's colours follow Themed's (--tmd-* on the page) or BCNeko's (--bcn-* on the body).
+	{
+		const r = await p.evaluate(async () => {
+			const out = { start: SlimeBeep.api.matchingTheme() };
+			const settingsTexts = () => {
+				const seen = [];
+				const real = window.DrawText;
+				window.DrawText = (txt, ...rest) => { seen.push(String(txt)); return real(txt, ...rest); };
+				PreferenceExtensionsSettings.SlimeBeep.run();
+				window.DrawText = real;
+				return seen.join(' | ');
+			};
+			const st = document.createElement('style');
+			st.textContent = ':root { --tmd-main: #102030; --tmd-element: #203040; --tmd-element-hover: #304050; --tmd-element-disabled: #0a1520; --tmd-accent: #aa3366; --tmd-accent-hover: #cc4488; --tmd-accent-disabled: #551a33; --tmd-text: #eeeeee; --tmd-text-disabled: #999999; }';
+			document.head.appendChild(st);
+			out.themedLabel = /Match my Themed colours/.test(settingsTexts());
+			out.notYet = !document.documentElement.classList.contains('sb-themed');
+			// Its box is the second one (after night mode): ticking it there.
+			MouseX = 520; MouseY = 190 + 72 + 20; PreferenceExtensionsSettings.SlimeBeep.click();
+			out.on = SlimeBeep.api.matchingTheme();
+			out.panelBg = getComputedStyle(document.getElementById('sb-panel')).backgroundColor;
+			// Themed goes, BCNeko is there instead: its colours, without touching the setting.
+			st.remove();
+			for (const [k, v] of [['--bcn-panel', '#fff0e0'], ['--bcn-soft', '#ffe0c0'], ['--bcn-accent', '#ff8800'], ['--bcn-border', '#ddaa77'], ['--bcn-text', '#332211'], ['--bcn-muted', '#776655']]) document.body.style.setProperty(k, v);
+			await new Promise((res) => setTimeout(res, 6000));
+			out.nekoLabel = /Match my BCNeko colours/.test(settingsTexts());
+			out.nekoBg = getComputedStyle(document.getElementById('sb-panel')).backgroundColor;
+			out.off = SlimeBeep.api.matchTheme(false);
+			out.offBg = getComputedStyle(document.getElementById('sb-panel')).backgroundColor;
+			for (const k of ['--bcn-panel', '--bcn-soft', '--bcn-accent', '--bcn-border', '--bcn-text', '--bcn-muted']) document.body.style.removeProperty(k);
+			return out;
+		});
+		check(r.start.on === false && r.start.source === null, `off by default, and no theme add-on found (${JSON.stringify(r.start)})`);
+		check(r.themedLabel && r.notYet, 'with Themed running, the toggle shows up (still off)');
+		check(r.on.on && r.on.source === 'Themed' && r.panelBg === 'rgb(16, 32, 48)', `ticked: SlimeBeep takes Themed's colours (${r.panelBg})`);
+		check(r.nekoLabel && r.nekoBg === 'rgb(255, 240, 224)', `with BCNeko instead, it follows BCNeko (${r.nekoBg})`);
+		check(r.off === false && r.offBg !== 'rgb(255, 240, 224)', 'api.matchTheme(false) (for theme add-ons) turns it back off');
 	}
 
 	// ---- An old copy (the raw link lagging) finds a newer one on GitHub Pages: the newer one runs, once.

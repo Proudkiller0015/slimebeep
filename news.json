@@ -94,5 +94,11 @@
     "date": "16 Oct 2026",
     "title": "📢 SlimeBeep 2.10.1",
     "text": "You can now invite any friend to a group chat: friends without SlimeBeep get a beep with the code and where to get it."
+  },
+  {
+    "id": "2.11.0",
+    "date": "16 Oct 2026",
+    "title": "📢 SlimeBeep 2.11",
+    "text": "Using Themed or BCNeko? SlimeBeep can now match your theme's colours: turn it on in Settings > Extensions > SlimeBeep."
   }
 ]

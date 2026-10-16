@@ -24,6 +24,7 @@ Click the pink slime (drag it anywhere you like; it stays there). A pink dot on 
 - **🌊 WaveBeep:** one beep to every friend you tick (**All** / **None**), sent one at a time.
 - **👥 Groups:** group chats of up to 40 people with SlimeBeep, **friends or not**. Make one with **New group chat**; invite SlimeBeep friends with one click (🫧 marks who has it) or make an **invite code** for anyone, who pastes it in 👥 Groups. Messages you missed while offline are waiting when you're back. 🟢 shows who's online. The owner 👑 and admins ⭐ add and remove people, promote and rename; **Anyone can invite** lets every member add people. For friends, ✓ means the person in the group has the same key their own SlimeBeep sent you (⚠ if not).
 - **🖼 Profile picture:** pick one in ⚙ (or Settings > Extensions). It's shrunk to a small square and only SlimeBeep friends get it, as image data, never a web link.
+- **🎨 Theme add-ons:** with Themed or BCNeko running, SlimeBeep's page in Settings > Extensions offers **Match my … colours** (off unless you turn it on).
 - **🌙 Night mode:** the moon in the header (or ⚙) switches to navy with a night blue slime.
 - **Settings > Extensions:** SlimeBeep is listed there too, with the same options.
 - **🐞 Bug:** report a problem. SlimeBeep adds its version, the game's version and its own recent errors (nothing about your chats), then you open it on GitHub, copy it, or beep it to SlimeQueenSamantha.
@@ -51,6 +52,10 @@ if (sb && sb.apiVersion === 1) {
 	// a friend with SlimeBeep gets an invite card:   { ok: true, sent: 'invite' }
 	// anyone else gets a code made for them alone:   { ok: true, code: 'SB-…' }  (show or copy it)
 	// not allowed / full / already in it:            { ok: false, why }
+
+	// For theme add-ons: SlimeBeep can take your colours (off unless switched on; Themed and BCNeko are supported).
+	sb.matchTheme(true);       // returns whether a theme add-on was found to match
+	sb.matchingTheme();        // { on, source: 'Themed' | 'BCNeko' | null }
 
 	const stop = sb.on('presence', (group) => { /* online members of a group changed */ });
 	sb.on('group', (group) => { /* a group was joined or changed (members, roles, name) */ });

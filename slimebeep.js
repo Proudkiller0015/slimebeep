@@ -13,7 +13,7 @@
 (function () {
 	'use strict';
 
-	const VERSION = '2.10.1';
+	const VERSION = '2.11.0';
 	// Loaded once per page, whatever loads it.
 	if (window.SlimeBeep) return;
 	window.SlimeBeep = { version: VERSION };
@@ -28,7 +28,7 @@
 	 */
 	// `popups`: a card for each new beep; `desktop`: a system notification while the game tab is in the background;
 	// `keep`: keep beeps in this browser across logins; `seenNews`: the news items (news.json) already shown.
-	const DEFAULTS = { pos: null, gap: 1.5, shareRoom: true, remember: true, picked: [], sound: true, popups: true, desktop: false, keep: true, seenNews: null, lastVersion: null, night: false };
+	const DEFAULTS = { pos: null, gap: 1.5, shareRoom: true, remember: true, picked: [], sound: true, popups: true, desktop: false, keep: true, seenNews: null, lastVersion: null, night: false, themed: false };
 	// From GitHub Pages, like slimebeep.js for FUSAM: updated within a minute of a push, so the news matches the version.
 	const NEWS = 'https://proudkiller0015.github.io/slimebeep/news.json';
 	const KEEP_MAX = 2000;
@@ -452,6 +452,53 @@
 		html.sb-night .sb-card.news { background: linear-gradient(120deg, #1a2142, #241f4f); border-color: #7a5cd6; }
 		html.sb-night #sb-toast { background: #dfe6ff; color: #1a2142; box-shadow: 0 4px 14px #0008; }
 		html.sb-night .sb-body::-webkit-scrollbar-thumb { background: #2f3b75; }
+		/*
+		 * 🎨 Matching a theme add-on. Each keeps its colours in CSS variables (Themed: --tmd-* on the page,
+		 * BCNeko: --bcn-* on the body); they're mapped onto SlimeBeep's own --sb-t-* here, on the body, where
+		 * both are visible, and everything below uses those. Another theme add-on is one more mapping.
+		 * After night mode, so it wins when both are on.
+		 */
+		html.sb-theme-themed body { --sb-t-main: var(--tmd-main); --sb-t-element: var(--tmd-element); --sb-t-element-hover: var(--tmd-element-hover);
+			--sb-t-element-disabled: var(--tmd-element-disabled); --sb-t-accent: var(--tmd-accent); --sb-t-accent-hover: var(--tmd-accent-hover);
+			--sb-t-accent-disabled: var(--tmd-accent-disabled); --sb-t-text: var(--tmd-text); --sb-t-text-disabled: var(--tmd-text-disabled); }
+		html.sb-theme-bcneko body { --sb-t-main: var(--bcn-panel); --sb-t-element: var(--bcn-soft); --sb-t-element-hover: var(--bcn-border);
+			--sb-t-element-disabled: var(--bcn-soft); --sb-t-accent: var(--bcn-accent); --sb-t-accent-hover: var(--bcn-accent);
+			--sb-t-accent-disabled: var(--bcn-border); --sb-t-text: var(--bcn-text); --sb-t-text-disabled: var(--bcn-muted); }
+		html.sb-themed #sb-toggle { background: var(--sb-t-element); border-color: var(--sb-t-accent); box-shadow: 0 3px 12px #0006; }
+		html.sb-themed #sb-badge { background: var(--sb-t-accent); border-color: var(--sb-t-main); }
+		html.sb-themed #sb-panel { background: var(--sb-t-main); color: var(--sb-t-text); border-color: var(--sb-t-element-hover); box-shadow: 0 8px 30px #0008; }
+		html.sb-themed .sb-head { background: linear-gradient(120deg, var(--sb-t-accent), var(--sb-t-accent-hover)); color: var(--sb-t-text); text-shadow: 0 1px 2px #0008; }
+		html.sb-themed .sb-head button { background: var(--sb-t-element); color: var(--sb-t-text); }
+		html.sb-themed .sb-tabs, html.sb-themed .sb-thead, html.sb-themed .sb-compose { background: var(--sb-t-element-disabled); }
+		html.sb-themed .sb-tabs button { background: var(--sb-t-element); color: var(--sb-t-text); }
+		html.sb-themed .sb-tabs button.on { background: var(--sb-t-accent); color: var(--sb-t-text); box-shadow: none; }
+		html.sb-themed .sb-tabs button i, html.sb-themed .sb-dot { background: var(--sb-t-accent-hover); color: var(--sb-t-text); }
+		html.sb-themed .sb-tabs button.on i { background: var(--sb-t-text); color: var(--sb-t-accent); }
+		html.sb-themed .sb-row, html.sb-themed .sb-group label, html.sb-themed .sb-opts label { background: var(--sb-t-element); border-color: var(--sb-t-element-hover); color: var(--sb-t-text); }
+		html.sb-themed .sb-row:hover { background: var(--sb-t-element-hover); border-color: var(--sb-t-accent); }
+		html.sb-themed .sb-sub, html.sb-themed .sb-hint, html.sb-themed .sb-side, html.sb-themed .sb-empty { color: var(--sb-t-text-disabled); }
+		html.sb-themed .sb-search, html.sb-themed .sb-compose textarea, html.sb-themed .sb-group textarea, html.sb-themed .sb-opts input[type=number] {
+			background: var(--sb-t-main); color: var(--sb-t-text); border-color: var(--sb-t-element-hover); }
+		html.sb-themed #sb-panel textarea:focus, html.sb-themed #sb-panel input:focus { border-color: var(--sb-t-accent) !important; box-shadow: 0 0 0 3px var(--sb-t-accent-disabled); }
+		html.sb-themed .sb-msgs { background: var(--sb-t-main); }
+		html.sb-themed .sb-b.them { background: var(--sb-t-element); border-color: var(--sb-t-element-hover); color: var(--sb-t-text); }
+		html.sb-themed .sb-b.me { background: var(--sb-t-accent); color: var(--sb-t-text); }
+		html.sb-themed .sb-from { color: var(--sb-t-accent-hover); }
+		html.sb-themed .sb-sys { background: var(--sb-t-element); color: var(--sb-t-text-disabled); }
+		html.sb-themed .sb-gav { background: var(--sb-t-accent); }
+		html.sb-themed .sb-compose button, html.sb-themed .sb-go { background: var(--sb-t-accent); color: var(--sb-t-text); box-shadow: none; }
+		html.sb-themed .sb-compose button.pin { background: var(--sb-t-element); color: var(--sb-t-text-disabled); }
+		html.sb-themed .sb-compose button.pin.on { background: var(--sb-t-accent-hover); color: var(--sb-t-text); }
+		html.sb-themed .sb-thead button { background: var(--sb-t-element); color: var(--sb-t-text); }
+		html.sb-themed .sb-pill { background: var(--sb-t-element); color: var(--sb-t-text); border-color: var(--sb-t-element-hover); }
+		html.sb-themed #sb-panel input[type=checkbox] { accent-color: var(--sb-t-accent); }
+		html.sb-themed .sb-line[style] { background: var(--sb-t-main) !important; }
+		html.sb-themed .sb-card { background: var(--sb-t-main); color: var(--sb-t-text); border-color: var(--sb-t-element-hover); box-shadow: 0 6px 20px #0008; }
+		html.sb-themed .sb-card .sb-main b { color: var(--sb-t-accent-hover); }
+		html.sb-themed .sb-card small, html.sb-themed .sb-card .sb-x { color: var(--sb-t-text-disabled); }
+		html.sb-themed .sb-card.news { background: var(--sb-t-element); border-color: var(--sb-t-accent); }
+		html.sb-themed #sb-toast { background: var(--sb-t-element); color: var(--sb-t-text); box-shadow: 0 4px 14px #0008; }
+		html.sb-themed .sb-body::-webkit-scrollbar-thumb { background: var(--sb-t-element-hover); }
 		#sb-toast { position: fixed; z-index: 100000; padding: 8px 14px; border-radius: 16px; background: #4a2340; color: #fff;
 			font: bold 13px "Trebuchet MS", "Segoe UI", sans-serif; box-shadow: 0 4px 14px #c2186b66; pointer-events: none;
 			opacity: 0; transform: translateY(6px); transition: opacity .2s, transform .2s; white-space: nowrap; }
@@ -627,6 +674,10 @@
 		inviteToGroup: (id, memberNumber) => inviteToGroup(id, memberNumber),
 		/** Opens SlimeBeep on "Invite <them> to…", listing the groups you can invite to. */
 		openInvite: (memberNumber) => { if (!isNum(memberNumber)) return false; inviteFor = { n: memberNumber, results: {} }; thread = null; tab = 'invitefor'; if (!isOpen()) setOpen(true); else render(); return true; },
+		/** For theme add-ons: SlimeBeep takes the running theme add-on's colours (true) or its own (false). Off unless switched on. */
+		matchTheme: (on) => { setThemed(!!on); return !!applyThemed(); },
+		/** { on, source }: whether SlimeBeep matches a theme add-on, and which one it found ('Themed', 'BCNeko' or null). */
+		matchingTheme: () => ({ on: !!opts.themed, source: (themeSource() || {}).name || null }),
 		/** Opens SlimeBeep on a chat with this member number. */
 		openChat: (memberNumber) => { if (!isNum(memberNumber)) return false; thread = memberNumber; if (!isOpen()) setOpen(true); else render(); return true; },
 		/**
@@ -1141,6 +1192,8 @@
 		try {
 			updateNote();
 			gameCheck();
+			if (!tick.n || ++tick.n % 5 === 0) applyThemed();
+			tick.n = tick.n || 1;
 			// Listen from login on, not only once the panel has been opened.
 			if (loggedIn()) listen();
 			if (loggedIn() && histOwner === Player.MemberNumber) relayTick();
@@ -1809,9 +1862,12 @@
 		if (typeof PreferenceRegisterExtensionSetting !== 'function') return;
 		if (typeof PreferenceExtensionsSettings === 'object' && PreferenceExtensionsSettings && PreferenceExtensionsSettings.SlimeBeep) return;
 		const EXIT = [1815, 75, 90, 90];
-		const LEFT = 500, TOP = 200, ROW = 85;
+		// Rows fit the 1000-high game screen with every option and button.
+		const LEFT = 500, TOP = 190, ROW = 72;
 		const boxes = [
 			['night', 'Night mode (a night blue slime)', () => opts.night, (on) => setNight(on)],
+			// Only with a theme add-on running (the owner: no toggle for something that isn't there).
+			['themed', () => `Match my ${(themeSource() || {}).name || 'theme'} colours`, () => opts.themed, (on) => setThemed(on), () => !!themeSource()],
 			['sound', 'Pop sound for new beeps', () => opts.sound, (on) => setOpt('sound', on)],
 			['popups', 'A card by the slime for each new beep', () => opts.popups, (on) => setOpt('popups', on)],
 			['desktop', 'Desktop notification when the game is in the background', () => opts.desktop, (on) => setDesktop(on)],
@@ -1819,10 +1875,15 @@
 			['remember', 'Remember who I picked for WaveBeeps', () => opts.remember, (on) => { setOpt('remember', on); if (!on) setOpt('picked', []); }],
 			['keep', 'Keep my beeps in this browser after I log out', () => opts.keep, (on) => setKeep(on)],
 		];
-		const gapY = TOP + boxes.length * ROW;
-		const btnY = gapY + ROW;
-		const MINUS = [LEFT, gapY, 64, 64], PLUS = [LEFT + 80, gapY, 64, 64];
-		const RESET = [LEFT, btnY, 420, 64], CLEAR = [LEFT + 450, btnY, 420, 64], PIC = [LEFT, btnY + ROW, 420, 64], NOPIC = [LEFT + 450, btnY + ROW, 420, 64];
+		// The boxes on the page right now (some only show when they apply).
+		const shown = () => boxes.filter((b) => !b[4] || b[4]());
+		const gapY = () => TOP + shown().length * ROW;
+		// Laid out again on every frame, since the list of boxes can change.
+		const layout = () => {
+			const g = gapY(), btnY = g + ROW;
+			return { g, MINUS: [LEFT, g, 64, 64], PLUS: [LEFT + 80, g, 64, 64], RESET: [LEFT, btnY, 420, 64], CLEAR: [LEFT + 450, btnY, 420, 64],
+				PIC: [LEFT, btnY + ROW, 420, 64], NOPIC: [LEFT + 450, btnY + ROW, 420, 64] };
+		};
 		const mouse = (r) => typeof MouseIn === 'function' && MouseIn(...r);
 		PreferenceRegisterExtensionSetting({
 			Identifier: 'SlimeBeep',
@@ -1837,10 +1898,11 @@
 					DrawCharacter(Player, 50, 50, 0.9);
 					MainCanvas.textAlign = 'left';
 					DrawText(`- SlimeBeep Settings - v${VERSION}`, LEFT, 125, 'Black', 'Gray');
-					boxes.forEach(([, label, get], i) => DrawCheckbox(LEFT, TOP + i * ROW, 64, 64, label, !!get()));
+					const { g, MINUS, PLUS, RESET, CLEAR, PIC, NOPIC } = layout();
+					shown().forEach(([, label, get], i) => DrawCheckbox(LEFT, TOP + i * ROW, 64, 64, typeof label === 'function' ? label() : label, !!get()));
 					DrawButton(...MINUS, '-', 'White');
 					DrawButton(...PLUS, '+', 'White');
-					DrawText(`Wait ${opts.gap} seconds between WaveBeeps`, LEFT + 180, gapY + 33, 'Black', 'Gray');
+					DrawText(`Wait ${opts.gap} seconds between WaveBeeps`, LEFT + 180, g + 33, 'Black', 'Gray');
 					MainCanvas.textAlign = 'center';
 					DrawButton(...RESET, 'Reset slime position', 'White');
 					DrawButton(...CLEAR, `Clear kept beeps (${hist.length})`, 'White');
@@ -1856,7 +1918,8 @@
 			click: () => {
 				try {
 					if (mouse(EXIT)) { if (typeof PreferenceSubscreenExtensionsClear === 'function') PreferenceSubscreenExtensionsClear(); return; }
-					boxes.forEach(([, , get, set], i) => { if (mouse([LEFT, TOP + i * ROW, 64, 64])) set(!get()); });
+					const { MINUS, PLUS, RESET, CLEAR, PIC, NOPIC } = layout();
+					shown().forEach(([, , get, set], i) => { if (mouse([LEFT, TOP + i * ROW, 64, 64])) set(!get()); });
 					if (mouse(MINUS)) setOpt('gap', Math.max(1, opts.gap - 0.5));
 					if (mouse(PLUS)) setOpt('gap', Math.min(10, opts.gap + 0.5));
 					if (mouse(RESET)) { setOpt('pos', null); place(); }
@@ -1903,6 +1966,33 @@
 	}
 
 	/** 🌙 on or off: one class on the page, which only SlimeBeep's own styles look at. */
+	/*
+	 * The theme add-on that's running, if any: [id, name]. Themed puts --tmd-* on the page, BCNeko
+	 * --bcn-* on the body. The first one found is used.
+	 */
+	const THEME_SOURCES = [
+		['themed', 'Themed', () => getComputedStyle(document.documentElement).getPropertyValue('--tmd-main')],
+		['bcneko', 'BCNeko', () => document.body && getComputedStyle(document.body).getPropertyValue('--bcn-panel')],
+	];
+	function themeSource() {
+		for (const [id, name, probe] of THEME_SOURCES) {
+			try { if (String(probe() || '').trim()) return { id, name }; } catch (e) { /* not this one */ }
+		}
+		return null;
+	}
+	/** A theme add-on's colours when asked for and one is there (checked again every few seconds: it may load later or stop). */
+	function applyThemed() {
+		const src = opts.themed ? themeSource() : null;
+		const root = document.documentElement;
+		root.classList.toggle('sb-themed', !!src);
+		for (const [id] of THEME_SOURCES) root.classList.toggle(`sb-theme-${id}`, !!src && src.id === id);
+		return src;
+	}
+	function setThemed(on) {
+		setOpt('themed', !!on);
+		applyThemed();
+	}
+
 	function setNight(on) {
 		opts.night = !!on;
 		saveOpts();
