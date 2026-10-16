@@ -172,5 +172,11 @@
     "date": "16 Oct 2026",
     "title": "📢 SlimeBeep 2.18.2",
     "text": "Group chats now work from the bondageeurope.com mirror too. Invite beeps no longer mention FUSAM (SlimeBeep isn't on it yet)."
+  },
+  {
+    "id": "2.19.0",
+    "date": "16 Oct 2026",
+    "title": "📢 SlimeBeep 2.19",
+    "text": "📬 Beeps to an offline friend with SlimeBeep now wait in their mailbox and reach them when they log in, even if you've gone. 🔕 Mute any chat or group with the 🔔 at its top."
   }
 ]

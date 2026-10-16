@@ -30,7 +30,10 @@ Click the pink slime (drag it anywhere you like; it stays there). A pink dot on 
 - **⏻ Quit:** the ⏻ button in SlimeBeep's header removes it until you reload, as if you'd never started it. With the bookmarklet, reload and don't click it; with the userscript, turn it off there to stop it for good.
 - **😊 Emoji and commands:** the 😊 by the chat box opens emoji (your last ones first). Commands: `/me waves`, `/shrug`, `/roll 20`, `/flip`, `/help`.
 - **✨ Actions:** `*giggles*` shows in italics, and a beep that's only an action gets a soft bubble of its own.
-- **⏳ Offline beeps:** beep a friend who's offline and it waits, then goes out the moment they're back online (you need to be online then too). Cancel it any time before.
+- **📬 Offline beeps:** beep a friend who's offline and, if they have SlimeBeep, it's left in their SlimeBeep mailbox (📬): they get it when they log in, even if you're gone by then. Only their own SlimeBeep can read it. For friends without SlimeBeep (or if the mailbox can't be reached) it waits here instead and goes out the moment they're back online (you need to be online then too); cancel it any time before.
+- **🔕 Mute a chat:** the 🔔 at the top of any chat or group chat turns its sound off (its cards still come). Press it again for sound.
+- **🔗 Links and codes:** web links in chats can be clicked (they open in a new tab; nothing is loaded in SlimeBeep), and a group code gets a **Join** button, in SlimeBeep and in the room chat.
+- **🖼 Group pictures:** admins set one on the group's 👥 page.
 - **🎨 Theme add-ons:** with Themed or BCNeko running, SlimeBeep's page in Settings > Extensions offers **Match my … colours** (off unless you turn it on).
 - **🌙 Night mode:** the moon in the header (or ⚙) switches to navy with a night blue slime.
 - **Settings > Extensions:** SlimeBeep is listed there too, with the same options.

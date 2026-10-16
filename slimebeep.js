@@ -13,7 +13,7 @@
 (function () {
 	'use strict';
 
-	const VERSION = '2.18.2';
+	const VERSION = '2.19.0';
 	// Loaded once per page, whatever loads it.
 	if (window.SlimeBeep) return;
 	window.SlimeBeep = { version: VERSION };
@@ -28,7 +28,7 @@
 	 */
 	// `popups`: a card for each new beep; `desktop`: a system notification while the game tab is in the background;
 	// `keep`: keep beeps in this browser across logins; `seenNews`: the news items (news.json) already shown.
-	const DEFAULTS = { pos: null, gap: 1.5, shareRoom: true, remember: true, picked: [], sound: true, popups: true, desktop: false, keep: true, seenNews: null, lastVersion: null, night: false, themed: false, recentEmoji: [] };
+	const DEFAULTS = { pos: null, gap: 1.5, shareRoom: true, remember: true, picked: [], sound: true, popups: true, desktop: false, keep: true, seenNews: null, lastVersion: null, night: false, themed: false, recentEmoji: [], muted: [] };
 	// From GitHub Pages, like slimebeep.js for FUSAM: updated within a minute of a push, so the news matches the version.
 	const NEWS = 'https://proudkiller0015.github.io/slimebeep/news.json';
 	const KEEP_MAX = 2000;
@@ -481,6 +481,7 @@
 		.sb-from { display: block; font-size: 11px; font-weight: bold; color: #c2186b; margin-bottom: 2px; }
 		.sb-sys { align-self: center; font-size: 11px; color: #a0638a; background: #ffe6f3; padding: 2px 10px; border-radius: 10px; }
 		.sb-thead > button#sb-leave { margin-left: auto; }
+		.sb-thead > button#sb-mute { flex: none; font-size: 13px; }
 		html.sb-night .sb-gav { background: linear-gradient(135deg, #4f6bd8, #7a5cd6); }
 		html.sb-night .sb-from { color: #8fb3ff; }
 		html.sb-night .sb-sys { background: #1d2550; color: #8f9fd6; }
@@ -1095,7 +1096,7 @@
 			const fromName = clean(d.MemberName, LIMITS.name) || `#${from}`;
 			invitations = [...invitations.filter((i) => !i.code.startsWith(`SB-${m[1]}-`)), { code: m[0], name, from, fromName, at: Date.now() }].slice(-20);
 			saveGC();
-			if (opts.sound) chime();
+			if (opts.sound && !isMuted(`n:${from}`)) chime();
 			card({ icon: avatar(from, fromName), title: `👥 ${name}`, text: `${fromName} invited you to a group chat. Tap to see it.`,
 				onClick: () => { tab = 'groups'; thread = null; if (!isOpen()) setOpen(true); else render(); } });
 			if (isOpen() && tab === 'groups' && thread === null) render(true);
@@ -1227,6 +1228,124 @@
 		};
 	})();
 	const hasSubtle = () => typeof crypto !== 'undefined' && !!crypto.subtle;
+
+	/*
+	 * 📬 Mailboxes (on the relay): a beep for a SlimeBeep friend who is offline is left in their mailbox,
+	 * addressed to the key their own SlimeBeep told you about, and their SlimeBeep picks it up when they log
+	 * in (and every few minutes while online). Only that key can read it, and a beep whose sender's key is
+	 * not the one that friend's SlimeBeep sent you is thrown away. A friend without SlimeBeep (or whose key
+	 * isn't known yet), or a relay that can't be reached: the beep waits here as before and goes out when
+	 * you're both online.
+	 */
+	function mailOpen(owner, onMsg) {
+		return new Promise((resolve, reject) => {
+			let ws = null, done = false;
+			const fin = (err) => {
+				if (done) return;
+				done = true;
+				clearTimeout(timer);
+				if (!err) return resolve(ws);
+				try { if (ws) ws.close(); } catch (e) { /* gone */ }
+				reject(new Error(err));
+			};
+			const timer = setTimeout(() => fin('no answer'), 10000);
+			try { ws = new WebSocket(`${relayUrl()}/ws?m=${owner}`); } catch (e) { return fin('could not connect'); }
+			ws.onmessage = async (e) => {
+				let p;
+				try { p = JSON.parse(e.data); } catch (x) { return; }
+				if (!p || typeof p !== 'object') return;
+				if (p.t === 'hello' && typeof p.nonce === 'string') {
+					try {
+						const k = await getKey();
+						const me = Player.MemberNumber;
+						const signed = `${p.nonce}|mbox:${owner}|${me}`;
+						const sig = k.priv.soft ? softEc.sign(k.priv.soft, signed) : await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, k.priv, new TextEncoder().encode(signed));
+						ws.send(JSON.stringify({ t: 'auth', member: me, name: myName(), pub: k.pub, sig: b64url(sig) }));
+					} catch (x) { fin('could not sign in'); }
+					return;
+				}
+				if (p.t === 'error' && p.fatal) return fin(clean(p.why, 80) || 'refused');
+				if (p.t === 'welcome' || p.t === 'mail') fin(null);
+				if (onMsg) try { onMsg(p, ws); } catch (x) { warn(x, 'mail'); }
+			};
+			ws.onclose = () => fin('closed');
+		});
+	}
+	/** Leaves waiting beeps for SlimeBeep friends in their mailboxes (each beep tried again 10 minutes later at most). */
+	let mailing = false;
+	async function mailWaiting(now = false) {
+		if (mailing || stopped || !loggedIn() || !waiting.length) return;
+		const due = waiting.filter((w) => peers.has(w.n) && peerKeys[w.n] && (now || Date.now() - (w.tried || 0) > 600000));
+		if (!due.length) return;
+		mailing = true;
+		try {
+			for (const n of [...new Set(due.map((w) => w.n))]) {
+				const mine = due.filter((w) => w.n === n).slice(0, 15);
+				for (const w of mine) w.tried = Date.now();
+				const answers = new Map();
+				let ws;
+				try {
+					ws = await mailOpen(n, (p) => { if ((p.t === 'ok' || p.t === 'error') && typeof p.ref === 'string') answers.set(p.ref, p.t === 'ok'); });
+				} catch (e) { continue; }
+				for (const w of mine) ws.send(JSON.stringify({ t: 'put', kf: peerKeys[n], text: w.text, ref: w.id }));
+				const t0 = Date.now();
+				while (Date.now() - t0 < 8000 && mine.some((w) => !answers.has(w.id))) await new Promise((r) => setTimeout(r, 100));
+				try { ws.close(); } catch (e) { /* gone */ }
+				const left = mine.filter((w) => answers.get(w.id) === true && waiting.includes(w));
+				if (!left.length) continue;
+				waiting = waiting.filter((w) => !left.includes(w));
+				for (const w of left) {
+					const h = { k: `mail:${w.id}`, MemberNumber: n, MemberName: nameOf(n), Sent: true, Time: w.at, Message: w.text, mail: true };
+					if (!histKeys.has(h.k)) { hist.push(h); histKeys.add(h.k); }
+				}
+				hist.sort((a, b) => a.Time - b.Time);
+				saveHistory();
+				saveWaiting();
+				notify(`📬 Left in ${nameOf(n)}'s mailbox: they get it when they log in`);
+				if (isOpen()) render(true);
+			}
+		} finally { mailing = false; }
+	}
+	/** Your own mailbox: what was left for you, checked at login and every 5 minutes. */
+	let mailChecked = 0, mailBusy = false;
+	async function checkMail() {
+		if (mailBusy || stopped || !loggedIn()) return;
+		mailBusy = true;
+		mailChecked = Date.now();
+		try {
+			const ws = await mailOpen(Player.MemberNumber, (p, sock) => { if (p.t === 'mail') takeMail(p.list, sock); });
+			setTimeout(() => { try { ws.close(); } catch (e) { /* gone */ } }, 3000);
+		} catch (e) { /* tried again next time */ } finally { mailBusy = false; }
+	}
+	function takeMail(list, sock) {
+		if (!Array.isArray(list) || !list.length) return;
+		const ids = [], fresh = [];
+		for (const m of list.slice(0, 100)) {
+			if (!m || typeof m.id !== 'string' || !/^[A-Z2-9]{10}$/.test(m.id)) continue;
+			ids.push(m.id);
+			const from = m.from;
+			if (!isNum(from) || from === Player.MemberNumber || !isFriend(from)) continue;
+			// Their own SlimeBeep told us their key: a beep signed with another one is not from them.
+			const known = peerKeys[from];
+			if (known && known !== m.fromKf) continue;
+			const text = typeof m.text === 'string' ? m.text.slice(0, 1000) : '';
+			const k = `mail:${m.id}`;
+			if (!text.trim() || histKeys.has(k)) continue;
+			const h = { k, MemberNumber: from, MemberName: nameOf(from) || clean(m.name, LIMITS.name) || `#${from}`, Sent: false, Time: Number(m.at) || Date.now(),
+				Message: text, mail: true, unread: true, ...(known ? {} : { unchecked: true }) };
+			hist.push(h);
+			histKeys.add(k);
+			fresh.push(h);
+		}
+		if (fresh.length) {
+			hist.sort((a, b) => a.Time - b.Time);
+			saveHistory();
+			ding(fresh);
+			for (const h of fresh.slice(-3)) announce(h);
+			if (isOpen() && tab !== 'options' && tab !== 'wave') render(true);
+		}
+		if (ids.length) try { sock.send(JSON.stringify({ t: 'ack', ids })); } catch (e) { /* again next time */ }
+	}
 
 	/** This account's key in this browser (made the first time it's needed). */
 	async function getKey() {
@@ -1406,7 +1525,7 @@
 		saveGC();
 		const unseen = fresh.filter((h) => h.unread);
 		if (unseen.length && !(isOpen() && thread === `g:${gid}` && !document.hidden)) {
-			if (opts.sound) chime();
+			ding(unseen);
 			if (live || unseen.length === 1) for (const h of unseen.slice(-3)) announce(h);
 			else card({ icon: '<span class="sb-av sb-gav">👥</span>', title: `👥 ${g.name}`, text: `${unseen.length} new messages while you were away`,
 				onClick: () => { thread = `g:${gid}`; if (!isOpen()) setOpen(true); else render(); } });
@@ -1568,6 +1687,8 @@
 		lastRelayCheck = Date.now();
 		getKey().catch((e) => warn(e, 'key'));
 		for (const id of Object.keys(groups)) if (!conns[id]) connectGroup(id);
+		if (Date.now() - mailChecked > 300000) checkMail();
+		mailWaiting();
 		// Answered by the relay without waking the group (free).
 		for (const c of Object.values(conns)) if (c.ready && c.ws && c.ws.readyState === 1 && Date.now() - (c.pinged || 0) > 240000) { c.pinged = Date.now(); c.ws.send('{"t":"ping"}'); }
 	}
@@ -1630,7 +1751,7 @@
 				histKeys.add(h.k);
 				saveHistory();
 				if (isReaction(h)) return;
-				if (opts.sound) chime();
+				ding([h]);
 				announce(h);
 				if (isOpen() && tab !== 'options' && tab !== 'wave') render(true);
 			} catch (e) { warn(e); }
@@ -1692,7 +1813,7 @@
 			badge.style.display = n ? 'block' : 'none';
 			// The beeps already there at login are not news.
 			if (first || !fresh.length) { if (fresh.length && isOpen()) render(true); return; }
-			if (opts.sound) chime();
+			ding(fresh);
 			for (const h of fresh.slice(-4)) announce(h);
 			if (isOpen() && tab !== 'options' && tab !== 'wave') render(true);
 		} catch (e) {
@@ -1828,6 +1949,21 @@
 	}
 
 	/** A soft two-note pop for a new beep. */
+	/*
+	 * 🔕 Muted chats: no sound for that person or group (the card and the unread count still come).
+	 * opts.muted holds 'n:<member number>' and 'g:<group id>'.
+	 */
+	const muteKey = (h) => (h.group ? `g:${h.group}` : `n:${h.MemberNumber}`);
+	const isMuted = (key) => Array.isArray(opts.muted) && opts.muted.includes(key);
+	/** The sound for new messages, unless every one of them is from a muted chat. */
+	const ding = (list) => { if (opts.sound && list.some((h) => !isMuted(muteKey(h)))) chime(); };
+	function toggleMute(key, name) {
+		const on = !isMuted(key);
+		setOpt('muted', [...(Array.isArray(opts.muted) ? opts.muted : []).filter((k) => k !== key), ...(on ? [key] : [])].slice(-500));
+		notify(on ? `🔕 No sound for ${name}` : `🔔 Sound back on for ${name}`);
+		if (isOpen()) render(true);
+	}
+	const muteButton = (key) => `<button id="sb-mute" title="${isMuted(key) ? 'Muted: no sound for this chat. Click for sound again' : 'Mute: no sound for this chat'}">${isMuted(key) ? '🔕' : '🔔'}</button>`;
 	function chime() {
 		try {
 			const ac = chime.ac || (chime.ac = new AudioContext());
@@ -2160,7 +2296,7 @@
 			<div class="sb-thead"><button id="sb-back" title="Back">‹</button>${groupAv(g)}
 				<div class="sb-main"><div class="sb-name">${esc(g.name)}</div>
 				<div class="sb-sub" title="${esc(names.join(', '))}">${online ? `<span class="sb-on"></span>${here} online · ` : '⏳ connecting… · '}${g.members.length} members: You${names.length ? `, ${esc(names.join(', '))}` : ''}</div></div>
-				<button id="sb-members" title="Members and invites">👥</button><button id="sb-leave" title="${g.owner === Player.MemberNumber ? 'Leave or delete the group' : 'Leave the group'}">🚪</button></div>
+				${muteButton(`g:${id}`)}<button id="sb-members" title="Members and invites">👥</button><button id="sb-leave" title="${g.owner === Player.MemberNumber ? 'Leave or delete the group' : 'Leave the group'}">🚪</button></div>
 			<div class="sb-msgs" id="sb-msgs">${msgs.length ? msgs.map((h) => (h.sys ? `<div class="sb-sys">${esc(textOf(h))}</div>`
 				: `<div class="sb-b ${h.Sent ? 'me' : 'them'}${isAction(textOf(h)) ? ' sb-act' : ''}">${h.Sent ? '' : `<span class="sb-from">${esc(memberName(g, h.MemberNumber) || h.MemberName)}</span>`}${rich(textOf(h))}<em>${timeOf(h.Time)}</em></div>`)).join('')
 				: '<div class="sb-empty">🫧 Say hi to the group!</div>'}</div>
@@ -2175,6 +2311,7 @@
 		ta.value = draft;
 		$('sb-back').addEventListener('click', () => { thread = null; render(); });
 		$('sb-members').addEventListener('click', () => { renderMembers.open = id; render(); });
+		$('sb-mute').addEventListener('click', () => toggleMute(`g:${id}`, g.name));
 		$('sb-leave').addEventListener('click', () => askGroup(id));
 		$('sb-emo').addEventListener('click', () => toggleEmoji());
 		const send = () => {
@@ -2278,9 +2415,9 @@
 		view.innerHTML = `
 			<div class="sb-thead"><button id="sb-back" title="Back">‹</button>${avatar(n, nameOf(n))}
 				<div class="sb-main"><div class="sb-name">${esc(nameOf(n))} <small style="font-weight:normal;color:#c08aaa">#${n}</small></div>
-				<div class="sb-sub">${f ? '<span class="sb-on"></span>' : ''}${esc(where(f))}</div></div></div>
+				<div class="sb-sub">${f ? '<span class="sb-on"></span>' : ''}${esc(where(f))}</div></div>${muteButton(`n:${n}`)}</div>
 			<div class="sb-msgs" id="sb-msgs">${msgs.length ? msgs.map((b, i) => `<div class="sb-b ${b.Sent ? 'me' : 'them'}${isAction(textOf(b)) ? ' sb-act' : ''}">${rich(textOf(b))}` +
-				`${roomLine(b, msgs, i)}<em>${timeOf(b.Time)}</em></div>`).join('')
+				`${roomLine(b, msgs, i)}<em>${b.mail ? `<span title="${b.Sent ? 'Left in their SlimeBeep mailbox while they were offline' : 'Left in your SlimeBeep mailbox while you were offline'}">📬</span> ` : ''}${b.unchecked ? '<span title="Their SlimeBeep has not told yours its key yet, so who sent this could not be checked">⚠</span> ' : ''}${timeOf(b.Time)}</em></div>`).join('')
 				: (waitingHere.length ? '' : '<div class="sb-empty">🫧 Say hi!</div>')}${waitingHere.map((w) => `<div class="sb-b me sb-wait">${esc(w.text)}<em>⏳ sends when they're online · <a href="#" data-cancel="${esc(w.id)}">cancel</a></em></div>`).join('')}</div>
 			<div class="sb-compose">
 				<button class="pin ${pinOn ? 'on' : ''}" id="sb-pin" ${room ? '' : 'disabled'} title="${room ? `Let them join me: adds a button to join you in "${esc(room)}"` : "You're not in a chat room"}">📍</button>
@@ -2294,6 +2431,7 @@
 		ta.value = draft;
 		$('sb-back').addEventListener('click', () => { thread = null; renderThread.pin = undefined; render(); });
 		$('sb-pin').addEventListener('click', () => { renderThread.pin = !pinOn; render(true); });
+		$('sb-mute').addEventListener('click', () => toggleMute(`n:${n}`, nameOf(n)));
 		for (const b of view.querySelectorAll('.sb-joinroom')) b.addEventListener('click', (e) => { e.preventDefault(); joinRoom(b.dataset.room); });
 		for (const a of view.querySelectorAll('[data-cancel]')) a.addEventListener('click', (e) => {
 			e.preventDefault();
@@ -2335,6 +2473,7 @@
 		waiting.push({ id: newId(), n, text: text.slice(0, 1000), at: Date.now() });
 		saveWaiting();
 		notify(`⏳ ${nameOf(n)} is offline: it goes out when they're back`);
+		mailWaiting(true);
 	}
 	/** Sends every waiting beep whose friend is online now, a WaveBeep gap apart. */
 	let sendingWaiting = false;

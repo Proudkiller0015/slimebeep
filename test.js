@@ -859,6 +859,92 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 		await tap('#sb-back');
 	}
 
+	// ---- 📬 Mailboxes: a beep for an offline SlimeBeep friend is left on the relay; theirs come in the same way.
+	{
+		/** A mailbox connection from this test, signed by `who` as member `as`. */
+		const mailConnect = async (owner, who, as = who.member) => {
+			const ws = new WebSocket(`${RELAY_URL}/ws?m=${owner}`, { headers: { Origin: 'https://www.bondageprojects.elementfx.com' } });
+			const c = { ws, got: [] };
+			ws.onmessage = (e) => c.got.push(JSON.parse(e.data));
+			await waitFor(() => c.got.length > 0, 4000);
+			const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, who.k.privateKey, new TextEncoder().encode(`${c.got[0].nonce}|mbox:${owner}|${as}`));
+			ws.send(JSON.stringify({ t: 'auth', member: as, name: who.name, pub: who.pub, sig: Buffer.from(sig).toString('base64url') }));
+			await waitFor(() => c.got.length > 1, 4000);
+			c.last = (t) => [...c.got].reverse().find((x) => x.t === t);
+			return c;
+		};
+		const cat = await relayUser(13, 'Cat'), eve = await relayUser(66, 'Eve');
+		// Cat has SlimeBeep (her key start came with a hidden beep) and is offline.
+		await hide(13, 'Cat', { sb: 1, pong: 1, kf: cat.pub.x.slice(0, 16) });
+		await p.evaluate(() => { beeps.length = 0; fire('AccountQueryResult', { Query: 'OnlineFriends', Result: [{ MemberNumber: 11, MemberName: 'Ann', Type: 'Friend' }] }); });
+		await wait(300);
+		await p.evaluate(() => SlimeBeep.api.openChat(13));
+		await wait(250);
+		await p.type('#sb-text', 'left for you');
+		await p.keyboard.press('Enter');
+		const mailed = await waitFor(() => p.evaluate(() => [...document.querySelectorAll('.sb-b.me')].some((b) => /left for you/.test(b.textContent) && /📬/.test(b.textContent))), 8000);
+		check(mailed && await p.evaluate(() => beeps.length === 0 && !document.querySelector('.sb-b.sb-wait') && JSON.parse(localStorage.getItem('slimebeep.waiting.1')).length === 0),
+			'a beep for an offline SlimeBeep friend is left in their mailbox (📬), not kept waiting here and no game beep');
+		const myKf = await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.key.1')).x.slice(0, 16));
+		const catBox = await mailConnect(13, cat);
+		const inbox = catBox.last('mail') ? catBox.last('mail').list : [];
+		check(inbox.length === 1 && inbox[0].text === 'left for you' && inbox[0].from === 1 && inbox[0].fromKf === myKf, `Cat's SlimeBeep finds it in her mailbox (${JSON.stringify(inbox)})`);
+		catBox.send = (x) => catBox.ws.send(JSON.stringify(x));
+		catBox.send({ t: 'ack', ids: inbox.map((m) => m.id) });
+		await tap('#sb-back');
+		// Logging in again: SlimeBeep checks the mailbox. While the page is reloading (no SlimeBeep yet),
+		// Cat leaves one for me and Eve, pretending to be Cat (signing as #13 with her own key), leaves another.
+		await p.reload();
+		await p.evaluate(stub);
+		await p.evaluate(() => makeLog());
+		const toMe = await mailConnect(1, cat);
+		toMe.ws.send(JSON.stringify({ t: 'put', kf: myKf, text: 'hello from your mailbox', ref: 'm1' }));
+		const fake = await mailConnect(1, eve, 13);
+		fake.ws.send(JSON.stringify({ t: 'put', kf: myKf, text: 'I am totally Cat', ref: 'm2' }));
+		await wait(500);
+		check(toMe.last('ok') && fake.last('ok'), 'both are left in my mailbox');
+		for (const c of [catBox, toMe, fake]) c.ws.close();
+		await p.addScriptTag({ content: src });
+		const came = await waitFor(() => p.evaluate(() => [...document.querySelectorAll('.sb-card')].some((x) => /hello from your mailbox/.test(x.textContent))), 12000);
+		check(came, "after logging in, Cat's mailbox beep pops a card");
+		if (await p.evaluate(() => document.getElementById('sb-panel').style.display !== 'flex')) await p.click('#sb-toggle');
+		await p.evaluate(() => SlimeBeep.api.openChat(13));
+		await wait(300);
+		const thread = await p.$eval('#sb-msgs', (e) => e.textContent);
+		check(/hello from your mailbox/.test(thread) && /📬/.test(thread) && !/totally Cat/.test(thread),
+			"it is in Cat's chat with 📬, and Eve's fake (signed with another key than Cat's) is thrown away");
+		await tap('#sb-back');
+	}
+
+	// ---- 🔕 Mute one chat: no sound for it (cards still come); others still ding.
+	{
+		await p.evaluate(() => {
+			window.dings = 0;
+			const real = AudioContext.prototype.createOscillator;
+			AudioContext.prototype.createOscillator = function (...a) { window.dings++; return real.apply(this, a); };
+			SlimeBeep.api.openChat(12);
+		});
+		await wait(250);
+		await p.click('#sb-mute');
+		await wait(200);
+		check(await p.$eval('#sb-mute', (e) => e.textContent) === '🔕', 'the 🔔 in a chat mutes it (🔕)');
+		await tap('#sb-back');
+		const beepFrom = (n, name, text) => p.evaluate((a, b, c) => FriendListBeepLog.push({ MemberNumber: a, MemberName: b, Sent: false, Read: false, Time: new Date(), Message: c, Id: `mute${Math.random()}` }), n, name, text);
+		await beepFrom(12, 'Bea', 'shh, muted');
+		await wait(1800);
+		const muted = await p.evaluate(() => ({ dings: window.dings, card: [...document.querySelectorAll('.sb-card')].some((x) => /shh, muted/.test(x.textContent)) }));
+		check(muted.dings === 0 && muted.card, `a beep from a muted chat makes no sound but still pops its card (${JSON.stringify(muted)})`);
+		await beepFrom(11, 'Ann', 'not muted');
+		await wait(1800);
+		check(await p.evaluate(() => window.dings) > 0, 'a beep from anyone else still dings');
+		await p.evaluate(() => SlimeBeep.api.openChat(12));
+		await wait(250);
+		await p.click('#sb-mute');
+		await wait(200);
+		check(await p.$eval('#sb-mute', (e) => e.textContent) === '🔔' && await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.options')).muted.length === 0), 'and pressing it again brings the sound back');
+		await tap('#sb-back');
+	}
+
 	// Drag; the spot and the picks survive a reload.
 	const r = await p.$eval('#sb-toggle', (e) => { const x = e.getBoundingClientRect(); return { x: x.x + 20, y: x.y + 20 }; });
 	await p.mouse.move(r.x, r.y); await p.mouse.down(); await p.mouse.move(300, 200, { steps: 8 }); await p.mouse.up();

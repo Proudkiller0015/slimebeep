@@ -15,7 +15,8 @@ async function keys() {
 
 /** One player's connection to one group: everything it receives is kept in `got`. */
 async function connect(gid, who, extra = {}, origin = ORIGIN) {
-	const ws = new WebSocket(`${BASE}/ws?g=${gid}`, { headers: { Origin: origin } });
+	// A group, or a mailbox (gid 'mbox:<member number>').
+	const ws = new WebSocket(`${BASE}/ws?${gid.startsWith('mbox:') ? `m=${gid.slice(5)}` : `g=${gid}`}`, { headers: { Origin: origin } });
 	const c = { ws, got: [], closed: null };
 	ws.onmessage = (e) => c.got.push(JSON.parse(e.data));
 	ws.onclose = (e) => { c.closed = e.code || 'closed'; };
@@ -149,6 +150,43 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 	check(c3.last('gone') && c3.last('gone').why === 'deleted', 'the owner deletes the group: everyone connected is told and closed');
 	const back = await connect(gid, cat);
 	check(back.closed && /no such group|not a member/.test(JSON.stringify(back.got)), 'and the group is gone for good');
+
+	// ---- Mailboxes: beeps left for someone offline, readable only with the key they were left for.
+	{
+		const box = 'mbox:11';
+		const kf = (who) => who.pub.x.slice(0, 16);
+		const c1 = await connect(box, cat);
+		c1.send({ t: 'put', kf: kf(ann), text: 'miss you <b>x</b>', ref: 'r1' });
+		await wait(300);
+		check(c1.last('ok') && c1.last('ok').ref === 'r1' && /^[A-Z2-9]{10}$/.test(c1.last('ok').id), "Cat leaves a beep in Ann's mailbox");
+		const e1 = await connect(box, eve);
+		e1.send({ t: 'put', kf: kf(eve), text: 'for the wrong key' });
+		e1.send({ t: 'put', kf: 'short', text: 'bad' });
+		e1.send({ t: 'ack', ids: [c1.last('ok').id] });
+		await wait(300);
+		check(e1.last('error') && /bad beep/.test(e1.last('error').why), 'a beep without a proper key start is refused');
+		const fake = await connect(box, eve, { as: 11 });
+		check(fake.last('mail') && fake.last('mail').list.length === 1 && fake.last('mail').list[0].text === 'for the wrong key',
+			"signing in as Ann with Eve's key only gets what was addressed to Eve's key, never Ann's beeps");
+		fake.send({ t: 'ack', ids: [c1.last('ok').id] });
+		await wait(300);
+		const a1 = await connect(box, ann);
+		const got = a1.last('mail') ? a1.last('mail').list : [];
+		check(got.length === 1 && got[0].from === 13 && got[0].name === 'Cat' && got[0].fromKf === kf(cat) && got[0].text === 'miss you <b>x</b>',
+			`Ann signs in and gets Cat's beep (Eve's acks of it did nothing), with Cat's key start to check (${JSON.stringify(got)})`);
+		c1.send({ t: 'put', kf: kf(ann), text: 'and another', ref: 'r2' });
+		await wait(300);
+		check(a1.last('mail').list[0].text === 'and another', 'a beep left while Ann is connected reaches her straight away');
+		a1.send({ t: 'ack', ids: [got[0].id, a1.last('mail').list[0].id] });
+		await wait(300);
+		a1.ws.close();
+		const a2 = await connect(box, ann);
+		check(a2.last('mail') && a2.last('mail').list.length === 0, 'read beeps are gone once acked');
+		c1.send({ t: 'put', kf: kf(ann), text: 'x'.repeat(5000) });
+		await wait(300);
+		check(c1.last('error') && c1.last('error').fatal, 'an oversized message is refused');
+		for (const c of [c1, e1, fake, a2]) try { c.ws.close(); } catch (e) { /* closed */ }
+	}
 
 	console.log(failed ? `\n${failed} FAILED` : '\nall passed');
 	process.exit(failed ? 1 : 0);

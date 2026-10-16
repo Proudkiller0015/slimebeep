@@ -17,10 +17,19 @@
  * daily reset): connections hibernate, so an idle group costs nothing; keep-alive pings are answered
  * by Cloudflare itself without waking the group (setWebSocketAutoResponse); a group takes at most
  * LIMITS.perDay messages a day; storage is a few small rows per group and the last LIMITS.keep messages.
+ *
+ * Mailboxes (one Durable Object per player, /ws?m=<member number>): beeps left for a SlimeBeep friend who
+ * is offline. A beep is addressed to the start of the key the friend's own SlimeBeep told the sender
+ * about, and only someone signing in as that member with that key reads it, so claiming somebody's
+ * number gets nothing. The sender's key start goes with it, for the reader to check against the one their
+ * friend's SlimeBeep sent. At most MAIL.box beeps wait per box, MAIL.perSender a day from one sender,
+ * MAIL.days days at most; read beeps are deleted.
  */
 
 import { DurableObject } from 'cloudflare:workers';
 
+const MAIL = { text: 1000, box: 100, perSender: 50, days: 14, ack: 100 };
+const KF_RE = /^[A-Za-z0-9_-]{16}$/;
 const LIMITS = { name: 40, text: 500, members: 40, admins: 10, keep: 200, pic: 12000, burst: 20, sockets: 80, inviteDays: 7, openUses: 20, perDay: 2000 };
 const ID_RE = /^[a-z0-9]{8,24}$/;
 const SECRET_RE = /^[A-Z2-9]{10}$/;
@@ -54,6 +63,11 @@ export default {
 		const origin = req.headers.get('Origin') || '';
 		// ALLOW_ANY_ORIGIN is only ever set for local testing (npm run dev:test), never on the live relay.
 		if (env.ALLOW_ANY_ORIGIN !== '1' && !ORIGINS.some((re) => re.test(origin))) return new Response('Forbidden', { status: 403 });
+		const box = Number(url.searchParams.get('m'));
+		if (url.searchParams.has('m')) {
+			if (!isNum(box)) return new Response('Bad mailbox', { status: 400 });
+			return env.MAILBOX.get(env.MAILBOX.idFromName(`m:${box}`)).fetch(req);
+		}
 		const gid = url.searchParams.get('g') || '';
 		if (!ID_RE.test(gid)) return new Response('Bad group', { status: 400 });
 		return env.GROUP.get(env.GROUP.idFromName(gid)).fetch(req);
@@ -371,6 +385,108 @@ export class Group extends DurableObject {
 			if (a && a.member === member) { this.send(ws, { t: 'gone', why }); try { ws.close(4000, why); } catch (e) { /* gone */ } }
 		}
 	}
+	fail(ws, why) { this.send(ws, { t: 'error', why, fatal: true }); try { ws.close(4001, why); } catch (e) { /* gone */ } }
+}
+
+/*
+ * One player's mailbox. Everyone signs in the same way as in a group (a signed one-time challenge). The
+ * owner (signing in as the box's member number) gets the beeps addressed to their key and acks them away;
+ * anyone else may leave one.
+ */
+export class Mailbox extends DurableObject {
+	constructor(ctx, env) {
+		super(ctx, env);
+		ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('{"t":"ping"}', '{"t":"pong"}'));
+	}
+
+	async fetch(req) {
+		const owner = Number(new URL(req.url).searchParams.get('m'));
+		if (this.ctx.getWebSockets().length >= 20) return new Response('Busy', { status: 503 });
+		const [client, server] = Object.values(new WebSocketPair());
+		this.ctx.acceptWebSocket(server);
+		const nonce = b64url(crypto.getRandomValues(new Uint8Array(18)));
+		server.serializeAttachment({ owner, nonce, member: null, kf: null, hits: [] });
+		server.send(JSON.stringify({ t: 'hello', nonce }));
+		return new Response(null, { status: 101, webSocket: client });
+	}
+
+	async webSocketMessage(ws, raw) {
+		const att = ws.deserializeAttachment();
+		try {
+			if (typeof raw !== 'string' || raw.length > 4000) return this.fail(ws, 'too big');
+			const now = Date.now();
+			att.hits = (att.hits || []).filter((t) => now - t < 10000);
+			att.hits.push(now);
+			ws.serializeAttachment(att);
+			if (att.hits.length > LIMITS.burst) return this.send(ws, { t: 'error', why: 'slow down' });
+			let p;
+			try { p = JSON.parse(raw); } catch (e) { return this.fail(ws, 'not JSON'); }
+			if (!p || typeof p !== 'object' || Array.isArray(p) || typeof p.t !== 'string') return this.fail(ws, 'bad message');
+			if (!att.member) {
+				if (p.t !== 'auth') return this.fail(ws, 'sign in first');
+				const member = p.member;
+				if (!isNum(member) || !p.pub || !B64URL.test(p.pub.x || '') || !B64URL.test(p.pub.y || '') || !B64URL.test(p.sig || '')) return this.fail(ws, 'bad sign-in');
+				if (!(await verify({ x: p.pub.x, y: p.pub.y }, p.sig, `${att.nonce}|mbox:${att.owner}|${member}`))) return this.fail(ws, 'bad signature');
+				att.member = member;
+				att.kf = p.pub.x.slice(0, 16);
+				att.name = clean(p.name, LIMITS.name) || `#${member}`;
+				ws.serializeAttachment(att);
+				if (member === att.owner) return this.send(ws, { t: 'mail', list: await this.mine(att.kf) });
+				return this.send(ws, { t: 'welcome' });
+			}
+			if (p.t === 'put') return await this.put(ws, att, p);
+			if (p.t === 'ack') return await this.ack(att, p.ids);
+			if (p.t === 'check' && att.member === att.owner) return this.send(ws, { t: 'mail', list: await this.mine(att.kf) });
+			return this.send(ws, { t: 'error', why: 'unknown' });
+		} catch (e) {
+			this.send(ws, { t: 'error', why: 'server error' });
+		}
+	}
+
+	/** Everything waiting, oldest first; anything past MAIL.days goes. */
+	async all() {
+		const rows = [...(await this.ctx.storage.list({ prefix: 'm:' })).entries()];
+		const old = Date.now() - MAIL.days * 864e5;
+		const gone = rows.filter(([, m]) => !m || m.at < old).map(([k]) => k);
+		if (gone.length) await this.ctx.storage.delete(gone);
+		return rows.filter(([, m]) => m && m.at >= old).map(([, m]) => m).sort((a, b) => a.at - b.at);
+	}
+	async mine(kf) {
+		return (await this.all()).filter((m) => m.kf === kf).map(({ id, from, name, fromKf, text, at }) => ({ id, from, name, fromKf, text, at }));
+	}
+
+	async put(ws, att, p) {
+		if (att.member === att.owner) return this.send(ws, { t: 'error', why: 'that is your own mailbox' });
+		const text = clean(p.text, MAIL.text);
+		const ref = typeof p.ref === 'string' ? p.ref.slice(0, 24) : '';
+		if (!text || !KF_RE.test(p.kf || '')) return this.send(ws, { t: 'error', why: 'bad beep', ref });
+		const list = await this.all();
+		if (list.length >= MAIL.box) return this.send(ws, { t: 'error', why: 'their mailbox is full', ref });
+		const day = Date.now() - 864e5;
+		if (list.filter((m) => m.from === att.member && m.at > day).length >= MAIL.perSender) return this.send(ws, { t: 'error', why: 'enough beeps left for today', ref });
+		const m = { id: secret(), from: att.member, name: att.name, fromKf: att.kf, kf: p.kf, text, at: Date.now() };
+		await this.ctx.storage.put(`m:${m.id}`, m);
+		this.send(ws, { t: 'ok', ref, id: m.id });
+		// The owner connected right now with that key: straight to them.
+		for (const o of this.ctx.getWebSockets()) {
+			const a = o.deserializeAttachment();
+			if (a && a.member === a.owner && a.kf === m.kf) this.send(o, { t: 'mail', list: [{ id: m.id, from: m.from, name: m.name, fromKf: m.fromKf, text: m.text, at: m.at }] });
+		}
+	}
+
+	async ack(att, ids) {
+		if (att.member !== att.owner || !Array.isArray(ids)) return;
+		const keys = ids.slice(0, MAIL.ack).filter((id) => typeof id === 'string' && SECRET_RE.test(id)).map((id) => `m:${id}`);
+		if (!keys.length) return;
+		// Only beeps for this key.
+		const rows = await this.ctx.storage.get(keys);
+		const mine = [...rows.entries()].filter(([, m]) => m && m.kf === att.kf).map(([k]) => k);
+		if (mine.length) await this.ctx.storage.delete(mine);
+	}
+
+	webSocketClose(ws) { try { ws.close(); } catch (e) { /* closed */ } }
+	webSocketError(ws) { try { ws.close(); } catch (e) { /* closed */ } }
+	send(ws, x) { try { ws.send(JSON.stringify(x)); } catch (e) { /* gone */ } }
 	fail(ws, why) { this.send(ws, { t: 'error', why, fatal: true }); try { ws.close(4001, why); } catch (e) { /* gone */ } }
 }
 
