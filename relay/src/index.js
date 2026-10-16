@@ -27,8 +27,10 @@ const SECRET_RE = /^[A-Z2-9]{10}$/;
 const PIC_RE = /^data:image\/(webp|jpeg|png);base64,[A-Za-z0-9+/]+=*$/;
 const B64URL = /^[A-Za-z0-9_-]{16,128}$/;
 // Only the game's own pages (a browser always sends its page's origin; this keeps other websites out).
-const ORIGINS = [/^https:\/\/(www\.)?bondageprojects\.elementfx\.com$/, /^https:\/\/(www\.)?bondageprojects\.com$/, /^https:\/\/(www\.)?bondage-europe\.com$/,
-	/^https:\/\/(www\.)?bondage-asia\.com$/, /^http:\/\/localhost(:\d+)?$/, /^http:\/\/127\.0\.0\.1(:\d+)?$/];
+// Any subdomain of the game's known sites, so a move to a new mirror or subdomain keeps working.
+const ORIGINS = [/^https:\/\/([a-z0-9-]+\.)*bondageprojects\.elementfx\.com$/, /^https:\/\/([a-z0-9-]+\.)*bondageprojects\.com$/,
+	/^https:\/\/([a-z0-9-]+\.)*bondage-europe\.com$/, /^https:\/\/([a-z0-9-]+\.)*bondage-asia\.com$/,
+	/^http:\/\/localhost(:\d+)?$/, /^http:\/\/127\.0\.0\.1(:\d+)?$/];
 
 const isNum = (n) => Number.isInteger(n) && n > 0 && n < 1e9;
 const clean = (x, max) => (typeof x === 'string' ? x.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').trim().slice(0, max) : '');

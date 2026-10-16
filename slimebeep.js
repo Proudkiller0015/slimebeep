@@ -13,7 +13,7 @@
 (function () {
 	'use strict';
 
-	const VERSION = '2.8.0';
+	const VERSION = '2.8.1';
 	// Loaded once per page, whatever loads it.
 	if (window.SlimeBeep) return;
 	window.SlimeBeep = { version: VERSION };
@@ -129,6 +129,27 @@
 	const keyOf = (b) => (b.Id ? `id:${b.Id}` : `${b.MemberNumber}|${new Date(b.Time).getTime()}|${b.Sent ? 1 : 0}|${String(b.Message || '').slice(0, 40)}`);
 
 	const $ = (id) => document.getElementById(id);
+
+	/*
+	 * Everything SlimeBeep takes from the game, and what stops working without it. Every use is checked
+	 * on its own, so when a game update renames something only that part stops; this list says which,
+	 * in the 🐞 report and once as a card. The same list is checked against the live site every day by
+	 * .github/workflows/bc-check.yml, which fails (and emails) when the game changes under SlimeBeep.
+	 */
+	// typeof works on any global, var, let or function alike; each is written out so nothing is evaluated from text.
+	const NEEDS = [
+		['ServerSocket', () => typeof ServerSocket, 'everything (the connection to the game)'],
+		['Player', () => typeof Player, 'everything (who you are)'],
+		['ServerSend', () => typeof ServerSend, 'friend lists and beeps'],
+		['FriendListBeepLog', () => typeof FriendListBeepLog, 'reading beeps'],
+		['ServerSendBeepMessage', () => typeof ServerSendBeepMessage, 'sending beeps the usual way'],
+		['ChatRoomSendLocal', () => typeof ChatRoomSendLocal, 'update notes in the room chat'],
+		['ServerPlayerIsInChatRoom', () => typeof ServerPlayerIsInChatRoom, 'knowing you are in a room'],
+		['PreferenceRegisterExtensionSetting', () => typeof PreferenceRegisterExtensionSetting, 'Settings > Extensions'],
+		['DrawCheckbox', () => typeof DrawCheckbox, 'Settings > Extensions'],
+		['MouseIn', () => typeof MouseIn, 'Settings > Extensions'],
+	];
+	const missing = () => NEEDS.filter(([, t]) => { try { return t() === 'undefined'; } catch (e) { return true; } });
 	// SlimeBeep's own caught errors, the last few, for the 🐞 report; also in the console as before.
 	const errors = [];
 	function warn(e, where = '') {
@@ -560,7 +581,7 @@
 			sock.on('AccountQueryResult', queryListener);
 		}
 	}
-	window.SlimeBeep.debug = () => ({ version: VERSION, listening: !!listening, catchAll: !!(listening && typeof listening.onAny === 'function'), lastBeeps: seenBeeps.slice() });
+	window.SlimeBeep.debug = () => ({ version: VERSION, missing: missing().map(([k]) => k), listening: !!listening, catchAll: !!(listening && typeof listening.onAny === 'function'), lastBeeps: seenBeeps.slice() });
 
 	// At most LIMITS.perMinute hidden beeps a minute from anyone; past that they are dropped.
 	const recent = new Map();
@@ -977,7 +998,11 @@
 			} catch (e) { warn(e); }
 		}, 1500);
 	}
-	const askFriends = () => { if (loggedIn()) { listen(); ServerSend('AccountQuery', { Query: 'OnlineFriends' }); } };
+	const askFriends = () => {
+		if (!loggedIn()) return;
+		listen();
+		try { if (typeof ServerSend === 'function') ServerSend('AccountQuery', { Query: 'OnlineFriends' }); } catch (e) { warn(e, 'friends'); }
+	};
 
 	const isOpen = () => $('sb-panel').style.display === 'flex';
 	function setOpen(on) {
@@ -1012,6 +1037,7 @@
 		// Whatever goes wrong in here stays in here: never an error into the game or other add-ons.
 		try {
 			updateNote();
+			gameCheck();
 			// Listen from login on, not only once the panel has been opened.
 			if (loggedIn()) listen();
 			if (loggedIn() && histOwner === Player.MemberNumber) relayTick();
@@ -1118,6 +1144,22 @@
 			updateNote.tries = (updateNote.tries || 0) + 1;
 			if (shown || updateNote.tries >= 5) { opts.lastVersion = VERSION; saveOpts(); }
 		}, 1500);
+	}
+	/**
+	 * Once logged in: if a game update removed something SlimeBeep uses, one card (per version and
+	 * per set of missing parts) says what won't work until SlimeBeep is updated. Nothing else changes.
+	 */
+	function gameCheck() {
+		if (gameCheck.done || !loggedIn()) return;
+		gameCheck.done = true;
+		const gone = missing();
+		if (!gone.length) return;
+		const sig = `${VERSION}:${gone.map(([k]) => k).join(',')}`;
+		if (opts.gameWarned === sig) return;
+		setOpt('gameWarned', sig);
+		const what = [...new Set(gone.map(([, , w]) => w))].join(', ');
+		card({ icon: `<img src="${ICON}" style="width:34px;height:34px;border-radius:50%;flex:none" alt="">`, title: '🫧 SlimeBeep',
+			text: `A game update changed something SlimeBeep uses, so this may not work until SlimeBeep updates: ${what}. Everything else works as usual.`, ms: 0, cls: 'news' });
 	}
 	let newsLoaded = false;
 	const started = Date.now();
@@ -1578,8 +1620,11 @@
 
 	/** The game's own beep sender: same format, length limit and beep log as the friend list. */
 	function beep(n, text, includeRoom) {
-		if (typeof ServerSendBeepMessage === 'function') ServerSendBeepMessage(n, text, { includeRoom });
-		else ServerSend('AccountBeep', { MemberNumber: n, BeepType: '', IsSecret: !includeRoom, Message: text });
+		try {
+			if (typeof ServerSendBeepMessage === 'function') ServerSendBeepMessage(n, text, { includeRoom });
+			else if (typeof ServerSend === 'function') ServerSend('AccountBeep', { MemberNumber: n, BeepType: '', IsSecret: !includeRoom, Message: text });
+			else throw new Error('the game has no beep sender any more');
+		} catch (e) { warn(e, 'beep'); notify('⚠ That beep could not be sent'); }
 	}
 
 	function groupHtml() {
@@ -1785,6 +1830,7 @@
 			withNumber && loggedIn() ? `Reported by: #${Player.MemberNumber}` : null,
 			`Listening: ${d.listening ? 'yes' : 'no'}${d.catchAll ? ', catch-all' : ''}; groups: ${Object.keys(groups).length}; kept beeps: ${hist.length}`,
 			mods ? `Other mods: ${mods}` : null,
+			missing().length ? `Missing from the game: ${missing().map(([k]) => k).join(', ')}` : null,
 			errors.length ? `Recent errors:\n${errors.map((x) => `- ${x}`).join('\n')}` : 'Recent errors: none',
 		].filter(Boolean).join('\n');
 	}
@@ -1882,9 +1928,43 @@
 		$('sb-o-reset').addEventListener('click', () => { setOpt('pos', null); place(); });
 	}
 
-	try {
-		build();
-	} catch (e) {
-		warn(e, 'could not start');
+	/*
+	 * The installed loader fetches this file from raw.githubusercontent.com, which can hand out an old
+	 * copy for a few minutes after an update. GitHub Pages (where FUSAM loads it) has the new one within
+	 * a minute, so before starting, this copy asks Pages which version is current and, if that one is
+	 * newer, runs it instead. Without an answer within 4 seconds, it just starts.
+	 */
+	const PAGES = 'https://proudkiller0015.github.io/slimebeep/slimebeep.js';
+	const newer = (a, b) => {
+		const x = a.split('.').map(Number), y = b.split('.').map(Number);
+		for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+		return false;
+	};
+	function start() {
+		try {
+			build();
+		} catch (e) {
+			warn(e, 'could not start');
+		}
+	}
+	if (window.SlimeBeepHopped) start();
+	else {
+		const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+		const timer = setTimeout(() => { if (ctl) ctl.abort(); }, 4000);
+		fetch(`${PAGES}?t=${Date.now()}`, { cache: 'no-store', signal: ctl ? ctl.signal : undefined })
+			.then((r) => (r.ok ? r.text() : ''))
+			.then((code) => {
+				clearTimeout(timer);
+				const m = /const VERSION = '(\d+\.\d+\.\d+)'/.exec(code);
+				if (!m || !newer(m[1], VERSION)) return start();
+				// A newer SlimeBeep: it takes over from here (this one never builds anything).
+				window.SlimeBeepHopped = true;
+				delete window.SlimeBeep;
+				const script = document.createElement('script');
+				script.textContent = `${code}\n//# sourceURL=slimebeep.js`;
+				document.head.appendChild(script);
+				script.remove();
+			})
+			.catch(() => { clearTimeout(timer); start(); });
 	}
 })();

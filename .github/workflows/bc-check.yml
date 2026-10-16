@@ -1,0 +1,20 @@
+# Every day: is everything SlimeBeep uses still in the live game, and does the group chat relay answer?
+# A failed run is emailed to the repository owner, usually the day Bondage Club updates.
+name: Daily game check
+on:
+  schedule:
+    - cron: '0 13 * * *'
+  workflow_dispatch:
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-save puppeteer-core@25.12.0
+      - run: node tools/bc-check.js
+        env:
+          CHROME_PATH: /usr/bin/google-chrome

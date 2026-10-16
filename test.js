@@ -40,8 +40,11 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	await p.setViewport({ width: 1200, height: 800 });
 	// news.json is served by the test, never the live one.
 	let newsBody = '[]';
+	// What GitHub Pages answers for slimebeep.js (null: not found, so the copy under test just starts).
+	let pagesBody = null;
 	await p.setRequestInterception(true);
-	p.on('request', (r) => (r.url().includes('/news.json') ? r.respond({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: newsBody }) : r.continue()));
+	p.on('request', (r) => (r.url().includes('github.io/slimebeep/slimebeep.js') ? r.respond(pagesBody ? { status: 200, contentType: 'application/javascript', headers: { 'Access-Control-Allow-Origin': '*' }, body: pagesBody } : { status: 404, headers: { 'Access-Control-Allow-Origin': '*' }, body: '' })
+		: r.url().includes('/news.json') ? r.respond({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: newsBody }) : r.continue()));
 	await p.goto('https://example.com/');
 	const stub = () => {
 		const handlers = {};
@@ -111,6 +114,7 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	await p.evaluate(stub);
 	await p.addScriptTag({ content: src });
 	await p.addScriptTag({ content: src });
+	await wait(400);
 	check(await p.$$eval('#sb-toggle', (e) => e.length) === 1, 'loaded twice, one button');
 	await wait(1500);
 	check(await p.evaluate(() => local.length) === 0, 'no update note before the chat log exists (just after login)');
@@ -374,6 +378,28 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 		check(!!z.last('gone') && z.closed, 'removing Zed closes his connection');
 		await tap('#sb-back');
 		await tap('#sb-back');
+	}
+
+	// ---- An old copy (the raw link lagging) finds a newer one on GitHub Pages: the newer one runs, once.
+	{
+		const ver = src.match(/const VERSION = '([^']+)'/)[1];
+		const [a1, b1, c1] = ver.split('.').map(Number);
+		pagesBody = src.replace(`const VERSION = '${ver}'`, `const VERSION = '${a1}.${b1}.${c1 + 1}'`);
+		await p.reload();
+		await p.evaluate(stub);
+		await p.evaluate(() => makeLog());
+		await p.addScriptTag({ content: src });
+		await wait(1500);
+		const hop = await p.evaluate(() => ({ v: window.SlimeBeep && window.SlimeBeep.version, buttons: document.querySelectorAll('#sb-toggle').length }));
+		check(hop.v === `${a1}.${b1}.${c1 + 1}` && hop.buttons === 1, `an old copy hands over to the newer one on Pages, which runs once (${hop.v}, ${hop.buttons} button)`);
+		pagesBody = null;
+		await p.reload();
+		await p.evaluate(stub);
+		await p.evaluate(() => makeLog());
+		await p.addScriptTag({ content: src });
+		await wait(800);
+		await p.click('#sb-toggle');
+		await wait(200);
 	}
 
 	// ---- Profile pictures: real image data only, from SlimeBeep friends, in pieces.
