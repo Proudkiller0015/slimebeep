@@ -13,7 +13,7 @@
 (function () {
 	'use strict';
 
-	const VERSION = '2.4.0';
+	const VERSION = '2.5.0';
 	// Loaded once per page, whatever loads it.
 	if (window.SlimeBeep) return;
 	window.SlimeBeep = { version: VERSION };
@@ -223,7 +223,37 @@
 	};
 	// A soft colour per person, for their bubble avatar.
 	const hue = (n) => (Number(n) * 137) % 360;
-	const avatar = (n, name) => `<span class="sb-av" style="background:hsl(${hue(n)} 85% 80%)">${esc(String(name || '?').trim().slice(0, 2))}</span>`;
+	/*
+	 * Profile pictures, between SlimeBeep users. Yours is shrunk to a small square in your browser and
+	 * sent in pieces over hidden beeps to SlimeBeep friends who ask for it. Only image data is ever kept
+	 * or shown (never a web address), so a picture loads nothing from anywhere and can run nothing.
+	 */
+	const PFP_RE = /^data:image\/(webp|jpeg|png);base64,[A-Za-z0-9+/]+=*$/;
+	const PFP_MAX = 6000;
+	const PFP_CHUNK = 700;
+	let pfps = null; // member number -> { v, data }
+	function loadPfps() {
+		if (pfps) return pfps;
+		pfps = {};
+		try {
+			const saved = JSON.parse(localStorage.getItem('slimebeep.pfps') || '{}');
+			for (const [k, x] of Object.entries(saved)) if (isNum(Number(k)) && x && isId(x.v) && typeof x.data === 'string' && x.data.length <= PFP_MAX && PFP_RE.test(x.data)) pfps[Number(k)] = { v: x.v, data: x.data };
+		} catch (e) { /* unreadable: none */ }
+		return pfps;
+	}
+	function savePfps() {
+		const keys = Object.keys(pfps);
+		// Only the newest few hundred are kept.
+		for (const k of keys.slice(0, Math.max(0, keys.length - 300))) delete pfps[k];
+		try { localStorage.setItem('slimebeep.pfps', JSON.stringify(pfps)); } catch (e) { /* the browser won't keep it */ }
+	}
+	const myPfp = () => (opts.pfp && isId(opts.pfp.v) && typeof opts.pfp.data === 'string' && PFP_RE.test(opts.pfp.data) ? opts.pfp : null);
+	const pfpOf = (n) => (loggedIn() && n === Player.MemberNumber ? myPfp() : loadPfps()[n]) || null;
+	const avatar = (n, name) => {
+		const pic = pfpOf(n);
+		if (pic) return `<img class="sb-av sb-pic" src="${esc(pic.data)}" alt="">`;
+		return `<span class="sb-av" style="background:hsl(${hue(n)} 85% 80%)">${esc(String(name || '?').trim().slice(0, 2))}</span>`;
+	};
 
 	const css = `
 		#sb-toggle { position: fixed; z-index: 99999; width: 46px; height: 46px; border-radius: 50%; padding: 0; overflow: visible;
@@ -292,6 +322,7 @@
 		.sb-go:disabled { opacity: .45; cursor: default; }
 		.sb-line { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin: 6px 0; }
 		.sb-hint { color: #a0638a; font-size: 11px; }
+		img.sb-pic { object-fit: cover; padding: 0; background: #fff; }
 		.sb-gav { background: linear-gradient(135deg, #ffb3d9, #9fe8ff); font-size: 16px; }
 		.sb-from { display: block; font-size: 11px; font-weight: bold; color: #c2186b; margin-bottom: 2px; }
 		.sb-sys { align-self: center; font-size: 11px; color: #a0638a; background: #ffe6f3; padding: 2px 10px; border-radius: 10px; }
@@ -489,6 +520,77 @@
 	}
 	const ponged = new Map();
 
+	const asked = new Map(); // who we asked for a picture, and when
+	const sentPic = new Map(); // who we sent ours to, and when
+	const pieces = new Map(); // member number -> { v, n, parts }
+	/** The picture side of a hidden beep: their version (ask if new), a request for ours, or a piece of theirs. */
+	function pictureNews(from, p) {
+		const known = loadPfps()[from];
+		if (p.pv === 0 && known) { delete pfps[from]; savePfps(); }
+		if (isId(p.pv) && (!known || known.v !== p.pv) && Date.now() - (asked.get(from) || 0) > 60000) {
+			asked.set(from, Date.now());
+			sendHidden(from, { sb: 1, pfreq: 1 });
+		}
+		if (p.pfreq === 1) {
+			const pic = myPfp();
+			if (!pic || Date.now() - (sentPic.get(from) || 0) < 60000) return;
+			sentPic.set(from, Date.now());
+			const parts = Math.ceil(pic.data.length / PFP_CHUNK);
+			for (let i = 0; i < parts; i++) sendHidden(from, { sb: 1, pf: { v: pic.v, i, n: parts, d: pic.data.slice(i * PFP_CHUNK, (i + 1) * PFP_CHUNK) } });
+		}
+		const pf = p.pf;
+		if (pf && typeof pf === 'object' && isId(pf.v) && Number.isInteger(pf.i) && Number.isInteger(pf.n) && pf.n > 0 && pf.n <= Math.ceil(PFP_MAX / PFP_CHUNK) &&
+			pf.i >= 0 && pf.i < pf.n && typeof pf.d === 'string' && pf.d.length <= PFP_CHUNK) {
+			let got = pieces.get(from);
+			if (!got || got.v !== pf.v || got.n !== pf.n) got = { v: pf.v, n: pf.n, parts: [] };
+			got.parts[pf.i] = pf.d;
+			pieces.set(from, got);
+			if (got.parts.filter((x) => typeof x === 'string').length === got.n) {
+				pieces.delete(from);
+				const data = got.parts.join('');
+				if (data.length <= PFP_MAX && PFP_RE.test(data)) {
+					loadPfps()[from] = { v: got.v, data };
+					savePfps();
+					if (isOpen()) render(true);
+				}
+			}
+		}
+	}
+
+	/** Your picture from a file: cropped square, shrunk to 48×48, and made small enough to send. */
+	function setPicture(file) {
+		if (!file || !/^image\//.test(file.type)) return notify('That is not a picture');
+		const url = URL.createObjectURL(file);
+		const img = new Image();
+		img.onload = () => {
+			try {
+				const c = document.createElement('canvas');
+				c.width = c.height = 48;
+				const side = Math.min(img.naturalWidth, img.naturalHeight);
+				c.getContext('2d').drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, 48, 48);
+				let data = '';
+				for (const q of [0.8, 0.6, 0.45, 0.3]) {
+					data = c.toDataURL('image/webp', q);
+					if (!data.startsWith('data:image/webp')) data = c.toDataURL('image/jpeg', q);
+					if (data.length <= PFP_MAX) break;
+				}
+				if (data.length > PFP_MAX || !PFP_RE.test(data)) return notify('That picture is too big, try another');
+				setOpt('pfp', { v: newId(), data });
+				notify('✓ New profile picture');
+				if (isOpen()) render(true);
+			} finally { URL.revokeObjectURL(url); }
+		};
+		img.onerror = () => { URL.revokeObjectURL(url); notify('That picture could not be read'); };
+		img.src = url;
+	}
+	function pickPicture() {
+		const input = document.createElement('input');
+		input.type = 'file';
+		input.accept = 'image/*';
+		input.addEventListener('change', () => setPicture(input.files && input.files[0]));
+		input.click();
+	}
+
 	/** A hidden SlimeBeep beep: a "do you have SlimeBeep?" ping, its answer, or something for a group chat. */
 	function onHidden(d) {
 		if (!loggedIn() || !isNum(d.MemberNumber) || typeof d.Message !== 'string' || d.Message.length > 1000) return;
@@ -500,6 +602,8 @@
 		try { p = JSON.parse(d.Message); } catch (e) { return; }
 		if (!p || typeof p !== 'object' || Array.isArray(p) || p.sb !== 1) return;
 		if (!peers.has(from)) { peers.add(from); saveGC(); }
+		pictureNews(from, p);
+		if (p.pfreq === 1 || p.pf) return;
 		if (p.ping === 1) {
 			// Answer once a minute at most, so nobody can use SlimeBeep to bounce beeps around.
 			if (Date.now() - (ponged.get(from) || 0) > 60000) { ponged.set(from, Date.now()); sendHidden(from, { sb: 1, pong: 1 }); }
@@ -639,7 +743,9 @@
 	// Hidden beeps go out one at a time, a little apart, so a group message never floods the server.
 	const outbox = [];
 	function sendHidden(n, payload) {
-		outbox.push([n, JSON.stringify(payload)]);
+		// Every hidden beep says which picture you have now (pv), so the other side can ask for it.
+		const pic = myPfp();
+		outbox.push([n, JSON.stringify({ ...payload, pv: pic ? pic.v : 0 })]);
 		if (outbox.length === 1) drain();
 	}
 	function drain() {
@@ -1365,7 +1471,7 @@
 		const gapY = TOP + boxes.length * ROW;
 		const btnY = gapY + ROW;
 		const MINUS = [LEFT, gapY, 64, 64], PLUS = [LEFT + 80, gapY, 64, 64];
-		const RESET = [LEFT, btnY, 420, 64], CLEAR = [LEFT + 450, btnY, 420, 64];
+		const RESET = [LEFT, btnY, 420, 64], CLEAR = [LEFT + 450, btnY, 420, 64], PIC = [LEFT, btnY + ROW, 420, 64], NOPIC = [LEFT + 450, btnY + ROW, 420, 64];
 		const mouse = (r) => typeof MouseIn === 'function' && MouseIn(...r);
 		PreferenceRegisterExtensionSetting({
 			Identifier: 'SlimeBeep',
@@ -1387,6 +1493,8 @@
 					MainCanvas.textAlign = 'center';
 					DrawButton(...RESET, 'Reset slime position', 'White');
 					DrawButton(...CLEAR, `Clear kept beeps (${hist.length})`, 'White');
+					DrawButton(...PIC, myPfp() ? 'Change profile picture' : 'Choose profile picture', 'White');
+					if (myPfp()) DrawButton(...NOPIC, 'Remove profile picture', 'White');
 					DrawButton(...EXIT, '', 'White', 'Icons/Exit.png');
 				} catch (e) {
 					// Drawing is the game's; never break its frame.
@@ -1402,6 +1510,8 @@
 					if (mouse(PLUS)) setOpt('gap', Math.min(10, opts.gap + 0.5));
 					if (mouse(RESET)) { setOpt('pos', null); place(); }
 					if (mouse(CLEAR)) clearKept();
+					if (mouse(PIC)) pickPicture();
+					if (myPfp() && mouse(NOPIC)) setOpt('pfp', null);
 				} catch (e) { console.warn('[SlimeBeep]', e); }
 			},
 			exit: () => true,
@@ -1455,6 +1565,8 @@
 	function optionsHtml() {
 		return `<div class="sb-opts">
 			<b style="display:block;margin:6px 2px">⚙ Options</b>
+			<label style="display:flex;align-items:center;gap:8px">${avatar(Player.MemberNumber, myName())}<span style="flex:1">Profile picture<span class="sb-hint" style="display:block">SlimeBeep friends see it.</span></span>
+				<button class="sb-pill" id="sb-o-pic">Choose</button>${myPfp() ? '<button class="sb-pill" id="sb-o-nopic">Remove</button>' : ''}</label>
 			<label><input type="checkbox" id="sb-o-night" ${opts.night ? 'checked' : ''}>🌙 Night mode (a night blue slime)</label>
 			<label><input type="checkbox" id="sb-o-sound" ${opts.sound ? 'checked' : ''}>Pop sound for new beeps</label>
 			<label><input type="checkbox" id="sb-o-popups" ${opts.popups ? 'checked' : ''}>💌 A card by the slime for each new beep</label>
@@ -1470,6 +1582,8 @@
 	}
 
 	function wireOptions() {
+		$('sb-o-pic').addEventListener('click', (e) => { e.preventDefault(); pickPicture(); });
+		if ($('sb-o-nopic')) $('sb-o-nopic').addEventListener('click', (e) => { e.preventDefault(); setOpt('pfp', null); notify('Profile picture removed'); render(); });
 		$('sb-o-night').addEventListener('change', (e) => setNight(e.target.checked));
 		$('sb-o-sound').addEventListener('change', (e) => setOpt('sound', e.target.checked));
 		$('sb-o-popups').addEventListener('change', (e) => setOpt('popups', e.target.checked));

@@ -274,6 +274,53 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	await shot('gc');
 	await p.click('#sb-back');
 
+	// ---- Profile pictures: real image data only, from SlimeBeep friends, in pieces.
+	const pic = await p.evaluate(() => { const c = document.createElement('canvas'); c.width = c.height = 48; const x = c.getContext('2d'); x.fillStyle = '#3c9'; x.fillRect(0, 0, 48, 48); return c.toDataURL('image/webp', 0.8); });
+	await p.evaluate(() => { hidden.length = 0; });
+	await hide(11, 'Ann', { sb: 1, pong: 1, pv: 'annpic0001' });
+	await wait(500);
+	check(await p.evaluate(() => hidden.some((h) => h.MemberNumber === 11 && JSON.parse(h.Message).pfreq === 1)), 'a friend with a new picture gets asked for it');
+	const chunks = [];
+	for (let i = 0; i < pic.length; i += 700) chunks.push(pic.slice(i, i + 700));
+	for (let i = 0; i < chunks.length; i++) await hide(11, 'Ann', { sb: 1, pf: { v: 'annpic0001', i, n: chunks.length, d: chunks[i] } });
+	// Things that are not pictures, from Cat: an SVG (can carry script), a javascript: link, a web address.
+	for (const bad of ['data:image/svg+xml;base64,PHN2Zz48c2NyaXB0PmFsZXJ0KDEpPC9zY3JpcHQ+PC9zdmc+', 'javascript:alert(1)', 'https://evil.example/track.png']) {
+		await hide(13, 'Cat', { sb: 1, pf: { v: 'catpic0001', i: 0, n: 1, d: bad } });
+	}
+	await wait(300);
+	const pics = await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.pfps') || '{}'));
+	check(pics[11] && pics[11].data === pic, "Ann's picture arrives in pieces and is kept");
+	check(!pics[13], 'an SVG, a javascript: link or a web address is never taken as a picture');
+	await p.click('[data-tab=friends]');
+	await wait(200);
+	check(await p.$$eval('#sb-body img.sb-pic', (e) => e.length === 1 && e[0].src.startsWith('data:image/webp')), "Ann's picture shows in place of her initials");
+	await shot('pfp');
+	// Mine: Cat asks, and gets it in pieces.
+	await p.evaluate((d) => { const o = JSON.parse(localStorage.getItem('slimebeep.options')); o.pfp = { v: 'mypic00001', data: d }; localStorage.setItem('slimebeep.options', JSON.stringify(o)); }, pic);
+	await p.reload();
+	await p.evaluate(stub);
+	await p.addScriptTag({ content: src });
+	await wait(1200);
+	await p.evaluate(() => { hidden.length = 0; });
+	await hide(13, 'Cat', { sb: 1, pfreq: 1 });
+	await wait(300 + chunks.length * 300);
+	const mine = await p.evaluate(() => hidden.map((h) => JSON.parse(h.Message)).filter((m) => m.pf).sort((a, b) => a.pf.i - b.pf.i).map((m) => m.pf.d).join(''));
+	check(mine === pic, 'a SlimeBeep friend who asks gets my picture');
+	check(await p.evaluate(() => hidden.every((h) => JSON.parse(h.Message).pv === 'mypic00001')), 'and every hidden beep says which picture I have');
+	// Choosing one: the file picker, a big PNG in, a small square picture out.
+	await p.click('#sb-toggle');
+	await wait(200);
+	await p.click('#sb-gear');
+	await wait(150);
+	const [chooser] = await Promise.all([p.waitForFileChooser(), p.click('#sb-o-pic')]);
+	await chooser.accept([__dirname + '/icon-256.png']);
+	await wait(800);
+	const chosen = await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.options')).pfp);
+	check(chosen && chosen.v !== 'mypic00001' && /^data:image\/(webp|jpeg);base64,/.test(chosen.data) && chosen.data.length <= 6000, `choosing a picture shrinks it to send (${chosen && chosen.data.length} characters)`);
+	await shot('mypic');
+	await p.click('#sb-gear');
+
+
 	// Drag; the spot and the picks survive a reload.
 	const r = await p.$eval('#sb-toggle', (e) => { const x = e.getBoundingClientRect(); return { x: x.x + 20, y: x.y + 20 }; });
 	await p.mouse.move(r.x, r.y); await p.mouse.down(); await p.mouse.move(300, 200, { steps: 8 }); await p.mouse.up();
