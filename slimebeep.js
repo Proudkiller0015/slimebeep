@@ -13,7 +13,7 @@
 (function () {
 	'use strict';
 
-	const VERSION = '2.18.1';
+	const VERSION = '2.18.2';
 	// Loaded once per page, whatever loads it.
 	if (window.SlimeBeep) return;
 	window.SlimeBeep = { version: VERSION };
@@ -723,7 +723,7 @@
 		box.id = 'sb-ask';
 		box.innerHTML = `<div class="sb-crop-card">
 			<b>Turn SlimeBeep off?</b>
-			<div class="sb-warn">⚠ To get it back you'll have to <u>reload the game</u> and <u>click your SlimeBeep bookmark again</u> (with the userscript or FUSAM it comes back on its own after the reload).</div>
+			<div class="sb-warn">⚠ To get it back you'll have to <u>reload the game</u> and <u>click your SlimeBeep bookmark again</u> (with the userscript it comes back on its own after the reload).</div>
 			<span class="sb-hint" style="text-align:center">Your chats and settings stay.</span>
 			<div class="sb-crop-btns"><button class="sb-pill" data-act="keep">Keep it on</button><button class="sb-go" data-act="quit">⏻ Turn off</button></div>
 		</div>`;
@@ -1477,7 +1477,7 @@
 			sendHidden(n, { sb: 1, ginv: { code, name } });
 			return 'invite';
 		}
-		beep(n, `👥 Come join my group chat "${name}"! It's on SlimeBeep, a BC add-on (in FUSAM, or ${SITE}). Group code: ${code}`, false);
+		beep(n, `👥 Come join my group chat "${name}"! It's on SlimeBeep, a free BC add-on: ${SITE} Group code: ${code}`, false);
 		return 'beep';
 	}
 	/** After joining (or for a group you're already in): that group's chat. */
@@ -2614,7 +2614,7 @@
 					DrawCharacter(Player, 50, 50, 0.9);
 					if (stopped) {
 						DrawText('SlimeBeep is off until you reload the game.', 1100, 300, 'Black', 'Gray');
-						DrawText('Then click your SlimeBeep bookmark again (the userscript or FUSAM start it on their own).', 1100, 370, '#B00020', 'Gray');
+						DrawText('Then click your SlimeBeep bookmark again (the userscript starts it on its own).', 1100, 370, '#B00020', 'Gray');
 						DrawButton(...EXIT, '', 'White', 'Icons/Exit.png');
 						return;
 					}

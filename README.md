@@ -27,7 +27,7 @@ Click the pink slime (drag it anywhere you like; it stays there). A pink dot on 
 - **🖼 Profile pictures:** choose one in ⚙, then drag and zoom it to fit the circle (**Adjust** places it again later). Yours shows in SlimeBeep's header; click anyone's picture to see it big.
 - **📍 Join:** a beep sent from a chat room has a **Join** button that takes you there.
 - **🚪 Leave or delete a group:** the 🚪 at the top of a group chat. Anyone can leave; the owner can also delete the group for everyone.
-- **⏻ Quit:** the ⏻ button in SlimeBeep's header removes it until you reload, as if you'd never started it. With the bookmarklet, reload and don't click it; with the userscript or FUSAM, turn it off there to stop it for good.
+- **⏻ Quit:** the ⏻ button in SlimeBeep's header removes it until you reload, as if you'd never started it. With the bookmarklet, reload and don't click it; with the userscript, turn it off there to stop it for good.
 - **😊 Emoji and commands:** the 😊 by the chat box opens emoji (your last ones first). Commands: `/me waves`, `/shrug`, `/roll 20`, `/flip`, `/help`.
 - **✨ Actions:** `*giggles*` shows in italics, and a beep that's only an action gets a soft bubble of its own.
 - **⏳ Offline beeps:** beep a friend who's offline and it waits, then goes out the moment they're back online (you need to be online then too). Cancel it any time before.
