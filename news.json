@@ -100,5 +100,11 @@
     "date": "16 Oct 2026",
     "title": "📢 SlimeBeep 2.11",
     "text": "Using Themed or BCNeko? SlimeBeep can now match your theme's colours: turn it on in Settings > Extensions > SlimeBeep."
+  },
+  {
+    "id": "2.12.0",
+    "date": "16 Oct 2026",
+    "title": "📢 SlimeBeep 2.12",
+    "text": "⏳ Beep friends who are offline: it waits and sends when they're back. And WaveBeep has 📍 My room, to beep just the friends in your room."
   }
 ]

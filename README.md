@@ -21,9 +21,10 @@ Click the pink slime (drag it anywhere you like; it stays there). A pink dot on 
 
 - **💬 Chats:** a chat with each person you've beeped with, newest first. Open one to see your beeps as chat bubbles and reply (Enter sends, Shift+Enter is a new line). 📍 adds a button to join you in your current chat room.
 - **💖 Friends:** who's online and which room they're in. Search by name, number or room; click someone to beep them.
-- **🌊 WaveBeep:** one beep to every friend you tick (**All** / **None**), sent one at a time.
+- **🌊 WaveBeep:** one beep to every friend you tick (**All** / **None**, or **📍 My room** for just the friends in your room), sent one at a time.
 - **👥 Groups:** group chats of up to 40 people with SlimeBeep, **friends or not**. Make one with **New group chat**; invite SlimeBeep friends with one click (🫧 marks who has it) or make an **invite code** for anyone, who pastes it in 👥 Groups. Messages you missed while offline are waiting when you're back. 🟢 shows who's online. The owner 👑 and admins ⭐ add and remove people, promote and rename; **Anyone can invite** lets every member add people. For friends, ✓ means the person in the group has the same key their own SlimeBeep sent you (⚠ if not).
 - **🖼 Profile picture:** pick one in ⚙ (or Settings > Extensions). It's shrunk to a small square and only SlimeBeep friends get it, as image data, never a web link.
+- **⏳ Offline beeps:** beep a friend who's offline and it waits, then goes out the moment they're back online (you need to be online then too). Cancel it any time before.
 - **🎨 Theme add-ons:** with Themed or BCNeko running, SlimeBeep's page in Settings > Extensions offers **Match my … colours** (off unless you turn it on).
 - **🌙 Night mode:** the moon in the header (or ⚙) switches to navy with a night blue slime.
 - **Settings > Extensions:** SlimeBeep is listed there too, with the same options.

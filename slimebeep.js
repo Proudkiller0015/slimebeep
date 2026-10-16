@@ -13,7 +13,7 @@
 (function () {
 	'use strict';
 
-	const VERSION = '2.11.0';
+	const VERSION = '2.12.0';
 	// Loaded once per page, whatever loads it.
 	if (window.SlimeBeep) return;
 	window.SlimeBeep = { version: VERSION };
@@ -77,6 +77,15 @@
 	let peerKeys = {}; // friend -> the start of their key, as their own SlimeBeep sent it
 	let invitations = []; // [{ code, name, from, fromName, at }]: group invites from friends
 	const gcKey = () => `slimebeep.gc2.${Player.MemberNumber}`;
+	/*
+	 * Offline beeps (like EBC's): the game only delivers a beep to someone online, so a beep to an offline
+	 * friend waits here, kept in this browser per account, and goes out the moment the friend list shows
+	 * them online (checked every minute while any wait). It needs you online then too.
+	 */
+	let waiting = []; // [{ id, n, text, at }]
+	let friendsKnown = false; // the friend list has been read at least once
+	const waitKey = () => `slimebeep.waiting.${Player.MemberNumber}`;
+	const saveWaiting = () => { try { localStorage.setItem(waitKey(), JSON.stringify(waiting)); } catch (e) { /* this visit only */ } };
 	const CODE_RE = /^SB-([a-z0-9]{8,24})-([A-Z2-9]{10})$/;
 	const isId = (x) => typeof x === 'string' && /^[a-z0-9]{8,24}$/.test(x);
 	const isNum = (n) => Number.isInteger(n) && n > 0 && n < 1e9;
@@ -102,6 +111,11 @@
 		for (const c of Object.values(conns)) { c.dead = true; try { if (c.ws) c.ws.close(); } catch (e) { /* gone */ } }
 		for (const k of Object.keys(conns)) delete conns[k];
 		groups = {};
+		waiting = [];
+		try {
+			const w = JSON.parse(localStorage.getItem(waitKey()) || '[]');
+			if (Array.isArray(w)) waiting = w.filter((x) => x && isId(x.id) && isNum(x.n) && typeof x.text === 'string').map((x) => ({ id: x.id, n: x.n, text: x.text.slice(0, 1000), at: Number(x.at) || Date.now() })).slice(0, 100);
+		} catch (e) { /* none */ }
 		peers = new Set();
 		peerKeys = {};
 		invitations = [];
@@ -381,6 +395,8 @@
 		.sb-b em { display: block; font-style: normal; font-size: 10px; opacity: .7; margin-top: 2px; }
 		.sb-b.me em { text-align: right; }
 		.sb-b .sb-room { display: block; font-size: 11px; margin-top: 3px; opacity: .85; }
+		.sb-b.sb-wait { opacity: .7; border: 2px dashed #ffb3d9; }
+		.sb-b.sb-wait a { color: inherit; text-decoration: underline; }
 		.sb-compose { display: flex; gap: 6px; align-items: flex-end; padding: 8px; background: #ffe6f3; }
 		.sb-compose textarea { flex: 1; height: 38px; max-height: 100px; resize: none; border: 2px solid #ffd1e8; border-radius: 16px;
 			padding: 8px 10px; background: #fff; color: #4a2340; font: inherit; }
@@ -598,6 +614,8 @@
 			if (event === 'AccountQueryResult') {
 				if (!data || data.Query !== 'OnlineFriends' || !Array.isArray(data.Result)) return;
 				friends = data.Result.filter((f) => f && f.MemberNumber !== Player.MemberNumber);
+				friendsKnown = true;
+				sendWaiting();
 				if (isOpen() && tab !== 'chats') render();
 			} else if (event === 'AccountBeep') {
 				if (!data || typeof data !== 'object') return;
@@ -1192,6 +1210,7 @@
 		try {
 			updateNote();
 			gameCheck();
+			if (waiting.length && loggedIn() && Date.now() - (tick.asked || 0) > 60000) { tick.asked = Date.now(); askFriends(); }
 			if (!tick.n || ++tick.n % 5 === 0) applyThemed();
 			tick.n = tick.n || 1;
 			// Listen from login on, not only once the panel has been opened.
@@ -1726,16 +1745,18 @@
 		const draft = $('sb-text') ? $('sb-text').value : '';
 		const room = myRoom();
 		const pinOn = !!room && (renderThread.pin ?? opts.shareRoom);
+		const waitingHere = waiting.filter((w) => w.n === n);
+		const offline = isOffline(n);
 		view.innerHTML = `
 			<div class="sb-thead"><button id="sb-back" title="Back">‹</button>${avatar(n, nameOf(n))}
 				<div class="sb-main"><div class="sb-name">${esc(nameOf(n))} <small style="font-weight:normal;color:#c08aaa">#${n}</small></div>
 				<div class="sb-sub">${f ? '<span class="sb-on"></span>' : ''}${esc(where(f))}</div></div></div>
 			<div class="sb-msgs" id="sb-msgs">${msgs.length ? msgs.map((b, i) => `<div class="sb-b ${b.Sent ? 'me' : 'them'}">${esc(textOf(b))}` +
 				`${roomLine(b, msgs, i)}<em>${timeOf(b.Time)}</em></div>`).join('')
-				: '<div class="sb-empty">🫧 Say hi!</div>'}</div>
+				: (waitingHere.length ? '' : '<div class="sb-empty">🫧 Say hi!</div>')}${waitingHere.map((w) => `<div class="sb-b me sb-wait">${esc(w.text)}<em>⏳ sends when they're online · <a href="#" data-cancel="${esc(w.id)}">cancel</a></em></div>`).join('')}</div>
 			<div class="sb-compose">
 				<button class="pin ${pinOn ? 'on' : ''}" id="sb-pin" ${room ? '' : 'disabled'} title="${room ? `Let them join me: adds a button to join you in "${esc(room)}"` : "You're not in a chat room"}">📍</button>
-				<textarea id="sb-text" maxlength="1000" placeholder="Beep ${esc(nameOf(n))}…"></textarea>
+				<textarea id="sb-text" maxlength="1000" placeholder="${offline ? `${esc(nameOf(n))} is offline: it'll wait for them…` : `Beep ${esc(nameOf(n))}…`}"></textarea>
 				<button id="sb-send" title="Send (Enter)">➤</button>
 			</div>`;
 		const box = $('sb-msgs');
@@ -1744,9 +1765,20 @@
 		ta.value = draft;
 		$('sb-back').addEventListener('click', () => { thread = null; renderThread.pin = undefined; render(); });
 		$('sb-pin').addEventListener('click', () => { renderThread.pin = !pinOn; render(true); });
+		for (const a of view.querySelectorAll('[data-cancel]')) a.addEventListener('click', (e) => {
+			e.preventDefault();
+			waiting = waiting.filter((w) => w.id !== a.dataset.cancel);
+			saveWaiting();
+			render(true);
+		});
 		const send = () => {
 			const text = ta.value.trim();
 			if (!text) return;
+			if (isOffline(n)) {
+				queueBeep(n, text);
+				ta.value = '';
+				return render(true);
+			}
 			// Read now, not when the chat was drawn: a quick second Enter must not invite again.
 			const invite = !!myRoom() && (renderThread.pin ?? opts.shareRoom);
 			beep(n, text, invite);
@@ -1760,6 +1792,36 @@
 		$('sb-send').addEventListener('click', send);
 		ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
 		if (!keepScroll || document.activeElement === document.body) ta.focus();
+	}
+
+	const isOffline = (n) => friendsKnown && isFriend(n) && !friends.some((f) => f.MemberNumber === n);
+	/** A beep for an offline friend: kept until they're online. */
+	function queueBeep(n, text) {
+		if (waiting.length >= 100) return notify('⚠ Too many beeps waiting already');
+		waiting.push({ id: newId(), n, text: text.slice(0, 1000), at: Date.now() });
+		saveWaiting();
+		notify(`⏳ ${nameOf(n)} is offline: it goes out when they're back`);
+	}
+	/** Sends every waiting beep whose friend is online now, a WaveBeep gap apart. */
+	let sendingWaiting = false;
+	async function sendWaiting() {
+		if (sendingWaiting || !waiting.length || !loggedIn()) return;
+		const ready = waiting.filter((w) => friends.some((f) => f.MemberNumber === w.n));
+		if (!ready.length) return;
+		sendingWaiting = true;
+		try {
+			for (const [i, w] of ready.entries()) {
+				if (!waiting.includes(w)) continue; // cancelled meanwhile
+				beep(w.n, w.text, false);
+				waiting = waiting.filter((x) => x !== w);
+				saveWaiting();
+				if (i < ready.length - 1) await new Promise((r) => setTimeout(r, opts.gap * 1000));
+			}
+			sync();
+			const names = [...new Set(ready.map((w) => nameOf(w.n)))];
+			notify(`📨 Waiting beep${ready.length === 1 ? '' : 's'} sent to ${names.join(', ')}`);
+			if (isOpen()) render(true);
+		} finally { sendingWaiting = false; }
 	}
 
 	/** A short note that something happened, by the slime, and a bounce. */
@@ -1796,7 +1858,7 @@
 			<textarea id="sb-gmsg" maxlength="1000" placeholder="Write your beep…">${esc(groupHtml.draft || '')}</textarea>
 			<label title="Adds a button to your beep that takes them to the chat room you're in."><input type="checkbox" id="sb-groom" ${room ? '' : 'disabled'} ${room && (groupHtml.room ?? opts.shareRoom) ? 'checked' : ''}>
 				<span>📍 Let them join me<span class="sb-hint" style="display:block">${room ? `They get a button to join you in "${esc(room)}".` : "You're not in a chat room, so there's nothing to join."}</span></span></label>
-			<div class="sb-line"><b>Beep who?</b><span><button class="sb-pill" id="sb-all">All</button> <button class="sb-pill" id="sb-none">None</button></span></div>
+			<div class="sb-line"><b>Beep who?</b><span>${room && friends.some((f) => f.ChatRoomName === room) ? '<button class="sb-pill" id="sb-myroom" title="Only the friends in your room">📍 My room</button> ' : ''}<button class="sb-pill" id="sb-all">All</button> <button class="sb-pill" id="sb-none">None</button></span></div>
 			${list || '<div class="sb-empty">🌙 None of your friends are online.</div>'}
 			<div class="sb-line" style="position:sticky;bottom:-10px;background:#fff7fb;padding:6px 0"><span id="sb-gcount"></span><button class="sb-go" id="sb-gsend">Send 🌊</button></div>
 			<div class="sb-hint" id="sb-gstatus"></div>`;
@@ -1820,6 +1882,12 @@
 		for (const b of boxes()) b.addEventListener('change', count);
 		$('sb-all').addEventListener('click', () => { for (const b of boxes()) b.checked = true; count(); });
 		$('sb-none').addEventListener('click', () => { for (const b of boxes()) b.checked = false; count(); });
+		// Only the friends in the same room as you.
+		if ($('sb-myroom')) $('sb-myroom').addEventListener('click', () => {
+			const here = new Set(friends.filter((f) => f.ChatRoomName && f.ChatRoomName === myRoom()).map((f) => f.MemberNumber));
+			for (const b of boxes()) b.checked = here.has(Number(b.value));
+			count();
+		});
 		$('sb-gmsg').addEventListener('input', (e) => { groupHtml.draft = e.target.value; });
 		$('sb-groom').addEventListener('change', (e) => { groupHtml.room = e.target.checked; });
 		$('sb-gsend').addEventListener('click', async () => {

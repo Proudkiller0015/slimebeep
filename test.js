@@ -256,6 +256,19 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 
 	await p.click('[data-tab=wave]');
 	await wait(200);
+	// 📍 My room: only friends in your room (Velvet Lounge here: nobody; put Cat there for a moment).
+	check(await p.$('#sb-myroom') === null, 'no "My room" button when no friend is in your room');
+	await p.evaluate(() => { ChatRoomData.Name = 'Cat Cafe'; });
+	await p.click('[data-tab=friends]');
+	await p.click('[data-tab=wave]');
+	await wait(150);
+	await p.click('#sb-myroom');
+	check(JSON.stringify(await p.$$eval('#sb-body label input:checked:not(#sb-groom)', (e) => e.map((x) => x.value))) === '["13"]', '"My room" ticks just the friends in your room');
+	await p.click('#sb-none');
+	await p.evaluate(() => { ChatRoomData.Name = 'Velvet Lounge'; });
+	await p.click('[data-tab=friends]');
+	await p.click('[data-tab=wave]');
+	await wait(150);
 	await p.click('#sb-body label:nth-of-type(2) input');
 	await p.click('#sb-body label:nth-of-type(4) input');
 	await p.type('#sb-gmsg', 'Party in 10!');
@@ -571,6 +584,41 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	const bugBeep = await p.evaluate(() => beeps[0]);
 	check(bugBeep && bugBeep[0] === 255659 && /SlimeBeep bug report/.test(bugBeep[1]) && bugBeep[1].length <= 1000, 'Beep it to her sends one beep to SlimeQueenSamantha');
 	await shot('bug');
+
+	// ---- Offline beeps: to a friend who's offline, a beep waits and goes out when they come online.
+	{
+		await p.evaluate(() => { beeps.length = 0; SlimeBeep.api.openChat(14); });
+		await wait(250);
+		check(/offline/.test(await p.$eval('#sb-text', (e) => e.placeholder)), 'the chat with an offline friend says the beep will wait');
+		await p.type('#sb-text', 'see you later');
+		await p.keyboard.press('Enter');
+		await p.type('#sb-text', 'oops, never mind');
+		await p.keyboard.press('Enter');
+		await wait(300);
+		check(await p.evaluate(() => beeps.length) === 0 && await p.$$eval('.sb-b.sb-wait', (e) => e.length) === 2, 'nothing is sent; both wait in the chat');
+		await p.evaluate(() => [...document.querySelectorAll('[data-cancel]')][1].click());
+		await wait(200);
+		check(await p.$$eval('.sb-b.sb-wait', (e) => e.map((x) => x.firstChild.textContent).join()) === 'see you later', 'a waiting beep can be cancelled');
+		// Still waiting after a reload.
+		await p.reload();
+		await p.evaluate(stub);
+		await p.evaluate(() => makeLog());
+		await p.addScriptTag({ content: src });
+		await wait(1500);
+		await p.evaluate(() => { document.getElementById('sb-toggle').click(); });
+		await wait(300);
+		await p.evaluate(() => SlimeBeep.api.openChat(14));
+		await wait(250);
+		check(await p.$$eval('.sb-b.sb-wait', (e) => e.length) === 1, 'it is still waiting after a reload');
+		// Dee comes online.
+		await p.evaluate(() => fire('AccountQueryResult', { Query: 'OnlineFriends', Result: [
+			{ MemberNumber: 11, MemberName: 'Ann', ChatRoomName: 'Pokepark', Type: 'Friend' }, { MemberNumber: 14, MemberName: 'Dee', Type: 'Friend' }] }));
+		await wait(600);
+		const sent = await p.evaluate(() => beeps.slice());
+		check(sent.length === 1 && sent[0][0] === 14 && sent[0][1] === 'see you later', `once Dee is online, it goes out (${JSON.stringify(sent)})`);
+		check(await p.$$eval('.sb-b.sb-wait', (e) => e.length) === 0 && await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.waiting.1')).length === 0), 'and it is no longer waiting');
+		await tap('#sb-back');
+	}
 
 	// Drag; the spot and the picks survive a reload.
 	const r = await p.$eval('#sb-toggle', (e) => { const x = e.getBoundingClientRect(); return { x: x.x + 20, y: x.y + 20 }; });
