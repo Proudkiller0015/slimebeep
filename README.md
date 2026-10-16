@@ -33,4 +33,4 @@ After an update, a small pink line in the room chat (only you see it) says Slime
 
 ## Updates
 
-You install once. The installed script is a tiny loader that fetches the newest SlimeBeep from this repository every time the game loads, so any change pushed here reaches everybody on their next reload or relog. The tool itself is [`slimebeep.js`](slimebeep.js); release with `node release.js <x.y.z>`, which puts the same version in the tool (shown in its header) and the loader.
+You install once. The installed script is a tiny loader that fetches the newest SlimeBeep from this repository every time the game loads, so any change pushed here reaches everybody on their next reload or relog. The tool itself is [`slimebeep.js`](slimebeep.js); release with `node release.js <x.y.z>`, which sets the version shown in its header. The installed loader never changes, so nobody ever has to reinstall.
