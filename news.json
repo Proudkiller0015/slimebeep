@@ -88,5 +88,11 @@
     "date": "16 Oct 2026",
     "title": "📢 SlimeBeep 2.10",
     "text": "Other add-ons can now open a chat with someone or invite them to your group chats straight from their own buttons."
+  },
+  {
+    "id": "2.10.1",
+    "date": "16 Oct 2026",
+    "title": "📢 SlimeBeep 2.10.1",
+    "text": "You can now invite any friend to a group chat: friends without SlimeBeep get a beep with the code and where to get it."
   }
 ]

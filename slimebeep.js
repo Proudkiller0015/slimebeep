@@ -13,7 +13,7 @@
 (function () {
 	'use strict';
 
-	const VERSION = '2.10.0';
+	const VERSION = '2.10.1';
 	// Loaded once per page, whatever loads it.
 	if (window.SlimeBeep) return;
 	window.SlimeBeep = { version: VERSION };
@@ -980,17 +980,26 @@
 			requestInvite(id, n, (code, why) => {
 				clearTimeout(timer);
 				if (!code) return resolve({ ok: false, why: why || 'refused' });
-				if (peers.has(n) && isFriend(n)) {
-					sendHidden(n, { sb: 1, ginv: { code, name: g.name } });
-					resolve({ ok: true, sent: 'invite' });
-				} else resolve({ ok: true, code });
+				// A friend gets it from you directly (a card, or a beep with the code); anyone else gets the code to pass on.
+				if (isFriend(n)) resolve({ ok: true, sent: deliverInvite(n, code, g.name), code });
+				else resolve({ ok: true, code });
 			});
 		});
 	}
 
 	/** An invite made for one friend, sent to them as a hidden beep (only friends get those). */
 	function inviteFriend(id, n) {
-		requestInvite(id, n, (code) => { if (code) sendHidden(n, { sb: 1, ginv: { code, name: groups[id] ? groups[id].name : 'Group chat' } }); });
+		requestInvite(id, n, (code) => { if (code) deliverInvite(n, code, groups[id] ? groups[id].name : 'Group chat'); });
+	}
+	const INSTALL = 'https://proudkiller0015.github.io/slimebeep/install.html';
+	/** A friend's invite: a card when they have SlimeBeep, otherwise a beep they can read without it. Returns how it went. */
+	function deliverInvite(n, code, name) {
+		if (peers.has(n)) {
+			sendHidden(n, { sb: 1, ginv: { code, name } });
+			return 'invite';
+		}
+		beep(n, `👥 ${myName()} invited you to the SlimeBeep group chat "${name}"! Get SlimeBeep at ${INSTALL} then paste this code in 👥 Groups: ${code}`, false);
+		return 'beep';
 	}
 	function joinCode(raw, done) {
 		const m = CODE_RE.exec(String(raw || '').trim());
@@ -1402,9 +1411,9 @@
 			.sort((a, b) => Number(peers.has(b.MemberNumber)) - Number(peers.has(a.MemberNumber)) || a.MemberName.localeCompare(b.MemberName))
 			.map((f) => {
 				const has = peers.has(f.MemberNumber);
-				return `<label style="${has ? '' : 'opacity:.5'}"><input type="checkbox" value="${f.MemberNumber}" ${has ? '' : 'disabled'}>${avatar(f.MemberNumber, f.MemberName)}
+				return `<label><input type="checkbox" value="${f.MemberNumber}">${avatar(f.MemberNumber, f.MemberName)}
 				<span class="sb-main" style="margin-left:8px"><span class="sb-name">${esc(f.MemberName)} ${has ? '🫧' : ''}</span>
-				<span class="sb-sub" style="display:block">${has ? 'Has SlimeBeep' : 'No SlimeBeep found yet'}</span></span></label>`;
+				<span class="sb-sub" style="display:block">${has ? 'Has SlimeBeep: gets an invite card' : 'Gets a beep with the code and where to get SlimeBeep'}</span></span></label>`;
 			}).join('') || '<div class="sb-empty">🌙 No online friends to add right now.</div>';
 	}
 	function wireFind() {
@@ -1442,7 +1451,7 @@
 
 	function newGroupHtml() {
 		return `<div class="sb-line"><button class="sb-pill" id="sb-gc-back">‹ Back</button><b>👥 New group chat</b></div>
-			<div class="sb-hint" style="margin:4px 0 6px">Up to ${LIMITS.members} people with SlimeBeep, friends or not. Tick SlimeBeep friends to invite now; anyone else can join with a code from the group's 👥 page.</div>
+			<div class="sb-hint" style="margin:4px 0 6px">Up to ${LIMITS.members} people with SlimeBeep, friends or not. Tick friends to invite them now (🫧 have SlimeBeep already); anyone else can join with a code from the group's 👥 page.</div>
 			<input class="sb-search" id="sb-gc-name" maxlength="${LIMITS.name}" placeholder="Group name (optional)">
 			<label><input type="checkbox" id="sb-gc-open"><span>Anyone can invite<span class="sb-hint" style="display:block">Otherwise only you and the admins you pick can add people.</span></span></label>
 			<div class="sb-line"><b>Invite friends</b><button class="sb-pill" id="sb-gc-find">🔍 Find SlimeBeep friends</button></div>
@@ -1525,7 +1534,7 @@
 				<div class="sb-hint">Works for anyone with SlimeBeep, friends or not. ${admin ? 'Put a member number to make it work for that one person only.' : ''}</div>
 				<div class="sb-line">${admin ? '<input class="sb-search" id="sb-gm-for" placeholder="Member # (optional)" style="margin:0;width:150px">' : '<span></span>'}<button class="sb-go" id="sb-gm-code">Make a code</button></div>
 				<div id="sb-gm-out"></div>
-				<div class="sb-line"><b>Invite SlimeBeep friends</b><button class="sb-pill" id="sb-gc-find">🔍 Find</button></div>${pickList(memberNums)}
+				<div class="sb-line"><b>Invite friends</b><button class="sb-pill" id="sb-gc-find">🔍 Find 🫧</button></div>${pickList(memberNums)}
 				<div class="sb-line" style="position:sticky;bottom:-10px;background:#fff7fb;padding:6px 0"><span></span><button class="sb-go" id="sb-gm-add" disabled>Send invites</button></div>` : ''}
 			</div>`;
 		$('sb-back').addEventListener('click', () => { renderMembers.open = null; render(); });
@@ -2004,7 +2013,7 @@
 				${res ? `<div class="sb-hint" style="margin-top:4px">${res}</div>` : ''}</div>`;
 		}).join('');
 		return `<div class="sb-line"><button class="sb-pill" id="sb-if-back">‹ Back</button><b>👥 Invite ${esc(name)}</b></div>
-			<div class="sb-hint" style="margin:2px 0 6px">${peers.has(n) && isFriend(n) ? `${esc(name)} has SlimeBeep: they get an invite card.` : `They get a code to paste in 👥 Groups, made for #${n} only.`}</div>
+			<div class="sb-hint" style="margin:2px 0 6px">${isFriend(n) ? (peers.has(n) ? `${esc(name)} has SlimeBeep: they get an invite card.` : `${esc(name)} gets a beep with the code and where to get SlimeBeep.`) : `They get a code to paste in 👥 Groups, made for #${n} only.`}</div>
 			${rows || '<div class="sb-empty">👥 No group chats you can invite to yet.</div>'}`;
 	}
 	function wireInviteFor() {
@@ -2014,7 +2023,7 @@
 			b.disabled = true;
 			const r = await inviteToGroup(id, inviteFor.n);
 			inviteFor.results[id] = r.ok ? (r.sent ? '📨 Invite sent!' : `Code: <code style="user-select:all">${esc(r.code)}</code> — give it to them (copied).`) : `⚠ ${esc(r.why)}`;
-			if (r.code) { try { await navigator.clipboard.writeText(r.code); } catch (e) { /* shown to copy by hand */ } }
+			if (r.ok && !r.sent) { try { await navigator.clipboard.writeText(r.code); } catch (e) { /* shown to copy by hand */ } }
 			if (tab === 'invitefor') render(true);
 		});
 	}
