@@ -13,7 +13,7 @@
 (function () {
 	'use strict';
 
-	const VERSION = '2.8.1';
+	const VERSION = '2.9.0';
 	// Loaded once per page, whatever loads it.
 	if (window.SlimeBeep) return;
 	window.SlimeBeep = { version: VERSION };
@@ -463,6 +463,12 @@
 	`;
 
 	function build() {
+		// Listed with the game's mod SDK like other mods; SlimeBeep patches no game function, it only registers.
+		try {
+			if (window.bcModSdk && typeof window.bcModSdk.registerMod === 'function') {
+				window.bcModSdk.registerMod({ name: 'SlimeBeep', fullName: 'SlimeBeep', version: VERSION, repository: 'https://github.com/Proudkiller0015/slimebeep' });
+			}
+		} catch (e) { warn(e, 'mod SDK'); }
 		const style = document.createElement('style');
 		style.textContent = css;
 		document.head.appendChild(style);
@@ -581,6 +587,56 @@
 			sock.on('AccountQueryResult', queryListener);
 		}
 	}
+	/*
+	 * For other add-ons (CRABS first): window.SlimeBeep.api, read-only. Everything handed out is a
+	 * fresh copy, so nothing outside can change SlimeBeep's state. It tells who is in your SlimeBeep
+	 * group chats, their roles, who's online, and which friends have SlimeBeep, with events when that
+	 * changes. Message text isn't shared: that stays between the people in a chat. README "For other
+	 * add-ons" documents it; apiVersion goes up when something changes in a way that breaks old use.
+	 */
+	const apiListeners = { group: new Set(), groupGone: new Set(), presence: new Set(), slimeBeepFriend: new Set() };
+	function emit(type, data) {
+		for (const fn of apiListeners[type] || []) {
+			try { fn(JSON.parse(JSON.stringify(data))); } catch (e) { warn(e, `another add-on's ${type} listener`); }
+		}
+	}
+	/** A group as other add-ons see it. */
+	function groupView(g) {
+		const me = loggedIn() ? Player.MemberNumber : 0;
+		const online = new Set([...(g.online || []), me]);
+		return {
+			id: g.id, name: g.name, owner: g.owner, admins: [...g.admins], anyoneCanInvite: !!g.open,
+			members: g.members.map((m) => ({ memberNumber: m.n, name: m.n === me ? myName() : m.name, online: online.has(m.n),
+				role: m.n === g.owner ? 'owner' : g.admins.includes(m.n) ? 'admin' : 'member' })),
+		};
+	}
+	window.SlimeBeep.api = Object.freeze({
+		apiVersion: 1,
+		version: VERSION,
+		/** Your SlimeBeep group chats: [{ id, name, owner, admins, anyoneCanInvite, members: [{ memberNumber, name, online, role }] }]. */
+		groups: () => (loggedIn() ? Object.values(groups).map(groupView) : []),
+		/** One group by id, or null. */
+		group: (id) => (loggedIn() && groups[id] ? groupView(groups[id]) : null),
+		/** The member numbers of friends known to have SlimeBeep. */
+		slimeBeepFriends: () => [...peers],
+		/** Whether this member number is a friend known to have SlimeBeep. */
+		hasSlimeBeep: (memberNumber) => peers.has(memberNumber),
+		/** Opens SlimeBeep on a group chat. */
+		openGroup: (id) => { if (!groups[id]) return false; tab = 'groups'; thread = `g:${id}`; if (!isOpen()) setOpen(true); else render(); return true; },
+		/** Opens SlimeBeep on a chat with this member number. */
+		openChat: (memberNumber) => { if (!isNum(memberNumber)) return false; thread = memberNumber; if (!isOpen()) setOpen(true); else render(); return true; },
+		/**
+		 * on('group' | 'groupGone' | 'presence' | 'slimeBeepFriend', fn): fn gets a copy each time; returns a function that stops it.
+		 * group: a group was joined or changed (a group, as in groups()); groupGone: { id }; presence: a group whose
+		 * online members changed; slimeBeepFriend: { memberNumber } of a friend just found to have SlimeBeep.
+		 */
+		on: (type, fn) => {
+			if (!apiListeners[type] || typeof fn !== 'function') return () => {};
+			apiListeners[type].add(fn);
+			return () => apiListeners[type].delete(fn);
+		},
+	});
+
 	window.SlimeBeep.debug = () => ({ version: VERSION, missing: missing().map(([k]) => k), listening: !!listening, catchAll: !!(listening && typeof listening.onAny === 'function'), lastBeeps: seenBeeps.slice() });
 
 	// At most LIMITS.perMinute hidden beeps a minute from anyone; past that they are dropped.
@@ -676,7 +732,7 @@
 		let p;
 		try { p = JSON.parse(d.Message); } catch (e) { return; }
 		if (!p || typeof p !== 'object' || Array.isArray(p) || p.sb !== 1) return;
-		if (!peers.has(from)) { peers.add(from); saveGC(); }
+		if (!peers.has(from)) { peers.add(from); saveGC(); emit('slimeBeepFriend', { memberNumber: from }); }
 		if (typeof p.kf === 'string' && /^[A-Za-z0-9_-]{16}$/.test(p.kf) && peerKeys[from] !== p.kf) { peerKeys[from] = p.kf; saveGC(); }
 		pictureNews(from, p);
 		if (p.pfreq === 1 || p.pf) return;
@@ -789,7 +845,11 @@
 		}
 		if (p.t === 'roster') return takeRoster(gid, p.roster);
 		if (p.t === 'presence') {
-			if (groups[gid] && Array.isArray(p.online)) { groups[gid].online = p.online.filter(isNum).slice(0, LIMITS.members); if (isOpen()) render(true); }
+			if (groups[gid] && Array.isArray(p.online)) {
+				groups[gid].online = p.online.filter(isNum).slice(0, LIMITS.members);
+				emit('presence', groupView(groups[gid]));
+				if (isOpen()) render(true);
+			}
 			return;
 		}
 		if (p.t === 'msg') return takeMsgs(gid, [p.m], true);
@@ -829,6 +889,7 @@
 			online: Array.isArray(r.online) ? r.online.filter(isNum).slice(0, LIMITS.members) : old ? old.online || [] : [],
 			last: old ? old.last || 0 : 0, picv: old ? old.picv : undefined };
 		saveGC();
+		emit('group', groupView(groups[gid]));
 		if (isOpen()) render(true);
 	}
 
@@ -878,6 +939,7 @@
 		saveGC();
 		saveHistory();
 		if (note && g) card({ icon: '<span class="sb-av sb-gav">👥</span>', title: `👥 ${g.name}`, text: note });
+		if (g) emit('groupGone', { id: gid });
 		if (isOpen()) { if (thread === `g:${gid}`) thread = null; render(true); }
 	}
 

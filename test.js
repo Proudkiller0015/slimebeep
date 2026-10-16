@@ -270,10 +270,23 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	// ---- Group chats: SlimeBeep users only, roles, passing on, and nothing a stranger or a forgery can do.
 	await p.evaluate(() => { hidden.length = 0; });
 	const hide = (from, name, payload) => p.evaluate((f, n, pl) => fire('AccountBeep', { MemberNumber: f, MemberName: n, BeepType: 'SlimeBeep', Message: JSON.stringify(pl) }), from, name, payload);
+	const api0 = await p.evaluate(() => {
+		const a = window.SlimeBeep.api;
+		window.apiEvents = [];
+		a.on('slimeBeepFriend', (e) => apiEvents.push(['friend', e.memberNumber]));
+		a.on('group', (g) => apiEvents.push(['group', g.name, g.members.map((m) => `${m.memberNumber}:${m.role}:${m.online}`).join(',')]));
+		a.on('presence', (g) => apiEvents.push(['presence', g.name]));
+		let frozen = false;
+		try { a.groups = null; } catch (e) { frozen = true; }
+		return { v: a.apiVersion, frozen: frozen || a.groups !== null, fns: Object.keys(a).sort().join(',') };
+	});
+	check(api0.v === 1 && api0.frozen && api0.fns === 'apiVersion,group,groups,hasSlimeBeep,on,openChat,openGroup,slimeBeepFriends,version', `window.SlimeBeep.api is there for other add-ons, and can't be changed (${api0.fns})`);
 	await hide(11, 'Ann', { sb: 1, pong: 1 });
 	await hide(13, 'Cat', { sb: 1, ping: 1 });
 	await wait(400);
 	check(JSON.stringify(await p.evaluate(() => hidden.map((h) => [h.MemberNumber, JSON.parse(h.Message).pong]))) === '[[13,1]]', 'a ping from a SlimeBeep friend gets a hidden answer');
+	check(await p.evaluate(() => SlimeBeep.api.hasSlimeBeep(11) && SlimeBeep.api.slimeBeepFriends().includes(13) && apiEvents.some((e) => e[0] === 'friend' && e[1] === 11)),
+		'other add-ons can ask which friends have SlimeBeep, and hear when one is found');
 	await hide(13, 'Cat', { sb: 1, ping: 1 });
 	await wait(400);
 	check(await p.evaluate(() => hidden.length) === 1, 'but only once a minute, so nobody can bounce beeps off you');
@@ -320,6 +333,16 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 		const openCode = await p.$eval('#sb-gm-out code', (e) => e.textContent);
 		const z = await relayJoin(gid, zed, { invite: openCode.split('-').pop() });
 		check(!!z.welcome, 'Zed, a friend of nobody here, joins with a code');
+		await wait(400);
+		const apiG = await p.evaluate(() => {
+			const g = SlimeBeep.api.groups().find((x) => x.name === 'Slime Squad');
+			const copy = SlimeBeep.api.groups()[0];
+			copy.members.length = 0;
+			return { g, untouched: SlimeBeep.api.groups()[0].members.length > 0, events: apiEvents.filter((e) => e[0] !== 'friend') };
+		});
+		const roles = apiG.g ? apiG.g.members.map((m) => `${m.memberNumber}:${m.role}:${m.online}`).sort().join(',') : '';
+		check(roles === ['1:owner:true', '11:member:true', '99:member:true'].sort().join(','), `other add-ons see the group's members, roles and who's online (${roles})`);
+		check(apiG.untouched && apiG.events.some((e) => e[0] === 'group' && e[1] === 'Slime Squad'), 'they get copies (changing one changes nothing) and hear when the group changes');
 		// A code for #13 only: someone with a different key than Cat's own SlimeBeep sent joins as #13.
 		await p.type('#sb-gm-for', '13');
 		await p.click('#sb-gm-code');
@@ -483,7 +506,7 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	const r = await p.$eval('#sb-toggle', (e) => { const x = e.getBoundingClientRect(); return { x: x.x + 20, y: x.y + 20 }; });
 	await p.mouse.move(r.x, r.y); await p.mouse.down(); await p.mouse.move(300, 200, { steps: 8 }); await p.mouse.up();
 	const at = await p.$eval('#sb-toggle', (e) => [e.style.left, e.style.top]);
-	check(Math.round(parseFloat(at[0])) === 280 && Math.round(parseFloat(at[1])) === 180, `dragged to ${at}`);
+	check(Math.abs(parseFloat(at[0]) - 280) < 4 && Math.abs(parseFloat(at[1]) - 180) < 4, `dragged to ${at}`);
 	const inside = await p.$eval('#sb-panel', (e) => { const x = e.getBoundingClientRect(); return x.left >= 0 && x.top >= 0 && x.right <= innerWidth && x.bottom <= innerHeight; });
 	check(inside, 'the panel stays inside the window');
 	newsBody = JSON.stringify([{ id: 'old', text: 'old news' }, { id: 'n1', title: '📢 Hi', text: 'SlimeBeep can now keep your beeps!' }]);

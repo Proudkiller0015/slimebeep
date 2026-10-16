@@ -28,6 +28,32 @@ Click the pink slime (drag it anywhere you like; it stays there). A pink dot on 
 
 Every beep you send pops up a "✓ Beep sent" note by the slime. A new beep pops a 💌 card (click it to reply), with an optional desktop notification when the game is in the background. Your chats are kept in your browser, per account, so they're still there after you log out (⚙ can turn that off or clear them).
 
+## For other add-ons
+
+SlimeBeep has a small read-only API at `window.SlimeBeep.api` for other mods. It's there once SlimeBeep has loaded; it also registers with the game's mod SDK as `SlimeBeep`, so `bcModSdk.getModsInfo()` lists it. Everything it hands out is a fresh copy, so changing it changes nothing in SlimeBeep. Group chat message text is never shared.
+
+```js
+const sb = window.SlimeBeep?.api;
+if (sb && sb.apiVersion === 1) {
+	sb.groups();
+	// [{ id, name, owner, admins: [memberNumber], anyoneCanInvite,
+	//    members: [{ memberNumber, name, online, role: 'owner' | 'admin' | 'member' }] }]
+	sb.group(id);              // one group, or null
+	sb.slimeBeepFriends();     // member numbers of friends known to have SlimeBeep
+	sb.hasSlimeBeep(12345);    // true / false
+	sb.openGroup(id);          // opens SlimeBeep on that group chat
+	sb.openChat(12345);        // opens SlimeBeep on a chat with that member
+
+	const stop = sb.on('presence', (group) => { /* online members of a group changed */ });
+	sb.on('group', (group) => { /* a group was joined or changed (members, roles, name) */ });
+	sb.on('groupGone', ({ id }) => { /* left or removed from a group */ });
+	sb.on('slimeBeepFriend', ({ memberNumber }) => { /* a friend was just found to have SlimeBeep */ });
+	stop(); // stops that listener
+}
+```
+
+`groups()` is empty until the player is logged in. `apiVersion` only goes up if something changes in a way that breaks existing use; new functions and events are added without changing it.
+
 ## Group chats and privacy
 
 Group chat messages go through SlimeBeep's own small relay (the `relay/` folder, on Cloudflare's free plan), so they reach people who aren't friends and wait for whoever is offline. The relay keeps each group's last 200 messages and nothing else besides the member list. It only accepts connections from the Bondage Club site, checks every rule itself (roles, sizes, rate limits), and nobody can post as someone else: each SlimeBeep signs in with its own key. DMs stay ordinary game beeps.
