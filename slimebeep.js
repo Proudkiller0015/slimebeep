@@ -13,7 +13,7 @@
 (function () {
 	'use strict';
 
-	const VERSION = '2.14.0';
+	const VERSION = '2.14.1';
 	// Loaded once per page, whatever loads it.
 	if (window.SlimeBeep) return;
 	window.SlimeBeep = { version: VERSION };
@@ -405,15 +405,15 @@
 		.sb-joinroom { margin-left: 4px; padding: 1px 8px !important; font-size: 11px !important; }
 		#sb-me { display: flex; cursor: pointer; }
 		img.sb-pic { cursor: zoom-in; }
-		#sb-zoom { position: fixed; inset: 0; z-index: 100002; background: #000a; display: flex; align-items: center; justify-content: center; cursor: zoom-out; }
-		#sb-zoom img { width: min(240px, 70vw); height: min(240px, 70vw); border-radius: 50%; border: 4px solid #fff; box-shadow: 0 10px 40px #000a; background: #fff; }
+		#sb-zoom { position: absolute; inset: 0; z-index: 5; background: #0008; backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; cursor: zoom-out; }
+		#sb-zoom img { width: 220px; height: 220px; border-radius: 50%; border: 4px solid #fff; box-shadow: 0 10px 40px #000a; background: #fff; }
 		#sb-me .sb-av { width: 28px; height: 28px; border: 2px solid #fff; font-size: 11px; }
-		#sb-crop { position: fixed; inset: 0; z-index: 100002; background: #0007; display: flex; align-items: center; justify-content: center; font-family: inherit; }
-		#sb-crop .sb-crop-card { background: #fff; color: #5a2a48; border-radius: 18px; padding: 16px; display: flex; flex-direction: column; align-items: center; gap: 10px; box-shadow: 0 10px 40px #0008; max-width: calc(100vw - 32px); }
+		#sb-crop { position: absolute; inset: 0; z-index: 5; background: #fff8; backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; font-family: inherit; }
+		#sb-crop .sb-crop-card { background: #fff; color: #5a2a48; border-radius: 18px; padding: 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; box-shadow: 0 10px 40px #0008; max-width: calc(100% - 24px); }
 		#sb-crop .sb-crop-ring { border-radius: 50%; overflow: hidden; border: 3px solid #ff7ac0; background: repeating-conic-gradient(#eee 0 25%, #fff 0 50%) 0 0 / 16px 16px; touch-action: none; }
 		#sb-crop canvas { display: block; cursor: grab; }
 		#sb-crop canvas:active { cursor: grabbing; }
-		#sb-crop input[type=range] { width: 240px; accent-color: #ff4fa3; }
+		#sb-crop input[type=range] { width: 200px; accent-color: #ff4fa3; }
 		#sb-crop .sb-crop-btns { display: flex; gap: 8px; }
 		.sb-b.sb-act { font-style: italic; background: transparent !important; border: 1px dashed currentColor !important; color: inherit; opacity: .85; }
 		.sb-b.sb-wait { opacity: .7; border: 2px dashed #ffb3d9; }
@@ -828,7 +828,7 @@
 	/** Place the picture in the circle; Save makes it your picture. */
 	function openCropper(src) {
 		if ($('sb-crop')) $('sb-crop').remove();
-		const SIZE = 240;
+		const SIZE = 200;
 		const img = new Image();
 		img.onload = () => {
 			const w = img.naturalWidth, h = img.naturalHeight;
@@ -843,7 +843,9 @@
 				<input type="range" min="1" max="4" step="0.01" value="1" aria-label="Zoom">
 				<div class="sb-crop-btns"><button class="sb-pill" data-act="cancel">Cancel</button><button class="sb-go" data-act="save">Save</button></div>
 			</div>`;
-			document.body.appendChild(box);
+			// Inside the panel, never over the game.
+			if (!isOpen()) setOpen(true);
+			$('sb-panel').appendChild(box);
 			box.addEventListener('keydown', (e) => e.stopPropagation());
 			const cv = box.querySelector('canvas'), ctx = cv.getContext('2d'), slider = box.querySelector('input');
 			// Keeps the circle covered: the picture can't be dragged past its edges.
@@ -923,7 +925,8 @@
 		const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
 		box.addEventListener('click', close);
 		document.addEventListener('keydown', onKey, true);
-		document.body.appendChild(box);
+		if (!isOpen()) setOpen(true);
+		$('sb-panel').appendChild(box);
 	}
 	/** Your own picture (or initials) in the panel header; clicking it opens the options. */
 	function showMe() {

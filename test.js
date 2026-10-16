@@ -551,6 +551,7 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	await wait(800);
 	// The cropper: place it in the circle, then Save.
 	check(!!await p.$('#sb-crop canvas'), 'choosing a picture opens the circle to place it in');
+	check(await p.evaluate(() => { const c = document.getElementById('sb-crop').getBoundingClientRect(), pn = document.getElementById('sb-panel').getBoundingClientRect(); return document.getElementById('sb-crop').parentElement.id === 'sb-panel' && c.width <= pn.width + 1 && c.height <= pn.height + 1; }), 'and it stays inside the SlimeBeep panel, not over the game');
 	const before = await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.options')).pfp.v);
 	const ring = await (await p.$('#sb-crop canvas')).boundingBox();
 	await p.evaluate(() => { const r = document.querySelector('#sb-crop input'); r.value = '2'; r.dispatchEvent(new Event('input')); });
