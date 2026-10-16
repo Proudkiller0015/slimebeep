@@ -58,5 +58,11 @@
     "date": "16 Oct 2026",
     "title": "📢 SlimeBeep 2.7",
     "text": "🐞 New Bug tab: tell SlimeQueenSamantha what went wrong, and SlimeBeep adds the details that help fix it. Making a group chat is easier too: tick friends, the name is optional."
+  },
+  {
+    "id": "2.7.1",
+    "date": "16 Oct 2026",
+    "title": "📢 SlimeBeep 2.7.1",
+    "text": "Update notes like this one now show up reliably in the room chat after each update."
   }
 ]

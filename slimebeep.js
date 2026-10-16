@@ -13,7 +13,7 @@
 (function () {
 	'use strict';
 
-	const VERSION = '2.7.0';
+	const VERSION = '2.7.1';
 	// Loaded once per page, whatever loads it.
 	if (window.SlimeBeep) return;
 	window.SlimeBeep = { version: VERSION };
@@ -29,7 +29,8 @@
 	// `popups`: a card for each new beep; `desktop`: a system notification while the game tab is in the background;
 	// `keep`: keep beeps in this browser across logins; `seenNews`: the news items (news.json) already shown.
 	const DEFAULTS = { pos: null, gap: 1.5, shareRoom: true, remember: true, picked: [], sound: true, popups: true, desktop: false, keep: true, seenNews: null, lastVersion: null, night: false };
-	const NEWS = 'https://raw.githubusercontent.com/Proudkiller0015/slimebeep/main/news.json';
+	// From GitHub Pages, like slimebeep.js for FUSAM: updated within a minute of a push, so the news matches the version.
+	const NEWS = 'https://proudkiller0015.github.io/slimebeep/news.json';
 	const KEEP_MAX = 2000;
 	const KEY = 'slimebeep.options';
 	const opts = (() => {
@@ -1047,21 +1048,37 @@
 	 * Only you see it.
 	 */
 	function updateNote() {
-		if (opts.lastVersion === VERSION || !loggedIn() || typeof ChatRoomSendLocal !== 'function') return;
-		if (typeof ServerPlayerIsInChatRoom === 'function' ? !ServerPlayerIsInChatRoom() : !myRoom()) return;
+		if (opts.lastVersion === VERSION || !loggedIn() || typeof ChatRoomSendLocal !== 'function' || updateNote.pending) return;
+		// In a room with its chat log on screen for a few seconds, and the news read (or given up on):
+		// right after a login the game says "in a room" before the log exists, and a note sent then is lost.
+		const log = document.getElementById('TextAreaChatLog');
+		const inRoom = !!log && (typeof ServerPlayerIsInChatRoom === 'function' ? ServerPlayerIsInChatRoom() : !!myRoom());
+		if (!inRoom) { updateNote.since = 0; return; }
+		if (!updateNote.since) updateNote.since = Date.now();
+		if (Date.now() - updateNote.since < 3000 || (!newsLoaded && Date.now() - started < 15000)) return;
+		if (Date.now() - (updateNote.last || 0) < 10000) return;
 		const item = newsItems.find((i) => i.id === VERSION);
 		const first = !opts.lastVersion;
 		const head = first ? `SlimeBeep v${esc(VERSION)} is ready!` : `SlimeBeep updated to v${esc(VERSION)}`;
 		const body = item ? esc(item.text) : first ? 'Click the pink slime to beep your friends.' : '';
-		ChatRoomSendLocal(`<div style="margin:2px 0;padding:4px 10px;border-radius:10px;background:#ffe6f3;color:#a3155c;border-left:4px solid #ff4fa3;font-size:.9em">` +
+		updateNote.pending = true;
+		updateNote.last = Date.now();
+		ChatRoomSendLocal(`<div class="sb-update-note" data-v="${esc(VERSION)}" style="margin:2px 0;padding:4px 10px;border-radius:10px;background:#ffe6f3;color:#a3155c;border-left:4px solid #ff4fa3;font-size:.9em">` +
 			`<img src="${ICON}" style="width:1.3em;height:1.3em;vertical-align:middle;border-radius:50%;margin-right:4px${opts.night ? ';filter:hue-rotate(-105deg)' : ''}" alt="">` +
 			`<b>${head}</b>${body ? ` ${body}` : ''}</div>`);
-		opts.lastVersion = VERSION;
-		saveOpts();
+		// Only counted as shown once it is really in the chat log; otherwise tried again (five times at most).
+		setTimeout(() => {
+			updateNote.pending = false;
+			const shown = !!document.querySelector(`#TextAreaChatLog .sb-update-note[data-v="${CSS.escape(VERSION)}"]`);
+			updateNote.tries = (updateNote.tries || 0) + 1;
+			if (shown || updateNote.tries >= 5) { opts.lastVersion = VERSION; saveOpts(); }
+		}, 1500);
 	}
+	let newsLoaded = false;
+	const started = Date.now();
 
 	function news() {
-		fetch(NEWS, { cache: 'no-store' })
+		fetch(`${NEWS}?t=${Date.now()}`, { cache: 'no-store' })
 			.then((r) => (r.ok ? r.json() : []))
 			.then((items) => {
 				const valid = Array.isArray(items) ? items.filter((i) => i && i.id && i.text) : [];
@@ -1075,7 +1092,8 @@
 				opts.seenNews = valid.map((i) => i.id);
 				saveOpts();
 			})
-			.catch(() => { /* no news is fine */ });
+			.catch(() => { /* no news is fine */ })
+			.finally(() => { newsLoaded = true; });
 	}
 
 	/** A soft two-note pop for a new beep. */

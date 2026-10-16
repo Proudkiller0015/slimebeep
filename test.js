@@ -55,7 +55,10 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 			beeps.push([n, m, o.includeRoom]);
 			FriendListBeepLog.push({ MemberNumber: n, MemberName: Player.FriendNames.get(n), Sent: true, Read: true, Time: new Date(), Message: m, ChatRoomName: o.includeRoom ? ChatRoomData.Name : undefined });
 		};
-		window.local = []; window.ServerPlayerIsInChatRoom = () => true; window.ChatRoomSendLocal = (c) => local.push(c);
+		// The room's chat log, as the game makes it a moment after entering a room; local notes land in it.
+		window.local = []; window.ServerPlayerIsInChatRoom = () => true;
+		window.ChatRoomSendLocal = (c) => { local.push(c); const log = document.getElementById('TextAreaChatLog'); if (log) { const d = document.createElement('div'); d.innerHTML = c; log.appendChild(d); } };
+		window.makeLog = () => { if (!document.getElementById('TextAreaChatLog')) { const l = document.createElement('div'); l.id = 'TextAreaChatLog'; l.style.display = 'none'; document.body.appendChild(l); } };
 		window.PreferenceExtensionsSettings = {};
 		window.PreferenceRegisterExtensionSetting = (x) => { if (PreferenceExtensionsSettings[x.Identifier]) throw new Error('twice'); PreferenceExtensionsSettings[x.Identifier] = x; };
 		window.cleared = 0; window.PreferenceSubscreenExtensionsClear = () => { cleared++; };
@@ -80,7 +83,10 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	await p.addScriptTag({ content: src });
 	await p.addScriptTag({ content: src });
 	check(await p.$$eval('#sb-toggle', (e) => e.length) === 1, 'loaded twice, one button');
-	await wait(1200);
+	await wait(1500);
+	check(await p.evaluate(() => local.length) === 0, 'no update note before the chat log exists (just after login)');
+	await p.evaluate(() => makeLog());
+	await wait(5200);
 	const notes = await p.evaluate(() => local);
 	check(notes.length === 1 && /SlimeBeep v[\d.]+ is ready/.test(notes[0]), 'a first install says hello once in the room chat');
 	check(await p.evaluate(() => Object.keys(PreferenceExtensionsSettings).join() === 'SlimeBeep' && PreferenceExtensionsSettings.SlimeBeep.Image.startsWith('data:image/png')),
@@ -413,8 +419,9 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	check(['Slime Squad', 'Night Owls'].every((n) => keptGroups.some((t) => t.includes(n))), `group chats survive a relog in 👥 Groups (${keptGroups})`);
 	await p.reload();
 	await p.evaluate(stub);
+	await p.evaluate(() => makeLog());
 	await p.addScriptTag({ content: src });
-	await wait(1500);
+	await wait(4500);
 	check(await p.$$eval('.sb-card.news', (e) => e.length) === 0, 'news shows once');
 	check(await p.evaluate(() => local.length) === 0, 'and the room note does not repeat for the same version');
 	// A new version is pushed: one note, with its news item.
@@ -423,10 +430,12 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	newsBody = JSON.stringify([{ id: ver, text: 'Shiny new things.' }]);
 	await p.reload();
 	await p.evaluate(stub);
+	// The first try is lost (the game drops it), so SlimeBeep tries again.
+	await p.evaluate(() => { makeLog(); const real = ChatRoomSendLocal; let n = 0; window.ChatRoomSendLocal = (c) => { if (n++ === 0) return; real(c); }; });
 	await p.addScriptTag({ content: src });
-	await wait(1800);
+	await wait(16000);
 	const upd = await p.evaluate(() => local);
-	check(upd.length === 1 && upd[0].includes(`updated to v${ver}`) && upd[0].includes('Shiny new things.'), `after an update, one room note with what's new`);
+	check(upd.length === 1 && upd[0].includes(`updated to v${ver}`) && upd[0].includes('Shiny new things.'), `after an update, one room note with what's new, even when the first try was lost`);
 	await shot('reload');
 	await b.close();
 	console.log(failed ? `\n${failed} FAILED` : '\nall passed');
