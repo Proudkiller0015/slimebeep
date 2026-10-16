@@ -16,5 +16,11 @@
     "date": "16 Oct 2026",
     "title": "📢 SlimeBeep 2.3.1",
     "text": "SlimeBeep's page in Settings > Extensions now looks like the game's other settings pages."
+  },
+  {
+    "id": "2.3.2",
+    "date": "16 Oct 2026",
+    "title": "📢 SlimeBeep 2.3.2",
+    "text": "Beeps that another extension (like EBC) handles first now show up in SlimeBeep too."
   }
 ]

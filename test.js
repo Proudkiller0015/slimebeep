@@ -32,6 +32,7 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 		];
 		window.beeps = [];
 		window.ServerSocket = { on: (ev, fn) => { (handlers[ev] = handlers[ev] || []).push(fn); }, once() {} };
+		window.fire = (ev, d) => (handlers[ev] || []).forEach((fn) => fn(d));
 		window.ServerSend = (ev, data) => {
 			if (ev === 'AccountQuery') setTimeout(() => (handlers.AccountQueryResult || []).forEach((fn) => fn({ Query: 'OnlineFriends', Result: [
 				{ MemberNumber: 11, MemberName: 'Ann', ChatRoomName: 'Pokepark', Type: 'Friend', ChatRoomMemberCount: 4, ChatRoomLimit: 10 },
@@ -142,6 +143,23 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	await p.click('.sb-card');
 	await wait(300);
 	check(await p.$eval('.sb-thead', (e) => /Ann/.test(e.textContent)), 'clicking the card opens that chat');
+	// Beeps another add-on handles before the game (EBC): not in the game's list, so SlimeBeep keeps them itself.
+	await p.click('#sb-back');
+	await p.evaluate(() => {
+		fire('AccountBeep', { MemberNumber: 14, MemberName: 'Dee', BeepType: 'EBC', Message: 'beep' });
+		fire('AccountBeep', { MemberNumber: 14, MemberName: 'Dee', BeepType: 'Leash', Message: 'come here' });
+		fire('AccountBeep', { MemberNumber: 14, MemberName: 'Dee', BeepType: 'Sync', Message: '{"data":1}' });
+		// A plain one the game lists itself, as it normally does: no double.
+		fire('AccountBeep', { MemberNumber: 12, MemberName: 'Bea', BeepType: '', Message: 'hello from Bea' });
+		FriendListBeepLog.push({ MemberNumber: 12, MemberName: 'Bea', Sent: false, Read: false, Time: new Date(), Message: 'hello from Bea', Id: 'b1' });
+	});
+	await wait(2200);
+	const rows = await p.$$eval('#sb-body .sb-row', (e) => e.map((x) => x.querySelector('.sb-name').textContent + ':' + x.querySelector('.sb-sub').textContent));
+	check(rows.some((r) => /Dee:beep$/.test(r)), `a beep the game never listed (EBC) shows up in the chats (${rows})`);
+	check(!rows.some((r) => /come here|data/.test(r)), 'leash beeps and raw data are left out');
+	check(rows.filter((r) => /Bea/.test(r)).length === 1, 'a beep the game did list is not doubled');
+	check(await p.$$eval('.sb-card', (e) => e.some((x) => /Dee/.test(x.textContent))), 'and the EBC beep popped a card');
+	await p.click('#sb-body .sb-row');
 
 	await p.click('#sb-back');
 	await p.click('[data-tab=friends]');
@@ -196,7 +214,7 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	await p.click('[data-tab=chats]');
 	await wait(200);
 	const kept = await p.$$eval('#sb-body .sb-row .sb-name', (e) => e.map((x) => x.textContent));
-	check(kept.length === 2 && kept.some((t) => /Cat/.test(t)), `chats survive a relog (${kept})`);
+	check(kept.length === 4 && ['Ann', 'Bea', 'Cat', 'Dee'].every((n) => kept.some((t) => t.includes(n))), `chats survive a relog, the EBC one too (${kept})`);
 	await p.reload();
 	await p.evaluate(stub);
 	await p.addScriptTag({ content: src });

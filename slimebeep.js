@@ -13,7 +13,7 @@
 (function () {
 	'use strict';
 
-	const VERSION = '2.3.1';
+	const VERSION = '2.3.2';
 	// Loaded once per page, whatever loads it.
 	if (window.SlimeBeep) return;
 	window.SlimeBeep = { version: VERSION };
@@ -123,8 +123,17 @@
 		return !!meta && meta.messageType === 'Reaction';
 	};
 	// Unread is the game's own flag, so reading a beep here or in the game's beep list is the same thing.
-	const unread = (h) => { const b = live.get(h.k); return !h.Sent && !!b && b.Read === false && !isReaction(h); };
-	const markRead = (h) => { const b = live.get(h.k); if (b && b.Read === false) b.Read = true; };
+	// Beeps the game's list has use its own Read flag; ones only SlimeBeep caught (catchBeep) keep their own.
+	const unread = (h) => {
+		if (h.Sent || isReaction(h)) return false;
+		const b = live.get(h.k);
+		return b ? b.Read === false : !!h.unread;
+	};
+	const markRead = (h) => {
+		const b = live.get(h.k);
+		if (b && b.Read === false) b.Read = true;
+		if (h.unread) { h.unread = false; saveHistory(); }
+	};
 	const nameOf = (n) => {
 		const f = friends.find((x) => x.MemberNumber === n);
 		if (f) return f.MemberName;
@@ -349,6 +358,43 @@
 				if (isOpen() && tab !== 'chats') render();
 			} catch (e) { console.warn('[SlimeBeep]', e); }
 		});
+		ServerSocket.on('AccountBeep', (data) => {
+			try { catchBeep(data); } catch (e) { console.warn('[SlimeBeep]', e); }
+		});
+	}
+
+	/*
+	 * Every incoming beep, straight from the server. The game's beep list (which the chats are built
+	 * from) only takes plain beeps, and another add-on can handle a beep before the game does, so it
+	 * never reaches that list (Alyx's beep, 16 Oct 2026: it only showed in EBC). A beep the game has
+	 * not listed a moment later is added here instead. Leash beeps and raw data are left alone.
+	 */
+	function catchBeep(d) {
+		if (!d || typeof d.MemberNumber !== 'number' || typeof d.MemberName !== 'string') return;
+		const type = typeof d.BeepType === 'string' ? d.BeepType : '';
+		if (/leash/i.test(type)) return;
+		const msg = typeof d.Message === 'string' ? d.Message : undefined;
+		if (type && msg && /^\s*[[{]/.test(msg)) return;
+		const at = Date.now();
+		setTimeout(() => {
+			try {
+				const listed = gameLog().some((b) => b && b.MemberNumber === d.MemberNumber && !b.Sent &&
+					(b.Message ?? undefined) === msg && Math.abs(new Date(b.Time).getTime() - at) < 15000);
+				console.debug(`[SlimeBeep] beep from ${d.MemberName} (${d.MemberNumber}), type "${type}": ${listed ? 'in the game\'s beep list' : 'not in the game\'s beep list, kept by SlimeBeep'}`);
+				if (listed || !loggedIn()) return;
+				if (histOwner !== Player.MemberNumber) loadHistory();
+				const h = { k: `raw:${d.MemberNumber}|${at}`, MemberNumber: d.MemberNumber, MemberName: d.MemberName, Sent: false, Time: at,
+					Message: msg, ChatRoomName: d.ChatRoomName || undefined, unread: true };
+				if (histKeys.has(h.k)) return;
+				hist.push(h);
+				histKeys.add(h.k);
+				saveHistory();
+				if (isReaction(h)) return;
+				if (opts.sound) chime();
+				announce(h);
+				if (isOpen() && tab !== 'options' && tab !== 'group') render(true);
+			} catch (e) { console.warn('[SlimeBeep]', e); }
+		}, 1500);
 	}
 	const askFriends = () => { if (loggedIn()) { listen(); ServerSend('AccountQuery', { Query: 'OnlineFriends' }); } };
 
@@ -385,6 +431,8 @@
 		// Whatever goes wrong in here stays in here: never an error into the game or other add-ons.
 		try {
 			updateNote();
+			// Listen from login on, not only once the panel has been opened.
+			if (loggedIn()) listen();
 			const first = histOwner === null || (loggedIn() && histOwner !== Player.MemberNumber);
 			const fresh = sync();
 			const n = log().filter(unread).length;
