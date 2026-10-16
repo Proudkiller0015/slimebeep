@@ -13,7 +13,7 @@
 (function () {
 	'use strict';
 
-	const VERSION = '2.16.0';
+	const VERSION = '2.17.0';
 	// Loaded once per page, whatever loads it.
 	if (window.SlimeBeep) return;
 	window.SlimeBeep = { version: VERSION };
@@ -28,7 +28,7 @@
 	 */
 	// `popups`: a card for each new beep; `desktop`: a system notification while the game tab is in the background;
 	// `keep`: keep beeps in this browser across logins; `seenNews`: the news items (news.json) already shown.
-	const DEFAULTS = { pos: null, gap: 1.5, shareRoom: true, remember: true, picked: [], sound: true, popups: true, desktop: false, keep: true, seenNews: null, lastVersion: null, night: false, themed: false };
+	const DEFAULTS = { pos: null, gap: 1.5, shareRoom: true, remember: true, picked: [], sound: true, popups: true, desktop: false, keep: true, seenNews: null, lastVersion: null, night: false, themed: false, recentEmoji: [] };
 	// From GitHub Pages, like slimebeep.js for FUSAM: updated within a minute of a push, so the news matches the version.
 	const NEWS = 'https://proudkiller0015.github.io/slimebeep/news.json';
 	const KEEP_MAX = 2000;
@@ -425,6 +425,24 @@
 		.sb-b.sb-act { font-style: italic; background: transparent !important; border: 1px dashed currentColor !important; color: inherit; opacity: .85; }
 		.sb-b.sb-wait { opacity: .7; border: 2px dashed #ffb3d9; }
 		.sb-b.sb-wait a { color: inherit; text-decoration: underline; }
+		#sb-emoji { position: absolute; left: 8px; right: 8px; bottom: 60px; z-index: 4; height: 210px; display: flex; flex-direction: column;
+			background: #fff; border: 2px solid #ffd1e8; border-radius: 14px; box-shadow: 0 6px 20px #ff4fa333; overflow: hidden; }
+		.sb-emo-tabs { display: flex; gap: 2px; padding: 4px; background: #ffe6f3; }
+		.sb-emo-tabs button { border: none; background: transparent; border-radius: 8px; font-size: 17px; width: 34px; height: 30px; cursor: pointer; }
+		.sb-emo-tabs button.on { background: #fff; box-shadow: 0 1px 4px #ff4fa344; }
+		.sb-emo-tabs button[data-eclose] { margin-left: auto; font-size: 13px; color: #c08aaa; }
+		.sb-emo-grid { flex: 1; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(34px, 1fr)); padding: 4px; }
+		.sb-emo-grid button { border: none; background: transparent; font-size: 21px; height: 36px; border-radius: 8px; cursor: pointer; }
+		.sb-emo-grid button:hover { background: #ffe6f3; }
+		html.sb-night #sb-emoji { background: #1a2142; border-color: #2f3b75; }
+		html.sb-night .sb-emo-tabs { background: #1c2450; }
+		html.sb-night .sb-emo-tabs button.on, html.sb-night .sb-emo-grid button:hover { background: #253064; }
+		html.sb-themed #sb-emoji { background: var(--sb-t-main); border-color: var(--sb-t-element-hover); }
+		html.sb-themed .sb-emo-tabs { background: var(--sb-t-element-disabled); }
+		html.sb-themed .sb-emo-tabs button.on, html.sb-themed .sb-emo-grid button:hover { background: var(--sb-t-element); }
+		.sb-cmd { display: flex; flex-direction: column; gap: 1px; font-size: 12px; padding: 4px 6px; border-radius: 8px; background: #fff3f9; text-align: left; }
+		.sb-cmd code { font-weight: 700; color: #c2387f; }
+		html.sb-night .sb-cmd { background: #1d2550; }
 		.sb-compose { display: flex; gap: 6px; align-items: flex-end; padding: 8px; background: #ffe6f3; }
 		.sb-compose textarea { flex: 1; height: 38px; max-height: 100px; resize: none; border: 2px solid #ffd1e8; border-radius: 16px;
 			padding: 8px 10px; background: #fff; color: #4a2340; font: inherit; }
@@ -633,6 +651,8 @@
 		$('sb-me').addEventListener('click', () => { if (!loggedIn()) return; tab = 'options'; thread = null; render(); });
 		// Typing in the panel must not reach the game's own key handlers.
 		panel.addEventListener('keydown', (e) => e.stopPropagation());
+		panel.addEventListener('pointerdown', () => { lastPanelTouch = Date.now(); }, true);
+		toggle.addEventListener('pointerdown', () => { lastPanelTouch = Date.now(); }, true);
 
 		// Friends as the server reports them, whoever asked (the game asks too).
 		if (loggedIn()) listen();
@@ -690,7 +710,7 @@
 		} catch (e) { /* gone */ }
 		listening = null;
 		for (const c of Object.values(conns)) { c.dead = true; try { if (c.ws) c.ws.close(); } catch (e) { /* gone */ } }
-		for (const id of ['sb-toggle', 'sb-panel', 'sb-toast', 'sb-cards', 'sb-crop', 'sb-zoom', 'sb-ask', 'sb-style']) { const el = $(id); if (el) el.remove(); }
+		for (const id of ['sb-toggle', 'sb-panel', 'sb-toast', 'sb-cards', 'sb-crop', 'sb-zoom', 'sb-ask', 'sb-emoji', 'sb-style']) { const el = $(id); if (el) el.remove(); }
 		const root = document.documentElement;
 		for (const k of [...root.classList]) if (/^sb-/.test(k)) root.classList.remove(k);
 		for (const set of Object.values(apiListeners)) set.clear();
@@ -1421,7 +1441,7 @@
 
 	const isOpen = () => $('sb-panel').style.display === 'flex';
 	function setOpen(on) {
-		if (!on) for (const id of ['sb-crop', 'sb-zoom', 'sb-ask']) if ($(id)) $(id).remove();
+		if (!on) for (const id of ['sb-crop', 'sb-zoom', 'sb-ask', 'sb-emoji']) if ($(id)) $(id).remove();
 		$('sb-panel').style.display = on ? 'flex' : 'none';
 		if (on) { askFriends(); render(); }
 		place();
@@ -1640,6 +1660,8 @@
 	function render(keepScroll) {
 		if (stopped) return;
 		const view = $('sb-view');
+		// The picker belongs to a chat; it goes once no chat is open (checked after drawing).
+		setTimeout(() => { if (!$('sb-text')) closeEmoji(); }, 0);
 		showMe();
 		if (!loggedIn()) {
 			view.innerHTML = '<div class="sb-empty">💤 Log in and SlimeBeep wakes up.</div>';
@@ -1902,6 +1924,7 @@
 	}
 
 	function renderGroupThread(keepScroll) {
+		const mayFocus = wantsFocus();
 		const id = thread.slice(2);
 		const g = groups[id];
 		if (!g) { thread = null; return render(); }
@@ -1924,7 +1947,8 @@
 				: `<div class="sb-b ${h.Sent ? 'me' : 'them'}${isAction(textOf(h)) ? ' sb-act' : ''}">${h.Sent ? '' : `<span class="sb-from">${esc(memberName(g, h.MemberNumber) || h.MemberName)}</span>`}${rich(textOf(h))}<em>${timeOf(h.Time)}</em></div>`)).join('')
 				: '<div class="sb-empty">🫧 Say hi to the group!</div>'}</div>
 			<div class="sb-compose">
-				<textarea id="sb-text" maxlength="${LIMITS.text}" placeholder="Message ${esc(g.name)}…"></textarea>
+				<button class="pin" id="sb-emo" title="Emoji">😊</button>
+				<textarea id="sb-text" maxlength="${LIMITS.text}" placeholder="Message ${esc(g.name)}… (/help)"></textarea>
 				<button id="sb-send" title="Send (Enter)">➤</button>
 			</div>`;
 		const box = $('sb-msgs');
@@ -1934,15 +1958,19 @@
 		$('sb-back').addEventListener('click', () => { thread = null; render(); });
 		$('sb-members').addEventListener('click', () => { renderMembers.open = id; render(); });
 		$('sb-leave').addEventListener('click', () => askGroup(id));
+		$('sb-emo').addEventListener('click', () => toggleEmoji());
 		const send = () => {
-			const text = clean(ta.value, LIMITS.text);
+			const typed = command(ta.value);
+			if (typed === null) { ta.value = ''; return; }
+			const text = clean(typed, LIMITS.text);
 			if (!text) return;
+			closeEmoji();
 			sendGroup(id, text);
 			ta.value = '';
 		};
 		$('sb-send').addEventListener('click', send);
 		ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
-		if (!keepScroll || document.activeElement === document.body) ta.focus();
+		if (mayFocus) ta.focus();
 	}
 
 	function friendRows(q) {
@@ -2015,6 +2043,7 @@
 
 	function renderThread(keepScroll) {
 		if (typeof thread === 'string') return renderGroupThread(keepScroll);
+		const mayFocus = wantsFocus();
 		const n = thread;
 		const view = $('sb-view');
 		const msgs = log().filter((b) => b.MemberNumber === n && !isReaction(b));
@@ -2037,7 +2066,8 @@
 				: (waitingHere.length ? '' : '<div class="sb-empty">🫧 Say hi!</div>')}${waitingHere.map((w) => `<div class="sb-b me sb-wait">${esc(w.text)}<em>⏳ sends when they're online · <a href="#" data-cancel="${esc(w.id)}">cancel</a></em></div>`).join('')}</div>
 			<div class="sb-compose">
 				<button class="pin ${pinOn ? 'on' : ''}" id="sb-pin" ${room ? '' : 'disabled'} title="${room ? `Let them join me: adds a button to join you in "${esc(room)}"` : "You're not in a chat room"}">📍</button>
-				<textarea id="sb-text" maxlength="1000" placeholder="${offline ? `${esc(nameOf(n))} is offline: it'll wait for them…` : `Beep ${esc(nameOf(n))}…`}"></textarea>
+				<button class="pin" id="sb-emo" title="Emoji">😊</button>
+				<textarea id="sb-text" maxlength="1000" placeholder="${offline ? `${esc(nameOf(n))} is offline: it'll wait for them…` : `Beep ${esc(nameOf(n))}… (/help)`}"></textarea>
 				<button id="sb-send" title="Send (Enter)">➤</button>
 			</div>`;
 		const box = $('sb-msgs');
@@ -2053,9 +2083,13 @@
 			saveWaiting();
 			render(true);
 		});
+		$('sb-emo').addEventListener('click', () => toggleEmoji());
 		const send = () => {
-			const text = ta.value.trim();
+			const typed = command(ta.value);
+			if (typed === null) { ta.value = ''; return; }
+			const text = typed.trim();
 			if (!text) return;
+			closeEmoji();
 			if (isOffline(n)) {
 				queueBeep(n, text);
 				ta.value = '';
@@ -2073,7 +2107,7 @@
 		};
 		$('sb-send').addEventListener('click', send);
 		ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
-		if (!keepScroll || document.activeElement === document.body) ta.focus();
+		if (mayFocus) ta.focus();
 	}
 
 	const isOffline = (n) => friendsKnown && isFriend(n) && !friends.some((f) => f.MemberNumber === n);
@@ -2104,6 +2138,118 @@
 			notify(`📨 Waiting beep${ready.length === 1 ? '' : 's'} sent to ${names.join(', ')}`);
 			if (isOpen()) render(true);
 		} finally { sendingWaiting = false; }
+	}
+
+	/*
+	 * 😊 Emoji: a picker above the chat box, in tabs, with the ones you use most kept first under 🕘.
+	 * It puts the emoji where the cursor is.
+	 */
+	const EMOJI = {
+		'😊': '😀 😁 😂 🤣 😊 😇 🙂 😉 😍 🥰 😘 😋 😛 😜 🤪 😏 😌 😴 🥺 😳 😱 😭 😢 😤 😡 🤬 🙄 😬 🤔 🤭 🤫 😶 😈 👿 🤤 🥵 🥴 😵 🤯 🥳 😎 🤓 🫠 🫣 🫢',
+		'❤️': '❤️ 🧡 💛 💚 💙 💜 🖤 🤍 🤎 💖 💗 💓 💕 💞 💘 💝 💔 ❣️ 💋 💌 💐 🌹 🌸 💍 🔥 ✨ 💫 ⭐ 🌟',
+		'👋': '👋 🤚 ✋ 🖐️ 👌 🤌 ✌️ 🤞 🫰 🤟 🤘 🤙 👈 👉 👆 👇 ☝️ 👍 👎 ✊ 👊 🤛 🤜 👏 🙌 🫶 👐 🤲 🙏 💪 🫦 👀 👅 💅 🤗',
+		'🐱': '🐱 😺 😸 😻 😼 🙀 🐶 🐰 🐇 🦊 🐺 🐻 🐼 🐨 🐯 🦁 🐮 🐷 🐸 🐵 🐔 🐧 🐦 🦋 🐝 🐞 🐙 🦄 🐉 🐍 🦇',
+		'🎀': '🎀 🎁 🎉 🎈 🎂 🍰 🧁 🍭 🍬 🍫 🍓 🍒 🍑 🍆 🍌 🍷 🍸 🍹 🧋 ☕ 🍵 🍕 🍔 🍟 🌮 🍣 🍜 🔗 ⛓️ 🔒 🔑 🗝️ 🪢 🧸 👑 💎 🕯️ 🎶 🎮',
+	};
+	const loadRecent = () => (Array.isArray(opts.recentEmoji) ? opts.recentEmoji.filter((e) => typeof e === 'string' && e.length <= 16).slice(0, 24) : []);
+	let emojiTab = null;
+	function closeEmoji() { const el = $('sb-emoji'); if (el) el.remove(); }
+	function toggleEmoji() {
+		if ($('sb-emoji')) return closeEmoji();
+		const box = document.createElement('div');
+		box.id = 'sb-emoji';
+		emojiTab = null; // opens on 🕘 when there are any
+		$('sb-panel').appendChild(box);
+		drawEmoji();
+	}
+	function drawEmoji() {
+		const box = $('sb-emoji');
+		if (!box) return;
+		const recent = loadRecent();
+		const tabs = [...(recent.length ? ['🕘'] : []), ...Object.keys(EMOJI)];
+		if (!tabs.includes(emojiTab)) emojiTab = tabs[0];
+		const list = emojiTab === '🕘' ? recent : EMOJI[emojiTab].split(' ');
+		box.innerHTML = `<div class="sb-emo-tabs">${tabs.map((t) => `<button data-etab="${t}" class="${t === emojiTab ? 'on' : ''}">${t}</button>`).join('')}<button data-eclose="1" title="Close">✕</button></div>
+			<div class="sb-emo-grid">${list.map((e) => `<button data-emo="${esc(e)}">${esc(e)}</button>`).join('')}</div>`;
+		box.onclick = (ev) => {
+			const b = ev.target.closest('button');
+			if (!b) return;
+			if (b.dataset.eclose) return closeEmoji();
+			if (b.dataset.etab) { emojiTab = b.dataset.etab; return drawEmoji(); }
+			const e = b.dataset.emo;
+			const ta = $('sb-text');
+			if (!e || !ta) return;
+			const at = ta.selectionStart ?? ta.value.length, end = ta.selectionEnd ?? at;
+			if (ta.value.length + e.length > Number(ta.maxLength || 1000)) return;
+			ta.value = ta.value.slice(0, at) + e + ta.value.slice(end);
+			ta.selectionStart = ta.selectionEnd = at + e.length;
+			ta.focus();
+			setOpt('recentEmoji', [e, ...recent.filter((x) => x !== e)].slice(0, 24));
+		};
+	}
+
+	/*
+	 * Chat commands, typed in any chat box: /me does an action, /shrug, /roll and /help. What comes back
+	 * is the text to send, or null when there's nothing to send. An unknown command is never sent
+	 * (it's most likely a typo); //text sends "/text".
+	 */
+	const COMMANDS = [
+		['/me <action>', 'Does an action: /me waves sends *waves*'],
+		['/shrug [text]', 'Adds ¯\\_(ツ)_/¯'],
+		['/roll [sides]', 'Rolls a die (6 sides unless you say): *rolls a d20: 13*'],
+		['/flip', 'Flips a coin'],
+		['/help', 'This list'],
+		['//text', 'Sends a message that starts with /'],
+	];
+	function command(raw) {
+		const text = String(raw || '').trim();
+		if (!text.startsWith('/')) return raw;
+		if (text.startsWith('//')) return text.slice(1);
+		const m = /^\/(\w+)\s*([\s\S]*)$/.exec(text);
+		const name = m ? m[1].toLowerCase() : '', rest = m ? m[2].trim() : '';
+		switch (name) {
+			case 'me': case 'action': case 'emote':
+				if (!rest) { notify('/me what? Like: /me waves'); return null; }
+				return `*${rest.replace(/^\*+|\*+$/g, '')}*`;
+			case 'shrug': return `${rest ? `${rest} ` : ''}¯\\_(ツ)_/¯`;
+			case 'roll': case 'dice': {
+				const sides = Math.max(2, Math.min(1000, parseInt(rest, 10) || 6));
+				const n = 1 + Math.floor((crypto.getRandomValues(new Uint32Array(1))[0] / 2 ** 32) * sides);
+				return `*rolls a d${sides}: ${n}* 🎲`;
+			}
+			case 'flip': case 'coin': return `*flips a coin: ${crypto.getRandomValues(new Uint8Array(1))[0] & 1 ? 'heads' : 'tails'}* 🪙`;
+			case 'help': case 'commands': showHelp(); return null;
+			default: notify(`Unknown command /${name || '?'}: try /help`); return null;
+		}
+	}
+	function showHelp() {
+		if ($('sb-ask')) return;
+		const box = document.createElement('div');
+		box.id = 'sb-ask';
+		box.innerHTML = `<div class="sb-crop-card" style="align-items:stretch">
+			<b style="text-align:center">💬 Chat commands</b>
+			${COMMANDS.map(([c, d]) => `<div class="sb-cmd"><code>${esc(c)}</code><span>${esc(d)}</span></div>`).join('')}
+			<span class="sb-hint" style="text-align:center">😊 opens the emoji. *giggles* shows as an action.</span>
+			<div class="sb-crop-btns" style="justify-content:center"><button class="sb-go" data-act="keep">Got it</button></div>
+		</div>`;
+		const close = () => { box.remove(); document.removeEventListener('keydown', onKey, true); if ($('sb-text')) $('sb-text').focus(); };
+		const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+		box.addEventListener('click', (e) => { if (e.target === box || (e.target.dataset && e.target.dataset.act === 'keep')) close(); });
+		document.addEventListener('keydown', onKey, true);
+		$('sb-panel').appendChild(box);
+	}
+
+	/*
+	 * SlimeBeep's chat box takes the cursor only when you're already in SlimeBeep or just clicked in
+	 * it: a redraw (a new beep, the friend list) must never pull you out of the game's own chat box, or
+	 * the rest of what you type there ends up in SlimeBeep and gets sent from it.
+	 */
+	let lastPanelTouch = 0;
+	function wantsFocus() {
+		const a = document.activeElement, panel = $('sb-panel');
+		if (a && a !== document.body && panel && panel.contains(a)) return true;
+		if (a && a !== document.body) return false; // typing somewhere else (the game's chat)
+		return Date.now() - lastPanelTouch < 1500;
 	}
 
 	/** A short note that something happened, by the slime, and a bounce. */

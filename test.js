@@ -693,6 +693,62 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 		await tap('#sb-back');
 	}
 
+	// ---- Typing in the game's chat while a SlimeBeep chat is open: redraws never take the cursor.
+	{
+		await p.evaluate(() => { SlimeBeep.api.openChat(11); });
+		await wait(250);
+		await p.evaluate(() => { const g = document.createElement('textarea'); g.id = 'InputChat'; document.body.appendChild(g); });
+		await p.click('#InputChat');
+		await p.type('#InputChat', 'hello room');
+		await p.evaluate(() => {
+			FriendListBeepLog.push({ MemberNumber: 11, MemberName: 'Ann', Sent: false, Read: false, Time: new Date(), Message: 'pssst' });
+			fire('AccountBeep', { MemberNumber: 11, MemberName: 'Ann', BeepType: '', Message: 'pssst' });
+			fire('AccountQueryResult', { Query: 'OnlineFriends', Result: [{ MemberNumber: 11, MemberName: 'Ann', ChatRoomName: 'Pokepark', Type: 'Friend' }] });
+		});
+		await wait(1500);
+		await p.keyboard.type(' still here');
+		const r = await p.evaluate(() => ({ active: document.activeElement.id, game: document.getElementById('InputChat').value, mine: document.getElementById('sb-text') ? document.getElementById('sb-text').value : null }));
+		check(r.active === 'InputChat' && r.game === 'hello room still here' && !r.mine, `typing in the game's chat stays there while SlimeBeep redraws (${JSON.stringify(r)})`);
+		await p.evaluate(() => document.getElementById('InputChat').remove());
+		await tap('#sb-back');
+	}
+
+	// ---- 😊 Emoji and commands in a chat box.
+	{
+		await p.evaluate(() => { beeps.length = 0; SlimeBeep.api.openChat(11); });
+		await wait(250);
+		await p.type('#sb-text', 'hi ');
+		await p.click('#sb-emo');
+		await wait(100);
+		check(!!await p.$('#sb-emoji .sb-emo-grid button'), '😊 opens the emoji picker');
+		await p.click('#sb-emoji [data-emo="🥰"]');
+		await p.click('#sb-emoji [data-etab="🐱"]');
+		await p.click('#sb-emoji [data-emo="🐱"]');
+		check(await p.$eval('#sb-text', (e) => e.value) === 'hi 🥰🐱', 'emoji go in where the cursor is');
+		await p.click('#sb-emoji [data-eclose]');
+		await p.click('#sb-emo');
+		await wait(100);
+		check(await p.$$eval('#sb-emoji [data-etab]', (e) => e[0].dataset.etab) === '🕘' && await p.$$eval('#sb-emoji .sb-emo-grid button', (e) => e.map((x) => x.dataset.emo).slice(0, 2).join()) === '🐱,🥰', 'the ones used last come first under 🕘');
+		await p.click('#sb-text');
+		await p.keyboard.press('Enter');
+		await wait(200);
+		check(!await p.$('#sb-emoji'), 'sending closes the picker');
+		const typeSend = async (txt) => { await p.click('#sb-text'); await p.type('#sb-text', txt); await p.keyboard.press('Enter'); await wait(150); };
+		await typeSend('/me waves happily');
+		await typeSend('/roll 20');
+		await typeSend('/shrug oh well');
+		await typeSend('/nope');
+		await typeSend('//slash');
+		const sent = await p.evaluate(() => beeps.map((b) => b[1]));
+		check(sent[0] === 'hi 🥰🐱' && sent[1] === '*waves happily*' && /^\*rolls a d20: ([1-9]|1\d|20)\* 🎲$/.test(sent[2]) && sent[3] === 'oh well ¯\\_(ツ)_/¯' && sent[4] === '/slash' && sent.length === 5,
+			`/me, /roll, /shrug work, a typo'd command is never sent, //text sends /text (${JSON.stringify(sent)})`);
+		await typeSend('/help');
+		check(/\/me/.test(await p.$eval('#sb-ask', (e) => e.textContent)) && await p.evaluate(() => beeps.length) === 5, '/help shows the commands and sends nothing');
+		await shot('help');
+		await p.click('#sb-ask [data-act=keep]');
+		await tap('#sb-back');
+	}
+
 	// ---- Offline beeps: to a friend who's offline, a beep waits and goes out when they come online.
 	{
 		await p.evaluate(() => { beeps.length = 0; SlimeBeep.api.openChat(14); });
