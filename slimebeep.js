@@ -68,7 +68,7 @@
 	 * pictures, key fingerprints (so a fake #number in a group gets a ⚠), and group invites.
 	 */
 	const PROTO = 'SlimeBeep';
-	const RELAY = 'wss://slimebeep-relay.__WORKERS_SUBDOMAIN__.workers.dev';
+	const RELAY = 'wss://slimebeep-relay.slimebeep-relay.workers.dev';
 	// A different relay for testing only (set by hand in the console); the real one otherwise.
 	const relayUrl = () => { try { return localStorage.getItem('slimebeep.relay') || RELAY; } catch (e) { return RELAY; } };
 	const LIMITS = { name: 40, text: 500, members: 40, admins: 10, groups: 30, perMinute: 60 };
