@@ -4,5 +4,11 @@
     "date": "16 Oct 2026",
     "title": "📢 SlimeBeep 2.2",
     "text": "New beeps now pop a card by the slime (click it to reply), your chats stay after you log out, and ⚙ can turn on desktop notifications."
+  },
+  {
+    "id": "2.3.0",
+    "date": "16 Oct 2026",
+    "title": "📢 SlimeBeep 2.3",
+    "text": "🌙 Night mode with a night blue slime (thanks Alyx!), SlimeBeep in Settings > Extensions, and this little note in the room chat after every update."
   }
 ]

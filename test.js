@@ -11,6 +11,10 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	const b = await puppeteer.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: 'new' });
 	const p = await b.newPage();
 	await p.setViewport({ width: 1200, height: 800 });
+	// news.json is served by the test, never the live one.
+	let newsBody = '[]';
+	await p.setRequestInterception(true);
+	p.on('request', (r) => (r.url().includes('/news.json') ? r.respond({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: newsBody }) : r.continue()));
 	await p.goto('https://example.com/');
 	const stub = () => {
 		const handlers = {};
@@ -38,6 +42,11 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 			beeps.push([n, m, o.includeRoom]);
 			FriendListBeepLog.push({ MemberNumber: n, MemberName: Player.FriendNames.get(n), Sent: true, Read: true, Time: new Date(), Message: m, ChatRoomName: o.includeRoom ? ChatRoomData.Name : undefined });
 		};
+		window.local = []; window.ServerPlayerIsInChatRoom = () => true; window.ChatRoomSendLocal = (c) => local.push(c);
+		window.PreferenceExtensionsSettings = {};
+		window.PreferenceRegisterExtensionSetting = (x) => { if (PreferenceExtensionsSettings[x.Identifier]) throw new Error('twice'); PreferenceExtensionsSettings[x.Identifier] = x; };
+		window.cleared = 0; window.PreferenceSubscreenExtensionsClear = () => { cleared++; PreferenceExtensionsSettings.SlimeBeep.unload(); };
+		window.MouseIn = () => true; window.DrawCharacter = () => {}; window.DrawButton = () => {};
 		let gameKeys = 0; document.addEventListener('keydown', () => gameKeys++); window.gameKeys = () => gameKeys;
 	};
 	const shot = async (name) => { if (SHOTS) await p.screenshot({ path: `${__dirname}/../sb-${name}.png` }); };
@@ -45,6 +54,18 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	await p.addScriptTag({ content: src });
 	await p.addScriptTag({ content: src });
 	check(await p.$$eval('#sb-toggle', (e) => e.length) === 1, 'loaded twice, one button');
+	await wait(1200);
+	const notes = await p.evaluate(() => local);
+	check(notes.length === 1 && /SlimeBeep v[\d.]+ is ready/.test(notes[0]), 'a first install says hello once in the room chat');
+	check(await p.evaluate(() => Object.keys(PreferenceExtensionsSettings).join() === 'SlimeBeep' && PreferenceExtensionsSettings.SlimeBeep.Image.startsWith('data:image/png')),
+		'listed once in Settings > Extensions, with the slime icon');
+	await p.evaluate(() => { const x = PreferenceExtensionsSettings.SlimeBeep; x.load(); x.run(); });
+	check(await p.$eval('#sb-ext', (e) => /Pop sound/.test(e.textContent) && e.classList.contains('HideOnPopup')), 'its settings screen shows the options');
+	await p.click('#sb-o-sound');
+	check(await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.options')).sound === false), 'and changing one there saves it');
+	await p.click('#sb-o-sound');
+	await p.evaluate(() => PreferenceExtensionsSettings.SlimeBeep.click());
+	check(await p.evaluate(() => cleared === 1 && !document.getElementById('sb-ext')), 'the exit button closes it');
 	await wait(1200);
 	check(await p.$eval('#sb-badge', (e) => e.textContent) === '2', 'badge counts 2 unread (a reaction does not count)');
 
@@ -71,6 +92,10 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	check(await p.$eval('#sb-toast', (e) => e.classList.contains('show') && e.textContent), 'and a toast says so: ' + await p.$eval('#sb-toast', (e) => e.textContent));
 	check(await p.evaluate(() => gameKeys()) === 0, 'typing never reached the game');
 	await shot('thread');
+	await p.click('#sb-moon');
+	check(await p.evaluate(() => document.documentElement.classList.contains('sb-night') && JSON.parse(localStorage.getItem('slimebeep.options')).night), '🌙 turns night mode on and remembers it');
+	await shot('night');
+	await p.click('#sb-moon');
 
 	// A beep arriving while the chat is open shows up by itself.
 	await p.evaluate(() => FriendListBeepLog.push({ MemberNumber: 13, MemberName: 'Cat', Sent: false, Read: false, Time: new Date(), Message: 'yay!' }));
@@ -133,9 +158,7 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	check(at[0] === '280px' && at[1] === '180px', `dragged to ${at}`);
 	const inside = await p.$eval('#sb-panel', (e) => { const x = e.getBoundingClientRect(); return x.left >= 0 && x.top >= 0 && x.right <= innerWidth && x.bottom <= innerHeight; });
 	check(inside, 'the panel stays inside the window');
-	await p.setRequestInterception(true);
-	p.on('request', (r) => (r.url().includes('/news.json') ? r.respond({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' },
-		body: JSON.stringify([{ id: 'old', text: 'old news' }, { id: 'n1', title: '📢 Hi', text: 'SlimeBeep can now keep your beeps!' }]) }) : r.continue()));
+	newsBody = JSON.stringify([{ id: 'old', text: 'old news' }, { id: 'n1', title: '📢 Hi', text: 'SlimeBeep can now keep your beeps!' }]);
 	await p.reload();
 	await p.evaluate(stub);
 	// A new login: the game's log starts empty again.
@@ -161,6 +184,17 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	await p.addScriptTag({ content: src });
 	await wait(1500);
 	check(await p.$$eval('.sb-card.news', (e) => e.length) === 0, 'news shows once');
+	check(await p.evaluate(() => local.length) === 0, 'and the room note does not repeat for the same version');
+	// A new version is pushed: one note, with its news item.
+	await p.evaluate(() => { const o = JSON.parse(localStorage.getItem('slimebeep.options')); o.lastVersion = '0.0.1'; localStorage.setItem('slimebeep.options', JSON.stringify(o)); });
+	const ver = src.match(/const VERSION = '([^']+)'/)[1];
+	newsBody = JSON.stringify([{ id: ver, text: 'Shiny new things.' }]);
+	await p.reload();
+	await p.evaluate(stub);
+	await p.addScriptTag({ content: src });
+	await wait(1800);
+	const upd = await p.evaluate(() => local);
+	check(upd.length === 1 && upd[0].includes(`updated to v${ver}`) && upd[0].includes('Shiny new things.'), `after an update, one room note with what's new`);
 	await shot('reload');
 	await b.close();
 	console.log(failed ? `\n${failed} FAILED` : '\nall passed');

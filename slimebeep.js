@@ -13,7 +13,7 @@
 (function () {
 	'use strict';
 
-	const VERSION = '2.2.0';
+	const VERSION = '2.3.0';
 	// Loaded once per page, whatever loads it.
 	if (window.SlimeBeep) return;
 	window.SlimeBeep = { version: VERSION };
@@ -28,7 +28,7 @@
 	 */
 	// `popups`: a card for each new beep; `desktop`: a system notification while the game tab is in the background;
 	// `keep`: keep beeps in this browser across logins; `seenNews`: the news items (news.json) already shown.
-	const DEFAULTS = { pos: null, gap: 1.5, shareRoom: true, remember: true, picked: [], sound: true, popups: true, desktop: false, keep: true, seenNews: null };
+	const DEFAULTS = { pos: null, gap: 1.5, shareRoom: true, remember: true, picked: [], sound: true, popups: true, desktop: false, keep: true, seenNews: null, lastVersion: null, night: false };
 	const NEWS = 'https://raw.githubusercontent.com/Proudkiller0015/slimebeep/main/news.json';
 	const KEEP_MAX = 2000;
 	const KEY = 'slimebeep.options';
@@ -223,6 +223,48 @@
 		.sb-card.news { background: linear-gradient(120deg, #fff0f8, #eafbff); border-color: #9fe8ff; }
 		@keyframes sb-in { from { opacity: 0; transform: translateY(10px) scale(.95); } }
 		@keyframes sb-out { to { opacity: 0; transform: translateX(30px); } }
+		#sb-ext { position: fixed; z-index: 1000; left: 50%; top: 50%; transform: translate(-30%, -50%); width: min(460px, 90vw); max-height: 80vh;
+			display: flex; flex-direction: column; overflow: hidden; border-radius: 22px; background: #fff7fb; color: #4a2340;
+			border: 3px solid #ffc2e2; box-shadow: 0 8px 30px #c2186b55; font: 14px "Trebuchet MS", "Segoe UI", sans-serif; color-scheme: light; }
+		#sb-ext, #sb-ext * { box-sizing: border-box; text-align: left; line-height: 1.3; letter-spacing: normal; text-transform: none; }
+		#sb-ext .sb-body { overflow-y: auto; padding: 8px 14px 14px; }
+		#sb-ext input[type=checkbox] { accent-color: #ff4fa3; margin: 0 6px 0 0; vertical-align: middle; }
+		#sb-ext button { font: inherit; cursor: pointer; }
+		/* 🌙 Night mode (asked for by Alyx): navy, with a night blue slime. Only SlimeBeep's own parts change. */
+		html.sb-night #sb-toggle { background: #1a2142; border-color: #8fb3ff; box-shadow: 0 3px 12px #3b55c488; }
+		html.sb-night #sb-toggle img, html.sb-night .sb-head img, html.sb-night .sb-card.news > img { filter: hue-rotate(-105deg) saturate(1.15) brightness(.92); }
+		html.sb-night #sb-badge { background: #5b8cff; border-color: #1a2142; }
+		html.sb-night #sb-panel, html.sb-night #sb-ext { background: #141a33; color: #dfe6ff; border-color: #2f3b75; box-shadow: 0 8px 30px #0008; color-scheme: dark; }
+		html.sb-night .sb-head { background: linear-gradient(120deg, #2b3a8f, #4f6bd8 55%, #7a5cd6); text-shadow: 0 1px 2px #0008; }
+		html.sb-night .sb-tabs, html.sb-night .sb-thead, html.sb-night .sb-compose { background: #1c2450; }
+		html.sb-night .sb-tabs button { background: #253064; color: #a9c1ff; }
+		html.sb-night .sb-tabs button.on { background: #5b8cff; color: #fff; box-shadow: 0 2px 6px #5b8cff66; }
+		html.sb-night .sb-tabs button i { background: #5b8cff; }
+		html.sb-night .sb-tabs button.on i { background: #fff; color: #3b55c4; }
+		html.sb-night .sb-row, html.sb-night .sb-group label, html.sb-night .sb-opts label { background: #1d2550; border-color: #2c3866; color: #dfe6ff; }
+		html.sb-night .sb-row:hover { background: #253064; border-color: #5b8cff; }
+		html.sb-night .sb-sub, html.sb-night .sb-hint, html.sb-night .sb-side, html.sb-night .sb-empty { color: #8f9fd6; }
+		html.sb-night .sb-dot { background: #5b8cff; }
+		html.sb-night .sb-av { border-color: #141a33; filter: saturate(.7) brightness(.85); }
+		html.sb-night .sb-search, html.sb-night .sb-compose textarea, html.sb-night .sb-group textarea, html.sb-night .sb-opts input[type=number] {
+			background: #10152b; color: #dfe6ff; border-color: #2f3b75; }
+		html.sb-night #sb-panel textarea:focus, html.sb-night #sb-panel input:focus, html.sb-night #sb-ext input:focus { border-color: #5b8cff !important; box-shadow: 0 0 0 3px #2b3a8f; }
+		html.sb-night .sb-msgs { background: radial-gradient(circle at 20% 10%, #1d2550 0, #141a33 60%); }
+		html.sb-night .sb-b.them { background: #222b55; border-color: #2f3b75; color: #dfe6ff; }
+		html.sb-night .sb-b.me { background: linear-gradient(135deg, #4f6bd8, #3b55c4); }
+		html.sb-night .sb-compose button, html.sb-night .sb-go { background: #5b8cff; box-shadow: none; }
+		html.sb-night .sb-compose button.pin { background: #253064; color: #8f9fd6; }
+		html.sb-night .sb-compose button.pin.on { background: #7a5cd6; color: #fff; }
+		html.sb-night .sb-thead button { background: #253064; color: #a9c1ff; }
+		html.sb-night .sb-pill { background: #1d2550; color: #a9c1ff; border-color: #2f3b75; }
+		html.sb-night #sb-panel input[type=checkbox], html.sb-night #sb-ext input[type=checkbox] { accent-color: #5b8cff; }
+		html.sb-night .sb-line[style] { background: #141a33 !important; }
+		html.sb-night .sb-card { background: #1a2142; color: #dfe6ff; border-color: #2f3b75; box-shadow: 0 6px 20px #0008; }
+		html.sb-night .sb-card .sb-main b { color: #8fb3ff; }
+		html.sb-night .sb-card small, html.sb-night .sb-card .sb-x { color: #8f9fd6; }
+		html.sb-night .sb-card.news { background: linear-gradient(120deg, #1a2142, #241f4f); border-color: #7a5cd6; }
+		html.sb-night #sb-toast { background: #dfe6ff; color: #1a2142; box-shadow: 0 4px 14px #0008; }
+		html.sb-night .sb-body::-webkit-scrollbar-thumb { background: #2f3b75; }
 		#sb-toast { position: fixed; z-index: 100000; padding: 8px 14px; border-radius: 16px; background: #4a2340; color: #fff;
 			font: bold 13px "Trebuchet MS", "Segoe UI", sans-serif; box-shadow: 0 4px 14px #c2186b66; pointer-events: none;
 			opacity: 0; transform: translateY(6px); transition: opacity .2s, transform .2s; white-space: nowrap; }
@@ -256,6 +298,7 @@
 			<div class="sb-head">
 				<img src="${ICON}" alt="">
 				<b>SlimeBeep <small>v${VERSION}</small></b>
+				<button id="sb-moon" title="Night mode">🌙</button>
 				<button id="sb-gear" title="Options">⚙</button>
 				<button id="sb-close" title="Close">✕</button>
 			</div>
@@ -287,6 +330,8 @@
 		});
 		addEventListener('resize', place);
 		$('sb-close').addEventListener('click', () => setOpen(false));
+		$('sb-moon').addEventListener('click', () => setNight(!opts.night));
+		setNight(opts.night);
 		$('sb-gear').addEventListener('click', () => { tab = tab === 'options' ? 'chats' : 'options'; thread = null; render(); });
 		// Typing in the panel must not reach the game's own key handlers.
 		panel.addEventListener('keydown', (e) => e.stopPropagation());
@@ -296,6 +341,7 @@
 		place();
 		setInterval(tick, 1000);
 		news();
+		registerSettings();
 	}
 
 	let listening = false;
@@ -345,6 +391,7 @@
 	function tick() {
 		// Whatever goes wrong in here stays in here: never an error into the game or other add-ons.
 		try {
+			updateNote();
 			const first = histOwner === null || (loggedIn() && histOwner !== Player.MemberNumber);
 			const fresh = sync();
 			const n = log().filter(unread).length;
@@ -410,11 +457,33 @@
 	 * News from the repository (news.json): [{ "id": "...", "title": "...", "text": "...", "date": "..." }].
 	 * Each item shows once per browser, and stays until closed. A first install only gets the newest one.
 	 */
+	let newsItems = [];
+
+	/*
+	 * After an update (or a first install), one small line in the room chat the next time you are
+	 * in a room: the new version and, when news.json has an item with that version as its id, what's new.
+	 * Only you see it.
+	 */
+	function updateNote() {
+		if (opts.lastVersion === VERSION || !loggedIn() || typeof ChatRoomSendLocal !== 'function') return;
+		if (typeof ServerPlayerIsInChatRoom === 'function' ? !ServerPlayerIsInChatRoom() : !myRoom()) return;
+		const item = newsItems.find((i) => i.id === VERSION);
+		const first = !opts.lastVersion;
+		const head = first ? `SlimeBeep v${esc(VERSION)} is ready!` : `SlimeBeep updated to v${esc(VERSION)}`;
+		const body = item ? esc(item.text) : first ? 'Click the pink slime to beep your friends.' : '';
+		ChatRoomSendLocal(`<div style="margin:2px 0;padding:4px 10px;border-radius:10px;background:#ffe6f3;color:#a3155c;border-left:4px solid #ff4fa3;font-size:.9em">` +
+			`<img src="${ICON}" style="width:1.3em;height:1.3em;vertical-align:middle;border-radius:50%;margin-right:4px${opts.night ? ';filter:hue-rotate(-105deg)' : ''}" alt="">` +
+			`<b>${head}</b>${body ? ` ${body}` : ''}</div>`);
+		opts.lastVersion = VERSION;
+		saveOpts();
+	}
+
 	function news() {
 		fetch(NEWS, { cache: 'no-store' })
 			.then((r) => (r.ok ? r.json() : []))
 			.then((items) => {
 				const valid = Array.isArray(items) ? items.filter((i) => i && i.id && i.text) : [];
+				newsItems = valid;
 				if (!valid.length) return;
 				if (!Array.isArray(opts.seenNews)) opts.seenNews = valid.slice(0, -1).map((i) => i.id);
 				for (const i of valid.filter((x) => !opts.seenNews.includes(x.id)).slice(-3)) {
@@ -656,9 +725,64 @@
 		count();
 	}
 
+	/*
+	 * SlimeBeep in the game's own Settings > Extensions, beside the other add-ons: the same options
+	 * as the ⚙, shown over the settings screen. Registered through the game's API, so it is listed
+	 * like any other extension and leaves the rest of the screen alone.
+	 */
+	function registerSettings() {
+		if (typeof PreferenceRegisterExtensionSetting !== 'function') return;
+		if (typeof PreferenceExtensionsSettings === 'object' && PreferenceExtensionsSettings && PreferenceExtensionsSettings.SlimeBeep) return;
+		const EXIT = [1815, 75, 90, 90];
+		const close = () => { const el = $('sb-ext'); if (el) el.remove(); };
+		PreferenceRegisterExtensionSetting({
+			Identifier: 'SlimeBeep',
+			ButtonText: 'SlimeBeep',
+			Image: ICON,
+			load: () => {
+				try {
+					// The ⚙ tab and this screen share their controls, so only one is ever shown.
+					if (tab === 'options') { tab = 'chats'; if (isOpen()) render(); }
+					close();
+					const el = document.createElement('div');
+					el.id = 'sb-ext';
+					el.className = 'HideOnPopup';
+					el.innerHTML = `<div class="sb-head"><img src="${ICON}" alt=""><b>SlimeBeep <small>v${VERSION}</small></b></div>
+						<div class="sb-body">${optionsHtml()}</div>`;
+					document.body.appendChild(el);
+					wireOptions();
+					el.addEventListener('keydown', (e) => e.stopPropagation());
+				} catch (e) { console.warn('[SlimeBeep]', e); }
+			},
+			run: () => {
+				try {
+					if (typeof DrawCharacter === 'function') DrawCharacter(Player, 50, 50, 0.9);
+					if (typeof DrawButton === 'function') DrawButton(...EXIT, '', 'White', 'Icons/Exit.png');
+				} catch (e) { /* drawing is the game's; never break its frame */ }
+			},
+			click: () => {
+				if (typeof MouseIn === 'function' && MouseIn(...EXIT) && typeof PreferenceSubscreenExtensionsClear === 'function') PreferenceSubscreenExtensionsClear();
+			},
+			exit: () => true,
+			unload: close,
+		});
+	}
+
+	/** 🌙 on or off: one class on the page, which only SlimeBeep's own styles look at. */
+	function setNight(on) {
+		opts.night = !!on;
+		saveOpts();
+		document.documentElement.classList.toggle('sb-night', opts.night);
+		const moon = $('sb-moon');
+		if (moon) { moon.textContent = opts.night ? '☀️' : '🌙'; moon.title = opts.night ? 'Day mode' : 'Night mode'; }
+		const box = $('sb-o-night');
+		if (box) box.checked = opts.night;
+	}
+
 	function optionsHtml() {
 		return `<div class="sb-opts">
 			<b style="display:block;margin:6px 2px">⚙ Options</b>
+			<label><input type="checkbox" id="sb-o-night" ${opts.night ? 'checked' : ''}>🌙 Night mode (a night blue slime)</label>
 			<label><input type="checkbox" id="sb-o-sound" ${opts.sound ? 'checked' : ''}>Pop sound for new beeps</label>
 			<label><input type="checkbox" id="sb-o-popups" ${opts.popups ? 'checked' : ''}>💌 A card by the slime for each new beep</label>
 			<label><input type="checkbox" id="sb-o-desktop" ${opts.desktop ? 'checked' : ''}>🖥 Desktop notification when the game is in the background</label>
@@ -673,6 +797,7 @@
 	}
 
 	function wireOptions() {
+		$('sb-o-night').addEventListener('change', (e) => setNight(e.target.checked));
 		$('sb-o-sound').addEventListener('change', (e) => { opts.sound = e.target.checked; saveOpts(); });
 		$('sb-o-popups').addEventListener('change', (e) => { opts.popups = e.target.checked; saveOpts(); });
 		$('sb-o-desktop').addEventListener('change', async (e) => {
