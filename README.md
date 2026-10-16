@@ -46,9 +46,16 @@ Every beep you send pops up a "✓ Beep sent" note by the slime. A new beep pops
 
 SlimeBeep has an API at `window.SlimeBeep.api` (groups, friends with SlimeBeep, opening chats, invites, theme matching, events). It's all in **[API.md](API.md)**.
 
-## Group chats and privacy
+## What is stored, and where
 
-Group chat messages go through SlimeBeep's own small relay (the `relay/` folder, on Cloudflare's free plan), so they reach people who aren't friends and wait for whoever is offline. The relay keeps each group's last 200 messages and nothing else besides the member list. It only accepts connections from the Bondage Club site, checks every rule itself (roles, sizes, rate limits), and nobody can post as someone else: each SlimeBeep signs in with its own key. DMs stay ordinary game beeps.
+SlimeBeep runs its own small server on Cloudflare (a Worker with Durable Objects, free plan; the code is in the `relay/` folder). It stores:
+
+- **Group chats:** each group's name, members and roles, open invite codes (7 days), the last 200 messages, and the group's and members' pictures.
+- **Mailboxes:** beeps left for a SlimeBeep friend who was offline, until they read them (at most 14 days).
+
+That's all. Beeps to someone online are ordinary game beeps and never touch the server. In your browser, SlimeBeep keeps your chat history (if **keep** is on), options, friends' pictures and your sign-in key.
+
+The server only accepts connections from the Bondage Club sites and enforces every rule itself (roles, sizes, rate limits). Nobody can post as someone else: each SlimeBeep signs in with its own key, and a mailbox beep can only be read by the key it was addressed to.
 
 ## Updates in the room chat
 
