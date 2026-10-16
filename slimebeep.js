@@ -13,7 +13,7 @@
 (function () {
 	'use strict';
 
-	const VERSION = '2.3.2';
+	const VERSION = '2.4.0';
 	// Loaded once per page, whatever loads it.
 	if (window.SlimeBeep) return;
 	window.SlimeBeep = { version: VERSION };
@@ -55,6 +55,77 @@
 	const histKeys = new Set();
 	const live = new Map(); // key -> the game's own beep object, for its Read flag
 	const histKey = () => `slimebeep.history.${Player.MemberNumber}`;
+
+	/*
+	 * Group chats, between SlimeBeep users only, up to 40 people. Messages travel as hidden beeps of
+	 * SlimeBeep's own type (PROTO), which the game shows nowhere, so only SlimeBeep sees them.
+	 *
+	 * The game only delivers a beep to someone who has the sender on their friend list, and in a big
+	 * group not everybody is friends with everybody. So a message goes to the members who are your
+	 * friends, and is passed on by the admins (and by whoever invited someone, to the people they
+	 * invited) to their friends in the group who don't have it yet (`via` lists who has).
+	 *
+	 * Roles: the owner 👑 made the group; admins ⭐ (and, with "anyone can invite", every member) can
+	 * add people. Admins remove people, promote and rename; only the owner demotes admins. Every change
+	 * is a new version of the member list, signed by who made it, and only accepted when that person
+	 * was allowed to make it. Everything that comes in is untrusted (onHidden checks it all): plain
+	 * text and numbers only, capped, and nothing in it is ever run or loaded.
+	 */
+	const PROTO = 'SlimeBeep';
+	const LIMITS = { name: 40, text: 500, members: 40, admins: 10, groups: 30, perMinute: 60 };
+	// id -> { id, name, v, owner, open, members: [n], admins: [n], inv: { n: inviter }, names: { n: name } }
+	let groups = {};
+	let peers = new Set(); // friends known to have SlimeBeep
+	let leftGroups = new Set();
+	const gcKey = () => `slimebeep.gc.${Player.MemberNumber}`;
+	const isId = (x) => typeof x === 'string' && /^[a-z0-9]{8,24}$/.test(x);
+	const isNum = (n) => Number.isInteger(n) && n > 0 && n < 1e9;
+	const newId = () => {
+		const a = new Uint32Array(3);
+		crypto.getRandomValues(a);
+		return [...a].map((x) => x.toString(36)).join('').slice(0, 16).padEnd(8, '0');
+	};
+	// Plain text only: control characters out, trimmed, capped.
+	const clean = (x, max) => (typeof x === 'string' ? x.replace(/[\u0000-\u0008\u000b-\u001f\u007f\uf124]/g, '').trim().slice(0, max) : '');
+	const isFriend = (n) => !!(Player.FriendNames && typeof Player.FriendNames.has === 'function' && Player.FriendNames.has(n)) || friends.some((f) => f.MemberNumber === n);
+	const myName = () => clean(Player.Nickname || Player.Name, LIMITS.name) || `#${Player.MemberNumber}`;
+	const isAdmin = (g, n) => !!g && g.admins.includes(n);
+	const canInvite = (g, n) => !!g && g.members.includes(n) && (g.open || isAdmin(g, n));
+	const memberName = (g, n) => (n === Player.MemberNumber ? 'You' : (g && g.names[n]) || nameOf(n));
+
+	/** A member list from outside, made safe: numbers only, no doubles, capped; null when it doesn't hold together. */
+	function cleanRoster(r) {
+		if (!r || typeof r !== 'object' || Array.isArray(r)) return null;
+		const nums = (a, max) => (Array.isArray(a) ? [...new Set(a.filter(isNum))].slice(0, max) : []);
+		const members = nums(r.members, LIMITS.members);
+		const admins = nums(r.admins, LIMITS.admins).filter((n) => members.includes(n));
+		const v = Number.isInteger(r.v) && r.v > 0 ? r.v : 0;
+		if (!members.length || !v || !isNum(r.owner) || !admins.includes(r.owner)) return null;
+		const inv = {};
+		if (r.inv && typeof r.inv === 'object') for (const [k, by] of Object.entries(r.inv)) if (members.includes(Number(k)) && members.includes(by)) inv[Number(k)] = by;
+		return { name: clean(r.name, LIMITS.name) || 'Group chat', v, owner: r.owner, open: r.open === true, members, admins, inv };
+	}
+
+	function loadGC() {
+		groups = {};
+		peers = new Set();
+		leftGroups = new Set();
+		try {
+			const saved = JSON.parse(localStorage.getItem(gcKey()) || '{}');
+			for (const g of Object.values(saved.groups || {})) {
+				const r = g && isId(g.id) ? cleanRoster(g) : null;
+				if (!r) continue;
+				const names = {};
+				for (const [k, v] of Object.entries(g.names || {})) if (isNum(Number(k))) names[Number(k)] = clean(v, LIMITS.name);
+				groups[g.id] = { id: g.id, ...r, names };
+			}
+			for (const n of saved.peers || []) if (isNum(n)) peers.add(n);
+			for (const id of saved.left || []) if (isId(id)) leftGroups.add(id);
+		} catch (e) { /* unreadable: start fresh */ }
+	}
+	function saveGC() {
+		try { localStorage.setItem(gcKey(), JSON.stringify({ groups, peers: [...peers], left: [...leftGroups].slice(-200) })); } catch (e) { /* the browser won't keep it */ }
+	}
 	const keyOf = (b) => (b.Id ? `id:${b.Id}` : `${b.MemberNumber}|${new Date(b.Time).getTime()}|${b.Sent ? 1 : 0}|${String(b.Message || '').slice(0, 40)}`);
 
 	const $ = (id) => document.getElementById(id);
@@ -70,6 +141,7 @@
 		histKeys.clear();
 		live.clear();
 		histOwner = Player.MemberNumber;
+		loadGC();
 		if (!opts.keep) return;
 		try {
 			const saved = JSON.parse(localStorage.getItem(histKey()) || '[]');
@@ -114,6 +186,7 @@
 	}
 	/** A beep's visible text, without the metadata the game appends. */
 	const textOf = (beep) => {
+		if (beep.group) return beep.sys === 'left' ? `${beep.MemberName} left the group` : beep.text;
 		if (typeof beep.Message !== 'string') return beep.ChatRoomName ? `📍 ${beep.ChatRoomName}` : '🔔 Beep!';
 		return typeof FriendListBeepParseMessage === 'function' ? FriendListBeepParseMessage(beep.Message).text : beep.Message;
 	};
@@ -219,6 +292,13 @@
 		.sb-go:disabled { opacity: .45; cursor: default; }
 		.sb-line { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin: 6px 0; }
 		.sb-hint { color: #a0638a; font-size: 11px; }
+		.sb-gav { background: linear-gradient(135deg, #ffb3d9, #9fe8ff); font-size: 16px; }
+		.sb-from { display: block; font-size: 11px; font-weight: bold; color: #c2186b; margin-bottom: 2px; }
+		.sb-sys { align-self: center; font-size: 11px; color: #a0638a; background: #ffe6f3; padding: 2px 10px; border-radius: 10px; }
+		.sb-thead > button#sb-leave { margin-left: auto; }
+		html.sb-night .sb-gav { background: linear-gradient(135deg, #4f6bd8, #7a5cd6); }
+		html.sb-night .sb-from { color: #8fb3ff; }
+		html.sb-night .sb-sys { background: #1d2550; color: #8f9fd6; }
 		#sb-cards { position: fixed; z-index: 100000; width: 280px; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
 		.sb-card { pointer-events: auto; display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 18px; cursor: pointer;
 			background: #fff7fb; color: #4a2340; border: 2px solid #ffc2e2; box-shadow: 0 6px 20px #c2186b55; box-sizing: border-box;
@@ -346,23 +426,320 @@
 		registerSettings();
 	}
 
-	let listening = false;
-	function listen() {
-		if (listening || !loggedIn() || typeof ServerSocket.on !== 'function') return;
-		listening = true;
-		// Only listens; an error in here is caught so the game's own handlers and other add-ons carry on.
-		ServerSocket.on('AccountQueryResult', (data) => {
-			try {
+	/*
+	 * Listening to the server. Other add-ons sometimes take events over (EBC: Alyx's beeps reached only
+	 * EBC, 16 Oct 2026), by removing the game's listeners or changing the data before the game sees it.
+	 * So SlimeBeep listens underneath them all where the connection allows it (socket.io's catch-all
+	 * listener, which removing an event's listeners leaves alone), copies each beep the moment it
+	 * arrives, and checks every few seconds that it is still attached. It only ever listens.
+	 */
+	let listening = null; // the socket SlimeBeep listens on
+	const seenBeeps = []; // the last few beeps as they arrived, for SlimeBeep.debug()
+	function onServer(event, data) {
+		try {
+			if (event === 'AccountQueryResult') {
 				if (!data || data.Query !== 'OnlineFriends' || !Array.isArray(data.Result)) return;
 				friends = data.Result.filter((f) => f && f.MemberNumber !== Player.MemberNumber);
 				if (isOpen() && tab !== 'chats') render();
-			} catch (e) { console.warn('[SlimeBeep]', e); }
-		});
-		ServerSocket.on('AccountBeep', (data) => {
-			try { catchBeep(data); } catch (e) { console.warn('[SlimeBeep]', e); }
-		});
+			} else if (event === 'AccountBeep') {
+				if (!data || typeof data !== 'object') return;
+				// A copy, before the game or anyone else trims or changes it.
+				const d = { MemberNumber: data.MemberNumber, MemberName: data.MemberName, BeepType: data.BeepType, Message: data.Message,
+					ChatRoomName: data.ChatRoomName, ChatRoomSpace: data.ChatRoomSpace, Private: data.Private };
+				seenBeeps.push({ at: new Date().toISOString(), from: d.MemberNumber, type: d.BeepType || '', text: typeof d.Message === 'string' ? d.Message.slice(0, 80) : null });
+				if (seenBeeps.length > 20) seenBeeps.shift();
+				if (d.BeepType === PROTO) onHidden(d);
+				else catchBeep(d);
+			}
+		} catch (e) { console.warn('[SlimeBeep]', e); }
+	}
+	const anyListener = (event, data) => onServer(event, data);
+	const beepListener = (data) => onServer('AccountBeep', data);
+	const queryListener = (data) => onServer('AccountQueryResult', data);
+	function listen() {
+		if (!loggedIn() || !ServerSocket || typeof ServerSocket.on !== 'function') return;
+		const sock = ServerSocket;
+		const any = typeof sock.prependAny === 'function' ? 'prependAny' : typeof sock.onAny === 'function' ? 'onAny' : null;
+		if (listening === sock) {
+			// Still attached? Something may have cleared the listeners since.
+			const has = any ? (typeof sock.listenersAny === 'function' ? sock.listenersAny().includes(anyListener) : true)
+				: (typeof sock.listeners === 'function' ? sock.listeners('AccountBeep').includes(beepListener) : true);
+			if (has) return;
+		}
+		listening = sock;
+		if (any) {
+			if (typeof sock.offAny === 'function') sock.offAny(anyListener);
+			sock[any](anyListener);
+		} else {
+			if (typeof sock.off === 'function') { sock.off('AccountBeep', beepListener); sock.off('AccountQueryResult', queryListener); }
+			sock.on('AccountBeep', beepListener);
+			sock.on('AccountQueryResult', queryListener);
+		}
+	}
+	window.SlimeBeep.debug = () => ({ version: VERSION, listening: !!listening, catchAll: !!(listening && typeof listening.onAny === 'function'), lastBeeps: seenBeeps.slice() });
+
+	// At most LIMITS.perMinute hidden beeps a minute from anyone; past that they are dropped.
+	const recent = new Map();
+	function allow(n) {
+		const now = Date.now();
+		const list = (recent.get(n) || []).filter((t) => now - t < 60000);
+		list.push(now);
+		recent.set(n, list);
+		return list.length <= LIMITS.perMinute;
+	}
+	const ponged = new Map();
+
+	/** A hidden SlimeBeep beep: a "do you have SlimeBeep?" ping, its answer, or something for a group chat. */
+	function onHidden(d) {
+		if (!loggedIn() || !isNum(d.MemberNumber) || typeof d.Message !== 'string' || d.Message.length > 1000) return;
+		const from = d.MemberNumber;
+		// The server says who sent it, so this can't be faked; strangers are ignored outright.
+		if (from === Player.MemberNumber || !isFriend(from) || !allow(from)) return;
+		if (histOwner !== Player.MemberNumber) loadHistory();
+		let p;
+		try { p = JSON.parse(d.Message); } catch (e) { return; }
+		if (!p || typeof p !== 'object' || Array.isArray(p) || p.sb !== 1) return;
+		if (!peers.has(from)) { peers.add(from); saveGC(); }
+		if (p.ping === 1) {
+			// Answer once a minute at most, so nobody can use SlimeBeep to bounce beeps around.
+			if (Date.now() - (ponged.get(from) || 0) > 60000) { ponged.set(from, Date.now()); sendHidden(from, { sb: 1, pong: 1 }); }
+			return;
+		}
+		if (p.pong === 1) { if (isOpen() && tab === 'newgc') render(true); return; }
+		if (!isId(p.gid) || !isId(p.m) || !isNum(p.a) || leftGroups.has(p.gid) || histKeys.has(`g:${p.m}`)) return;
+		const g = groups[p.gid];
+		const author = p.a;
+		const passedOn = author !== from;
+		// Passed on: only by an admin, or by the one who invited you.
+		if (passedOn && !(g ? isAdmin(g, from) || g.inv[Player.MemberNumber] === from : false) && !(p.roster && !g)) return;
+		const authorName = passedOn ? clean(p.an, LIMITS.name) : clean(d.MemberName, LIMITS.name);
+		if (p.roster) return takeRoster(g, p, from, author, authorName);
+		if (!g || !g.members.includes(author)) return;
+		const sys = p.sys === 'left' ? 'left' : undefined;
+		const text = clean(p.t, LIMITS.text);
+		if (!sys && !text) return;
+		if (authorName) g.names[author] = authorName;
+		if (!passedOn && d.MemberName) g.names[from] = clean(d.MemberName, LIMITS.name);
+		if (sys === 'left') {
+			g.members = g.members.filter((n) => n !== author);
+			g.admins = g.admins.filter((n) => n !== author);
+		}
+		saveGC();
+		keep({ k: `g:${p.m}`, group: g.id, MemberNumber: author, MemberName: memberName(g, author), Sent: false, Time: Date.now(), text, sys, unread: !sys });
+		passOn(g, p, from);
+		// An admin makes a leave official, so everybody's member list agrees.
+		if (sys === 'left' && isAdmin(g, Player.MemberNumber) && !g.admins.includes(author)) {
+			if (g.owner === author) g.owner = g.admins[0];
+			if (g.owner) sendRoster(g, {});
+		}
 	}
 
+	/*
+	 * A new version of a group's member list. Accepted only when it is newer than yours and its author
+	 * was allowed to make that change: admins anything, except that only the owner demotes or removes
+	 * admins and nobody but the owner hands the group on; with "anyone can invite", a member may only add.
+	 */
+	function takeRoster(g, p, from, author, authorName) {
+		const r = cleanRoster(p.roster);
+		const me = Player.MemberNumber;
+		if (!r) return;
+		if (g) {
+			if (r.v <= g.v || !g.members.includes(author)) return;
+			const admin = isAdmin(g, author);
+			if (!admin) {
+				// A member with "anyone can invite": only additions, everything else exactly as it was.
+				const same = r.name === g.name && r.owner === g.owner && r.open === g.open && r.admins.join() === g.admins.join() &&
+					g.members.every((n) => r.members.includes(n));
+				if (!g.open || !same) return;
+			} else if (author !== g.owner) {
+				if (r.owner !== g.owner || !g.admins.every((n) => r.admins.includes(n))) return;
+			}
+			if (passedOnBad(g, from, author)) return;
+		} else {
+			// A group you're not in yet: you must be on the list, and the one adding you allowed to.
+			if (!r.members.includes(me) || !r.members.includes(author) || Object.keys(groups).length >= LIMITS.groups) return;
+			if (!(r.admins.includes(author) || (r.open && r.inv[me] === author))) return;
+			if (from !== author && !(r.admins.includes(from) || r.inv[me] === from)) return;
+		}
+		const names = { ...(g ? g.names : {}) };
+		if (authorName) names[author] = authorName;
+		if (Array.isArray(p.add)) for (const x of p.add.slice(0, 10)) if (Array.isArray(x) && r.members.includes(x[0])) names[x[0]] = clean(x[1], LIMITS.name);
+		const id = p.gid;
+		const before = g;
+		if (!r.members.includes(me)) {
+			// Removed: the group goes, with a note.
+			delete groups[id];
+			leftGroups.add(id);
+			hist = hist.filter((h) => h.group !== id);
+			histKeys.clear();
+			for (const h of hist) histKeys.add(h.k);
+			saveGC();
+			saveHistory();
+			card({ icon: '<span class="sb-av sb-gav">👥</span>', title: `👥 ${r.name}`, text: `${authorName || 'An admin'} removed you from the group` });
+			if (isOpen()) { if (thread === `g:${id}`) thread = null; render(true); }
+			return;
+		}
+		groups[id] = { id, ...r, names };
+		saveGC();
+		const g2 = groups[id];
+		keep({ k: `g:${p.m}`, group: id, MemberNumber: author, MemberName: memberName(g2, author), Sent: false, Time: Date.now(),
+			text: rosterNote(before, g2, author), sys: 'roster', unread: false, announceText: before ? null : `${memberName(g2, author)} added you to the group` });
+		passOn(g2, p, from, before);
+	}
+	const passedOnBad = (g, from, author) => from !== author && !(isAdmin(g, from) || g.inv[Player.MemberNumber] === from);
+
+	/** What changed, in a line, for the chat. */
+	function rosterNote(a, b, author) {
+		const who = memberName(b, author);
+		if (!a) return `${who} added you`;
+		const out = [];
+		const added = b.members.filter((n) => !a.members.includes(n));
+		const gone = a.members.filter((n) => !b.members.includes(n));
+		if (added.length) out.push(`added ${added.map((n) => memberName(b, n)).join(', ')}`);
+		if (gone.length) out.push(`removed ${gone.map((n) => memberName(a, n)).join(', ')}`);
+		const up = b.admins.filter((n) => !a.admins.includes(n) && a.members.includes(n));
+		const down = a.admins.filter((n) => !b.admins.includes(n) && b.members.includes(n));
+		if (up.length) out.push(`made ${up.map((n) => memberName(b, n)).join(', ')} admin`);
+		if (down.length) out.push(`took admin from ${down.map((n) => memberName(b, n)).join(', ')}`);
+		if (a.name !== b.name) out.push(`renamed the group to "${b.name}"`);
+		if (a.open !== b.open) out.push(b.open ? 'let everyone invite' : 'made invites admin-only');
+		if (a.owner !== b.owner) out.push(`handed the group to ${memberName(b, b.owner)}`);
+		return `${who} ${out.join(', ') || 'updated the group'}`;
+	}
+
+	/** Keeps an entry, pops its card, redraws. */
+	function keep(h) {
+		hist.push(h);
+		histKeys.add(h.k);
+		saveHistory();
+		if (h.sys !== 'left' && (h.sys !== 'roster' || h.announceText)) {
+			if (opts.sound) chime();
+			announce(h);
+		}
+		if (isOpen() && tab !== 'options' && tab !== 'group') render(true);
+	}
+
+	/**
+	 * Passing it on: admins to all their friends in the group, and everybody to the people they invited,
+	 * when those don't have it yet. Removed members get the change that removed them, so they know.
+	 */
+	function passOn(g, p, from, before) {
+		const me = Player.MemberNumber;
+		const via = new Set(Array.isArray(p.via) ? p.via.filter(isNum).slice(0, LIMITS.members + 2) : []);
+		via.add(from);
+		via.add(p.a);
+		const mine = (n) => (isAdmin(g, me) && isFriend(n)) || g.inv[n] === me;
+		const targets = g.members.filter((n) => n !== me && !via.has(n) && mine(n));
+		if (before && isAdmin(g, me)) for (const n of before.members) if (!g.members.includes(n) && !via.has(n) && n !== me && isFriend(n)) targets.push(n);
+		if (!targets.length) return;
+		const next = { ...p, via: [...via, me, ...targets] };
+		for (const n of targets) sendHidden(n, next);
+	}
+
+	// Hidden beeps go out one at a time, a little apart, so a group message never floods the server.
+	const outbox = [];
+	function sendHidden(n, payload) {
+		outbox.push([n, JSON.stringify(payload)]);
+		if (outbox.length === 1) drain();
+	}
+	function drain() {
+		if (!outbox.length) return;
+		const [n, msg] = outbox[0];
+		try { ServerSend('AccountBeep', { MemberNumber: n, BeepType: PROTO, IsSecret: true, Message: msg }); } catch (e) { console.warn('[SlimeBeep]', e); }
+		setTimeout(() => { outbox.shift(); drain(); }, 250);
+	}
+
+	/** Out to the members who are your friends (and, for a change, anyone it removed); the rest get it passed on. */
+	function broadcast(g, payload, extra = []) {
+		const me = Player.MemberNumber;
+		const targets = [...new Set([...g.members, ...extra])].filter((n) => n !== me && isFriend(n));
+		const p = { ...payload, via: [me, ...targets] };
+		for (const n of targets) sendHidden(n, p);
+	}
+
+	/** A message (or a "left" note) to the group, and into your own copy of it. */
+	function sendGroup(id, text, sys) {
+		const g = groups[id];
+		if (!g) return;
+		const me = Player.MemberNumber;
+		const m = newId();
+		broadcast(g, { sb: 1, gid: g.id, m, a: me, an: myName(), t: text, ...(sys ? { sys } : {}) });
+		hist.push({ k: `g:${m}`, group: id, MemberNumber: me, MemberName: 'You', Sent: true, Time: Date.now(), text, sys });
+		histKeys.add(`g:${m}`);
+		saveHistory();
+	}
+
+	/** A change to the member list: a new version, to everyone in it (and anyone it removed). */
+	function sendRoster(g, { removed = [], added = [] }) {
+		const me = Player.MemberNumber;
+		const before = { ...g, members: [...g.members, ...removed.filter((n) => !g.members.includes(n))] };
+		g.v += 1;
+		saveGC();
+		const m = newId();
+		const roster = { name: g.name, v: g.v, owner: g.owner, open: g.open, members: g.members, admins: g.admins, inv: g.inv };
+		broadcast(g, { sb: 1, gid: g.id, m, a: me, an: myName(), roster, add: added.map((n) => [n, memberName(g, n)]).slice(0, 10) }, removed);
+		return { m, before };
+	}
+
+	/** Change a group (as admin, or adding people with "anyone can invite") and send the new list. */
+	function changeGroup(id, change) {
+		const g = groups[id];
+		if (!g) return;
+		const before = JSON.parse(JSON.stringify(g));
+		change(g);
+		g.members = [...new Set(g.members)].slice(0, LIMITS.members);
+		g.admins = [...new Set(g.admins)].filter((n) => g.members.includes(n)).slice(0, LIMITS.admins);
+		const removed = before.members.filter((n) => !g.members.includes(n));
+		const added = g.members.filter((n) => !before.members.includes(n));
+		const { m } = sendRoster(g, { removed, added });
+		hist.push({ k: `g:${m}`, group: id, MemberNumber: Player.MemberNumber, MemberName: 'You', Sent: true, Time: Date.now(), text: rosterNote(before, g, Player.MemberNumber), sys: 'roster' });
+		histKeys.add(`g:${m}`);
+		saveHistory();
+	}
+
+	function createGroup(name, picked, open) {
+		const me = Player.MemberNumber;
+		const id = newId();
+		const members = [me, ...picked.filter((n) => n !== me)].slice(0, LIMITS.members);
+		const names = { [me]: myName() };
+		const inv = {};
+		for (const n of members) if (n !== me) { names[n] = clean(nameOf(n), LIMITS.name); inv[n] = me; }
+		groups[id] = { id, name: clean(name, LIMITS.name) || 'Group chat', v: 0, owner: me, open: !!open, members, admins: [me], inv, names };
+		const { m } = sendRoster(groups[id], { added: members.filter((n) => n !== me) });
+		hist.push({ k: `g:${m}`, group: id, MemberNumber: me, MemberName: 'You', Sent: true, Time: Date.now(), text: 'You made the group', sys: 'roster' });
+		histKeys.add(`g:${m}`);
+		saveHistory();
+		return id;
+	}
+
+	function leaveGroup(id) {
+		const g = groups[id];
+		if (!g) return;
+		const me = Player.MemberNumber;
+		// The owner hands the group on first: to another admin, or else the longest-standing member.
+		if (g.owner === me && g.members.length > 1) {
+			changeGroup(id, (x) => {
+				const heir = x.admins.find((n) => n !== me) || x.members.find((n) => n !== me);
+				x.owner = heir;
+				if (!x.admins.includes(heir)) x.admins.push(heir);
+			});
+		}
+		sendGroup(id, '', 'left');
+		leftGroups.add(id);
+		delete groups[id];
+		hist = hist.filter((h) => h.group !== id);
+		histKeys.clear();
+		for (const h of hist) histKeys.add(h.k);
+		saveGC();
+		saveHistory();
+	}
+
+	/** Asks online friends not yet known to have SlimeBeep whether they do (hidden, answered by their SlimeBeep). */
+	function findPeers() {
+		const ask = friends.filter((f) => !peers.has(f.MemberNumber)).slice(0, 40);
+		for (const f of ask) sendHidden(f.MemberNumber, { sb: 1, ping: 1 });
+		return ask.length;
+	}
 	/*
 	 * Every incoming beep, straight from the server. The game's beep list (which the chats are built
 	 * from) only takes plain beeps, and another add-on can handle a beep before the game does, so it
@@ -455,8 +832,13 @@
 		if (isOpen() && thread === h.MemberNumber && !document.hidden) return;
 		const text = textOf(h);
 		const room = h.ChatRoomName && typeof h.Message === 'string' ? `📍 in ${h.ChatRoomName}` : '';
-		const open = () => { thread = h.MemberNumber; renderThread.pin = undefined; if (!isOpen()) setOpen(true); else render(); };
-		if (opts.popups) card({ icon: avatar(h.MemberNumber, h.MemberName), title: `💌 ${h.MemberName}`, text, sub: room, onClick: open });
+		const g = h.group && groups[h.group];
+		if (h.group && isOpen() && thread === `g:${h.group}` && !document.hidden) return;
+		const open = () => { thread = g ? `g:${g.id}` : h.MemberNumber; renderThread.pin = undefined; if (!isOpen()) setOpen(true); else render(); };
+		if (opts.popups) {
+			card(g ? { icon: '<span class="sb-av sb-gav">👥</span>', title: `👥 ${g.name}`, text: h.announceText || `${h.MemberName}: ${text}`, onClick: open }
+				: { icon: avatar(h.MemberNumber, h.MemberName), title: `💌 ${h.MemberName}`, text, sub: room, onClick: open });
+		}
 		if (opts.desktop && document.hidden && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
 			try {
 				const note = new Notification(`💌 ${h.MemberName}`, { body: room ? `${text}\n${room}` : text, icon: ICON, tag: `slimebeep-${h.MemberNumber}` });
@@ -559,7 +941,7 @@
 	function chats() {
 		const by = new Map();
 		for (const b of log()) {
-			if (isReaction(b)) continue;
+			if (b.group || isReaction(b)) continue;
 			const c = by.get(b.MemberNumber) || { n: b.MemberNumber, name: null, last: null, unread: 0 };
 			if (!b.Sent) c.name = b.MemberName;
 			c.last = b;
@@ -587,11 +969,13 @@
 		const body = $('sb-body');
 		const scroll = keepScroll && body ? body.scrollTop : 0;
 		if (tab === 'options') view.innerHTML = tabs + `<div class="sb-body" id="sb-body">${optionsHtml()}</div>`;
+		else if (tab === 'newgc') view.innerHTML = tabs + `<div class="sb-body sb-group" id="sb-body">${newGroupHtml()}</div>`;
 		else if (tab === 'group') view.innerHTML = tabs + `<div class="sb-body sb-group" id="sb-body">${groupHtml()}</div>`;
 		else {
 			const q = search.toLowerCase();
 			const rows = tab === 'chats' ? chatRows(q) : friendRows(q);
 			view.innerHTML = tabs + `<div class="sb-body" id="sb-body">
+				${tab === 'chats' ? '<button class="sb-pill" id="sb-newgc" style="width:100%;margin:2px 0 6px">👥 New group chat (SlimeBeep friends)</button>' : ''}
 				<input class="sb-search" id="sb-search" placeholder="🔍 Search ${tab === 'chats' ? 'chats' : 'friends'}…" value="${esc(search)}">
 				${rows || `<div class="sb-empty">${tab === 'chats' ? '🫧 No beeps yet. Pick someone in 💖 Friends to say hi!' : q ? 'Nobody by that name.' : '🌙 None of your friends are online.'}</div>`}
 			</div>`;
@@ -600,20 +984,207 @@
 		}
 		if (keepScroll) $('sb-body').scrollTop = scroll;
 		for (const b of view.querySelectorAll('[data-tab]')) b.addEventListener('click', () => { tab = b.dataset.tab; search = ''; render(); });
-		for (const r of view.querySelectorAll('[data-open]')) r.addEventListener('click', () => { thread = Number(r.dataset.open); renderThread.pin = undefined; render(); });
+		for (const r of view.querySelectorAll('[data-open]')) r.addEventListener('click', () => {
+			const v = r.dataset.open;
+			thread = v.startsWith('g:') ? v : Number(v);
+			renderThread.pin = undefined;
+			render();
+		});
+		if ($('sb-newgc')) $('sb-newgc').addEventListener('click', () => { tab = 'newgc'; render(); });
+		if (tab === 'newgc') wireNewGroup();
 		if (tab === 'group') wireGroup();
 		if (tab === 'options') wireOptions();
 	}
 
 	function chatRows(q) {
-		return chats().filter((c) => !q || c.name.toLowerCase().includes(q) || String(c.n).includes(q)).map((c) => {
+		const rows = chats().filter((c) => !q || c.name.toLowerCase().includes(q) || String(c.n).includes(q)).map((c) => {
 			const online = friends.some((f) => f.MemberNumber === c.n);
 			const text = textOf(c.last);
-			return `<div class="sb-row" data-open="${c.n}">${avatar(c.n, c.name)}
+			return { time: new Date(c.last.Time).getTime(), html: `<div class="sb-row" data-open="${c.n}">${avatar(c.n, c.name)}
 				<div class="sb-main"><div class="sb-name">${online ? '<span class="sb-on"></span>' : ''}${esc(c.name)}</div>
 				<div class="sb-sub">${c.last.Sent ? 'You: ' : ''}${esc(text)}</div></div>
-				<div class="sb-side">${timeOf(c.last.Time)}${c.unread ? `<br><span class="sb-dot">${c.unread}</span>` : ''}</div></div>`;
-		}).join('');
+				<div class="sb-side">${timeOf(c.last.Time)}${c.unread ? `<br><span class="sb-dot">${c.unread}</span>` : ''}</div></div>` };
+		});
+		for (const g of Object.values(groups)) {
+			if (q && !g.name.toLowerCase().includes(q)) continue;
+			const msgs = hist.filter((h) => h.group === g.id);
+			const last = msgs[msgs.length - 1];
+			const n = msgs.filter(unread).length;
+			rows.push({ time: last ? last.Time : 0, html: `<div class="sb-row" data-open="g:${g.id}"><span class="sb-av sb-gav">👥</span>
+				<div class="sb-main"><div class="sb-name">${esc(g.name)} <small style="font-weight:normal;color:#c08aaa">${g.members.length}</small></div>
+				<div class="sb-sub">${last ? `${last.sys ? '' : `${last.Sent ? 'You' : esc(last.MemberName)}: `}${esc(textOf(last))}` : 'No messages yet'}</div></div>
+				<div class="sb-side">${last ? timeOf(last.Time) : ''}${n ? `<br><span class="sb-dot">${n}</span>` : ''}</div></div>` });
+		}
+		return rows.sort((a, b) => b.time - a.time).map((r) => r.html).join('');
+	}
+
+	/** Friends to pick from: online ones, SlimeBeep users first and only they can be ticked. */
+	function pickList(exclude = []) {
+		return friends.filter((f) => !exclude.includes(f.MemberNumber))
+			.sort((a, b) => Number(peers.has(b.MemberNumber)) - Number(peers.has(a.MemberNumber)) || a.MemberName.localeCompare(b.MemberName))
+			.map((f) => {
+				const has = peers.has(f.MemberNumber);
+				return `<label style="${has ? '' : 'opacity:.5'}"><input type="checkbox" value="${f.MemberNumber}" ${has ? '' : 'disabled'}>${avatar(f.MemberNumber, f.MemberName)}
+				<span class="sb-main" style="margin-left:8px"><span class="sb-name">${esc(f.MemberName)} ${has ? '🫧' : ''}</span>
+				<span class="sb-sub" style="display:block">${has ? 'Has SlimeBeep' : 'No SlimeBeep found yet'}</span></span></label>`;
+			}).join('') || '<div class="sb-empty">🌙 Nobody else to add right now.</div>';
+	}
+	function wireFind() {
+		$('sb-gc-find').addEventListener('click', () => {
+			const n = findPeers();
+			notify(n ? `🔍 Asking ${n} friend${n === 1 ? '' : 's'}…` : 'Everyone online is checked');
+			setTimeout(() => { if (isOpen()) render(true); }, 2500 + n * 250);
+		});
+	}
+
+	function newGroupHtml() {
+		return `<div class="sb-line"><button class="sb-pill" id="sb-gc-back">‹ Back</button><b>👥 New group chat</b></div>
+			<div class="sb-hint" style="margin:4px 0 6px">Up to ${LIMITS.members} people, all with SlimeBeep (🫧). Messages stay inside SlimeBeep; the game never shows them.</div>
+			<input class="sb-search" id="sb-gc-name" maxlength="${LIMITS.name}" placeholder="Group name">
+			<label><input type="checkbox" id="sb-gc-open"><span>Anyone can invite<span class="sb-hint" style="display:block">Otherwise only you and the admins you pick can add people.</span></span></label>
+			<div class="sb-line"><b>Who?</b><button class="sb-pill" id="sb-gc-find">🔍 Find SlimeBeep friends</button></div>
+			${pickList()}
+			<div class="sb-line" style="position:sticky;bottom:-10px;background:#fff7fb;padding:6px 0"><span id="sb-gc-count"></span><button class="sb-go" id="sb-gc-make">Create 👥</button></div>`;
+	}
+
+	function wireNewGroup() {
+		const boxes = () => [...$('sb-body').querySelectorAll('label input[type=checkbox][value]:not(:disabled)')];
+		const update = () => {
+			const n = boxes().filter((b) => b.checked).length;
+			$('sb-gc-count').textContent = `${n} picked${n >= LIMITS.members - 1 ? ' (full)' : ''}`;
+			$('sb-gc-make').disabled = !n || !$('sb-gc-name').value.trim();
+			for (const b of boxes()) if (!b.checked) b.disabled = n >= LIMITS.members - 1;
+		};
+		for (const b of boxes()) b.addEventListener('change', update);
+		$('sb-gc-name').addEventListener('input', update);
+		$('sb-gc-back').addEventListener('click', () => { tab = 'chats'; render(); });
+		wireFind();
+		$('sb-gc-make').addEventListener('click', () => {
+			const picked = boxes().filter((b) => b.checked).map((b) => Number(b.value));
+			const name = $('sb-gc-name').value;
+			if (!picked.length || !name.trim()) return;
+			const id = createGroup(name, picked, $('sb-gc-open').checked);
+			notify(`👥 ${clean(name, LIMITS.name)} created`);
+			tab = 'chats';
+			thread = `g:${id}`;
+			render();
+		});
+		update();
+	}
+
+	/** The members page of a group: roles, and what you're allowed to change. */
+	function renderMembers(id) {
+		const g = groups[id];
+		const me = Player.MemberNumber;
+		const admin = isAdmin(g, me);
+		const owner = g.owner === me;
+		const view = $('sb-view');
+		const rows = g.members.slice().sort((a, b) => Number(b === g.owner) - Number(a === g.owner) || Number(isAdmin(g, b)) - Number(isAdmin(g, a)))
+			.map((n) => {
+				const role = n === g.owner ? '👑 Owner' : isAdmin(g, n) ? '⭐ Admin' : g.inv[n] ? `Invited by ${esc(memberName(g, g.inv[n]))}` : 'Member';
+				const acts = [];
+				if (n !== me && n !== g.owner) {
+					if (admin && !isAdmin(g, n) && g.admins.length < LIMITS.admins) acts.push(`<button class="sb-pill" data-act="up" data-n="${n}" title="Make admin">⭐</button>`);
+					if (owner && isAdmin(g, n)) acts.push(`<button class="sb-pill" data-act="down" data-n="${n}" title="Take admin">✩</button>`);
+					if ((admin && !isAdmin(g, n)) || owner) acts.push(`<button class="sb-pill" data-act="kick" data-n="${n}" title="Remove">✕</button>`);
+					if (owner) acts.push(`<button class="sb-pill" data-act="own" data-n="${n}" title="Make owner">👑</button>`);
+				}
+				return `<div class="sb-row" style="cursor:default">${avatar(n, memberName(g, n))}
+					<div class="sb-main"><div class="sb-name">${esc(memberName(g, n))}${peers.has(n) ? ' 🫧' : ''}</div><div class="sb-sub">${role}</div></div>
+					<div class="sb-side" style="display:flex;gap:3px">${acts.join('')}</div></div>`;
+			}).join('');
+		const invite = canInvite(g, me) && g.members.length < LIMITS.members;
+		view.innerHTML = `
+			<div class="sb-thead"><button id="sb-back" title="Back to the chat">‹</button><span class="sb-av sb-gav">👥</span>
+				<div class="sb-main"><div class="sb-name">${esc(g.name)}</div><div class="sb-sub">${g.members.length} / ${LIMITS.members} members</div></div></div>
+			<div class="sb-body sb-group" id="sb-body">
+				${admin ? `<div class="sb-line"><input class="sb-search" id="sb-gm-name" maxlength="${LIMITS.name}" value="${esc(g.name)}" style="margin:0"><button class="sb-pill" id="sb-gm-rename">Rename</button></div>
+				<label><input type="checkbox" id="sb-gm-open" ${g.open ? 'checked' : ''}><span>Anyone can invite</span></label>` : `<div class="sb-hint">${g.open ? 'Anyone can invite people here.' : 'Only admins can invite people here.'}</div>`}
+				${rows}
+				${invite ? `<div class="sb-line"><b>Add people</b><button class="sb-pill" id="sb-gc-find">🔍 Find SlimeBeep friends</button></div>${pickList(g.members)}
+				<div class="sb-line" style="position:sticky;bottom:-10px;background:#fff7fb;padding:6px 0"><span></span><button class="sb-go" id="sb-gm-add" disabled>Add 👥</button></div>` : ''}
+			</div>`;
+		$('sb-back').addEventListener('click', () => { renderMembers.open = null; render(); });
+		const act = (fn) => { changeGroup(id, fn); render(true); };
+		for (const b of view.querySelectorAll('[data-act]')) b.addEventListener('click', () => {
+			const n = Number(b.dataset.n);
+			if (b.dataset.act === 'up') act((x) => { x.admins.push(n); });
+			if (b.dataset.act === 'down') act((x) => { x.admins = x.admins.filter((a) => a !== n); });
+			if (b.dataset.act === 'kick') act((x) => { x.members = x.members.filter((a) => a !== n); x.admins = x.admins.filter((a) => a !== n); delete x.inv[n]; });
+			if (b.dataset.act === 'own') act((x) => { x.owner = n; if (!x.admins.includes(n)) x.admins.push(n); });
+		});
+		if ($('sb-gm-rename')) $('sb-gm-rename').addEventListener('click', () => {
+			const name = clean($('sb-gm-name').value, LIMITS.name);
+			if (name && name !== g.name) act((x) => { x.name = name; });
+		});
+		if ($('sb-gm-open')) $('sb-gm-open').addEventListener('change', (e) => act((x) => { x.open = e.target.checked; }));
+		if (invite) {
+			wireFind();
+			const boxes = () => [...$('sb-body').querySelectorAll('label input[type=checkbox][value]:not(:disabled)')];
+			const room = LIMITS.members - g.members.length;
+			const update = () => {
+				const n = boxes().filter((b) => b.checked).length;
+				$('sb-gm-add').disabled = !n;
+				for (const b of boxes()) if (!b.checked) b.disabled = n >= room;
+			};
+			for (const b of boxes()) b.addEventListener('change', update);
+			$('sb-gm-add').addEventListener('click', () => {
+				const picked = boxes().filter((b) => b.checked).map((b) => Number(b.value)).slice(0, room);
+				if (!picked.length) return;
+				act((x) => { for (const n of picked) { x.members.push(n); x.inv[n] = me; x.names[n] = clean(nameOf(n), LIMITS.name); } });
+				notify(`👥 Added ${picked.length}`);
+			});
+		}
+	}
+
+	function renderGroupThread(keepScroll) {
+		const id = thread.slice(2);
+		const g = groups[id];
+		if (!g) { thread = null; return render(); }
+		if (renderMembers.open === id) return renderMembers(id);
+		const view = $('sb-view');
+		const msgs = hist.filter((h) => h.group === id);
+		for (const h of msgs) markRead(h);
+		const old = $('sb-msgs');
+		const atBottom = !old || old.scrollHeight - old.scrollTop - old.clientHeight < 40;
+		const draft = $('sb-text') ? $('sb-text').value : '';
+		const names = g.members.filter((m) => m !== Player.MemberNumber).map((m) => memberName(g, m));
+		view.innerHTML = `
+			<div class="sb-thead"><button id="sb-back" title="Back">‹</button><span class="sb-av sb-gav">👥</span>
+				<div class="sb-main"><div class="sb-name">${esc(g.name)}</div>
+				<div class="sb-sub" title="${esc(names.join(', '))}">${g.members.length} members: You, ${esc(names.join(', '))}</div></div>
+				<button id="sb-members" title="Members">👥</button><button id="sb-leave" title="Leave the group">🚪</button></div>
+			<div class="sb-msgs" id="sb-msgs">${msgs.length ? msgs.map((h) => (h.sys ? `<div class="sb-sys">${esc(textOf(h))}</div>`
+				: `<div class="sb-b ${h.Sent ? 'me' : 'them'}">${h.Sent ? '' : `<span class="sb-from">${esc(memberName(g, h.MemberNumber))}</span>`}${esc(textOf(h))}<em>${timeOf(h.Time)}</em></div>`)).join('')
+				: '<div class="sb-empty">🫧 Say hi to the group!</div>'}</div>
+			<div class="sb-compose">
+				<textarea id="sb-text" maxlength="${LIMITS.text}" placeholder="Message ${esc(g.name)}…"></textarea>
+				<button id="sb-send" title="Send (Enter)">➤</button>
+			</div>`;
+		const box = $('sb-msgs');
+		if (!keepScroll || atBottom) box.scrollTop = box.scrollHeight;
+		const ta = $('sb-text');
+		ta.value = draft;
+		$('sb-back').addEventListener('click', () => { thread = null; render(); });
+		$('sb-members').addEventListener('click', () => { renderMembers.open = id; render(); });
+		$('sb-leave').addEventListener('click', () => {
+			if (renderGroupThread.confirm !== id) { renderGroupThread.confirm = id; notify('Press 🚪 again to leave'); setTimeout(() => { renderGroupThread.confirm = null; }, 3000); return; }
+			leaveGroup(id);
+			notify(`🚪 You left ${g.name}`);
+			thread = null;
+			render();
+		});
+		const send = () => {
+			const text = clean(ta.value, LIMITS.text);
+			if (!text) return;
+			sendGroup(id, text);
+			notify(`✓ Sent to ${g.name}`);
+			ta.value = '';
+			render(true);
+		};
+		$('sb-send').addEventListener('click', send);
+		ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
+		if (!keepScroll || document.activeElement === document.body) ta.focus();
 	}
 
 	function friendRows(q) {
@@ -621,7 +1192,7 @@
 			(f.ChatRoomName || '').toLowerCase().includes(q))
 			.sort((a, b) => a.MemberName.localeCompare(b.MemberName))
 			.map((f) => `<div class="sb-row" data-open="${f.MemberNumber}">${avatar(f.MemberNumber, f.MemberName)}
-				<div class="sb-main"><div class="sb-name"><span class="sb-on"></span>${esc(f.MemberName)}${f.Type === 'Lover' ? ' 💞' : f.Type === 'Submissive' ? ' 🎀' : ''}</div>
+				<div class="sb-main"><div class="sb-name"><span class="sb-on"></span>${esc(f.MemberName)}${f.Type === 'Lover' ? ' 💞' : f.Type === 'Submissive' ? ' 🎀' : ''}${peers.has(f.MemberNumber) ? ' <span title="Has SlimeBeep">🫧</span>' : ''}</div>
 				<div class="sb-sub">${esc(where(f))}${f.ChatRoomMemberCount ? ` · ${f.ChatRoomMemberCount}/${f.ChatRoomLimit || '?'}` : ''}</div></div>
 				<div class="sb-side">#${f.MemberNumber}</div></div>`).join('');
 	}
@@ -636,6 +1207,7 @@
 	}
 
 	function renderThread(keepScroll) {
+		if (typeof thread === 'string') return renderGroupThread(keepScroll);
 		const n = thread;
 		const view = $('sb-view');
 		const msgs = log().filter((b) => b.MemberNumber === n && !isReaction(b));

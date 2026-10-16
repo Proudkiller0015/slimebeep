@@ -31,10 +31,21 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 			{ MemberNumber: 12, MemberName: 'Bea', Sent: false, Read: false, Time: t(3), Message: '👍' + SEP + '{"messageType":"Reaction"}' },
 		];
 		window.beeps = [];
-		window.ServerSocket = { on: (ev, fn) => { (handlers[ev] = handlers[ev] || []).push(fn); }, once() {} };
-		window.fire = (ev, d) => (handlers[ev] || []).forEach((fn) => fn(d));
+		// Like socket.io: event listeners plus catch-all ones, which an add-on can clear.
+		let anyFns = [];
+		window.ServerSocket = {
+			on: (ev, fn) => { (handlers[ev] = handlers[ev] || []).push(fn); }, once() {},
+			off: (ev, fn) => { handlers[ev] = (handlers[ev] || []).filter((f) => f !== fn); },
+			listeners: (ev) => (handlers[ev] || []).slice(),
+			removeAllListeners: (ev) => { handlers[ev] = []; },
+			onAny: (fn) => { anyFns.push(fn); }, prependAny: (fn) => { anyFns.unshift(fn); },
+			offAny: (fn) => { anyFns = anyFns.filter((f) => f !== fn); }, listenersAny: () => anyFns.slice(),
+		};
+		window.fire = (ev, d) => { anyFns.forEach((fn) => fn(ev, d)); (handlers[ev] || []).forEach((fn) => fn(d)); };
+		window.hidden = [];
 		window.ServerSend = (ev, data) => {
-			if (ev === 'AccountQuery') setTimeout(() => (handlers.AccountQueryResult || []).forEach((fn) => fn({ Query: 'OnlineFriends', Result: [
+			if (ev === 'AccountBeep') hidden.push(data);
+			if (ev === 'AccountQuery') setTimeout(() => fire('AccountQueryResult', ({ Query: 'OnlineFriends', Result: [
 				{ MemberNumber: 11, MemberName: 'Ann', ChatRoomName: 'Pokepark', Type: 'Friend', ChatRoomMemberCount: 4, ChatRoomLimit: 10 },
 				{ MemberNumber: 12, MemberName: 'Bea', Private: true, Type: 'Lover' },
 				{ MemberNumber: 13, MemberName: 'Cat', ChatRoomName: 'Cat Cafe', Type: 'Friend' }] })), 30);
@@ -146,6 +157,9 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	// Beeps another add-on handles before the game (EBC): not in the game's list, so SlimeBeep keeps them itself.
 	await p.click('#sb-back');
 	await p.evaluate(() => {
+		// An add-on that takes beeps over: clears every beep listener and empties the message for the rest.
+		ServerSocket.removeAllListeners('AccountBeep');
+		ServerSocket.on('AccountBeep', (d) => { d.Message = ''; });
 		fire('AccountBeep', { MemberNumber: 14, MemberName: 'Dee', BeepType: 'EBC', Message: 'beep' });
 		fire('AccountBeep', { MemberNumber: 14, MemberName: 'Dee', BeepType: 'Leash', Message: 'come here' });
 		fire('AccountBeep', { MemberNumber: 14, MemberName: 'Dee', BeepType: 'Sync', Message: '{"data":1}' });
@@ -187,6 +201,79 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	const sent = (await p.evaluate(() => beeps)).slice(-2);
 	check(JSON.stringify(sent) === JSON.stringify([[11, 'Party in 10!', true], [13, 'Party in 10!', true]]), `group beep to Ann and Cat (${JSON.stringify(sent)})`);
 
+	// ---- Group chats: SlimeBeep users only, roles, passing on, and nothing a stranger or a forgery can do.
+	await p.evaluate(() => { hidden.length = 0; });
+	const hide = (from, name, payload) => p.evaluate((f, n, pl) => fire('AccountBeep', { MemberNumber: f, MemberName: n, BeepType: 'SlimeBeep', Message: JSON.stringify(pl) }), from, name, payload);
+	await hide(11, 'Ann', { sb: 1, pong: 1 });
+	await hide(13, 'Cat', { sb: 1, ping: 1 });
+	await wait(400);
+	check(JSON.stringify(await p.evaluate(() => hidden.map((h) => [h.MemberNumber, JSON.parse(h.Message).pong]))) === '[[13,1]]', 'a ping from a SlimeBeep friend gets a hidden answer');
+	await hide(13, 'Cat', { sb: 1, ping: 1 });
+	await wait(400);
+	check(await p.evaluate(() => hidden.length) === 1, 'but only once a minute, so nobody can bounce beeps off you');
+	// Ann (owner) adds me, Cat and Zed (#99, not my friend) to a group.
+	const roster = (v, extra = {}) => ({ name: 'Slime Squad', v, owner: 11, open: false, members: [11, 1, 13, 99], admins: [11], inv: { 1: 11, 13: 11, 99: 11 }, ...extra });
+	await hide(11, 'Ann', { sb: 1, gid: 'squad0001', m: 'msg000001', a: 11, an: 'Ann', roster: roster(1), add: [[99, 'Zed']] });
+	await wait(300);
+	check(await p.$$eval('.sb-card', (e) => e.some((x) => /Slime Squad/.test(x.textContent) && /Ann added you/.test(x.textContent))), 'being added to a group pops a card');
+	await hide(13, 'Cat', { sb: 1, gid: 'squad0001', m: 'msg000002', a: 13, an: 'Cat', t: 'hiii <img src=x onerror="window.pwned=1">' });
+	await hide(11, 'Ann', { sb: 1, gid: 'squad0001', m: 'msg000003', a: 99, an: 'Zed', t: 'hello from a friend of a friend', via: [99, 11] });
+	await hide(13, 'Cat', { sb: 1, gid: 'squad0001', m: 'msg000004', a: 99, an: 'Zed', t: 'FORGED: Cat is no admin', via: [99, 13] });
+	await hide(14, 'Dee', { sb: 1, gid: 'squad0001', m: 'msg000005', a: 14, an: 'Dee', t: 'FORGED: Dee is not in the group' });
+	await hide(13, 'Cat', { sb: 1, gid: 'squad0001', m: 'msg000006', a: 13, an: 'Cat', roster: roster(2, { members: [13, 1], admins: [13], owner: 13 }) });
+	await hide(11, 'Ann', { sb: 1, gid: 'squad0001', m: 'msg000007', a: 11, an: 'Ann', roster: roster(1, { name: 'REPLAYED' }) });
+	await p.evaluate(() => fire('AccountBeep', { MemberNumber: 77, MemberName: 'Stranger', BeepType: 'SlimeBeep', Message: JSON.stringify({ sb: 1, gid: 'squad0001', m: 'msg000008', a: 77, t: 'FORGED: not even a friend' }) }));
+	await wait(300);
+	await p.click('#sb-back').catch(() => {});
+	await p.click('[data-tab=chats]');
+	await wait(200);
+	await p.click('[data-open="g:squad0001"]');
+	await wait(200);
+	const gc = await p.$eval('#sb-msgs', (e) => e.textContent);
+	check(/hiii <img/.test(gc) && await p.evaluate(() => !window.pwned && !document.querySelector('#sb-msgs img')), 'a member’s message shows, and HTML in it stays text');
+	check(/friend of a friend/.test(gc), 'a non-friend member’s message arrives passed on by an admin');
+	check(!/FORGED/.test(gc), 'forgeries are dropped: passed on by a non-admin, from a non-member, a stranger, a member taking the group over');
+	check(await p.$eval('.sb-thead .sb-name', (e) => e.textContent) === 'Slime Squad', 'an old member list replayed does nothing');
+	// Sending: to the members who are my friends (Ann, Cat), never to Zed directly.
+	await p.evaluate(() => { hidden.length = 0; });
+	await p.type('#sb-text', 'hi squad');
+	await p.keyboard.press('Enter');
+	await wait(900);
+	const out = await p.evaluate(() => hidden.map((h) => h.MemberNumber).sort());
+	check(JSON.stringify(out) === '[11,13]', `a group message goes as hidden beeps to the members who are my friends (${out})`);
+	check(await p.evaluate(() => hidden.every((h) => h.BeepType === 'SlimeBeep' && h.IsSecret === true)), 'as SlimeBeep beeps the game never shows');
+	// Members page: I'm a plain member, so no admin buttons.
+	await p.click('#sb-members');
+	await wait(150);
+	check(await p.$$eval('[data-act]', (e) => e.length) === 0 && /👑 Owner/.test(await p.$eval('#sb-body', (e) => e.textContent)), 'a member sees the roles but no admin buttons');
+	await p.click('#sb-back');
+	// Ann makes me admin: now I pass Cat's messages on to my friends in the group who haven't got them.
+	await hide(11, 'Ann', { sb: 1, gid: 'squad0001', m: 'msg000009', a: 11, an: 'Ann', roster: roster(3, { admins: [11, 1] }) });
+	await wait(200);
+	await p.evaluate(() => { hidden.length = 0; });
+	await hide(13, 'Cat', { sb: 1, gid: 'squad0001', m: 'msg000010', a: 13, an: 'Cat', t: 'pass this on', via: [13] });
+	await wait(800);
+	check(JSON.stringify(await p.evaluate(() => hidden.map((h) => h.MemberNumber)))  === '[11]', 'as admin I pass a message on to members who are my friends and don’t have it');
+	await p.click('#sb-members');
+	await wait(150);
+	check(await p.$$eval('[data-act=up]', (e) => e.length) === 2 && await p.$$eval('[data-act=kick]', (e) => e.length) === 2 && await p.$$eval('[data-act=down]', (e) => e.length) === 0, 'as admin I can promote and remove plain members, but not demote anyone or touch the owner');
+	await shot('members');
+	await p.click('#sb-back');
+	await p.click('#sb-back');
+	// A new group from the UI: only SlimeBeep friends can be picked.
+	await p.click('#sb-newgc');
+	await wait(150);
+	check(JSON.stringify(await p.$$eval('#sb-body label input[value]:not(:disabled)', (e) => e.map((x) => x.value))) === '["11","13"]', 'only friends with SlimeBeep can be picked');
+	await p.type('#sb-gc-name', 'Night Owls');
+	await p.click('#sb-body label input[value="13"]');
+	await p.evaluate(() => { hidden.length = 0; });
+	await p.click('#sb-gc-make');
+	await wait(600);
+	const made = await p.evaluate(() => hidden.map((h) => [h.MemberNumber, JSON.parse(h.Message).roster]));
+	check(made.length === 1 && made[0][0] === 13 && made[0][1].members.join() === '1,13' && made[0][1].owner === 1, 'creating a group sends Cat the member list, with me as owner');
+	await shot('gc');
+	await p.click('#sb-back');
+
 	// Drag; the spot and the picks survive a reload.
 	const r = await p.$eval('#sb-toggle', (e) => { const x = e.getBoundingClientRect(); return { x: x.x + 20, y: x.y + 20 }; });
 	await p.mouse.move(r.x, r.y); await p.mouse.down(); await p.mouse.move(300, 200, { steps: 8 }); await p.mouse.up();
@@ -214,7 +301,7 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	await p.click('[data-tab=chats]');
 	await wait(200);
 	const kept = await p.$$eval('#sb-body .sb-row .sb-name', (e) => e.map((x) => x.textContent));
-	check(kept.length === 4 && ['Ann', 'Bea', 'Cat', 'Dee'].every((n) => kept.some((t) => t.includes(n))), `chats survive a relog, the EBC one too (${kept})`);
+	check(['Ann', 'Bea', 'Cat', 'Dee', 'Slime Squad', 'Night Owls'].every((n) => kept.some((t) => t.includes(n))), `chats and group chats survive a relog, the EBC one too (${kept})`);
 	await p.reload();
 	await p.evaluate(stub);
 	await p.addScriptTag({ content: src });
