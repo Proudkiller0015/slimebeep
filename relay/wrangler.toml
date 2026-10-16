@@ -1,0 +1,11 @@
+name = "slimebeep-relay"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+
+[[durable_objects.bindings]]
+name = "GROUP"
+class_name = "Group"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Group"]

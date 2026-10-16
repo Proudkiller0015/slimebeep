@@ -4,11 +4,38 @@ const puppeteer = require('C:/Users/Sam_0/Documents/Project/bc-plushies/node_mod
 const src = require('fs').readFileSync(__dirname + '/slimebeep.js', 'utf8');
 const SHOTS = process.argv.includes('--shots');
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+// Other SlimeBeep users, played from here against the relay.
+const RELAY_URL = process.env.RELAY || 'ws://localhost:8787';
+const b64url = (buf) => Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+async function relayUser(member, name) {
+	const k = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+	const jwk = await crypto.subtle.exportKey('jwk', k.publicKey);
+	return { member, name, k, pub: { x: jwk.x, y: jwk.y } };
+}
+async function relayJoin(gid, who, fields = {}) {
+	const ws = new WebSocket(`${RELAY_URL}/ws?g=${gid}`, { headers: { Origin: 'https://www.bondageprojects.elementfx.com' } });
+	const c = { ws, got: [], closed: null };
+	ws.onmessage = (e) => c.got.push(JSON.parse(e.data));
+	ws.onclose = () => { c.closed = true; };
+	await new Promise((res) => { const t = setInterval(() => { if (c.got.length || c.closed) { clearInterval(t); res(); } }, 20); });
+	const hello = c.got.find((x) => x.t === 'hello');
+	const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, who.k.privateKey, new TextEncoder().encode(`${hello.nonce}|${gid}|${who.member}`));
+	ws.send(JSON.stringify({ t: 'auth', member: who.member, name: who.name, pub: who.pub, sig: b64url(sig), ...fields }));
+	await new Promise((r) => setTimeout(r, 400));
+	c.send = (x) => ws.send(JSON.stringify(x));
+	c.say = (text) => c.send({ t: 'say', text });
+	c.last = (t) => [...c.got].reverse().find((x) => x.t === t);
+	c.texts = () => c.got.flatMap((x) => (x.t === 'msg' ? [x.m] : x.t === 'history' ? x.msgs : [])).map((m) => m.text);
+	c.welcome = c.last('welcome');
+	return c;
+}
+const waitFor = async (fn, ms) => { const end = Date.now() + ms; while (Date.now() < end) { if (await fn()) return true; await new Promise((r) => setTimeout(r, 150)); } return false; };
 let failed = 0;
 const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if (!ok) failed++; };
 
 (async () => {
-	const b = await puppeteer.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: 'new' });
+	// The test page is a public one; Chrome would block it from the local test relay.
+	const b = await puppeteer.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: 'new', args: ['--disable-features=LocalNetworkAccessChecks,BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessRespectPreflightResults'] });
 	const p = await b.newPage();
 	await p.setViewport({ width: 1200, height: 800 });
 	// news.json is served by the test, never the live one.
@@ -78,6 +105,8 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 		window.DrawCheckbox = (l, t, w, h, text, on) => { DrawText(text, l + 100, t + 33, 'Black'); DrawButton(l, t, w, h, '', 'White', on ? 'Icons/Checked.png' : ''); };
 		let gameKeys = 0; document.addEventListener('keydown', () => gameKeys++); window.gameKeys = () => gameKeys;
 	};
+	// A click that survives the panel redrawing under it (someone coming online, say).
+	const tap = async (sel) => { for (let i = 0; i < 10; i++) { if (await p.$eval(sel, (e) => { e.click(); return true; }).catch(() => false)) return; await wait(100); } throw new Error(`no ${sel}`); };
 	const shot = async (name) => { if (SHOTS) await p.screenshot({ path: `${__dirname}/../sb-${name}.png` }); };
 	await p.evaluate(stub);
 	await p.addScriptTag({ content: src });
@@ -152,7 +181,7 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	check(JSON.stringify((await p.evaluate(() => beeps)).slice(-2).map((x) => x[2])) === '[true,false]', 'even a quick second Enter sends no invite');
 	const rooms = await p.$$eval('.sb-b.me', (e) => e.map((x) => (x.querySelector('.sb-room') || {}).textContent || '-'));
 	check(rooms.filter((r) => r !== '-').length === 2, `the room line only shows when it changes (${rooms.join(' | ')})`);
-	await p.click('#sb-back');
+	await tap('#sb-back');
 	await p.evaluate(() => FriendListBeepLog.push({ MemberNumber: 11, MemberName: 'Ann', Sent: false, Read: false, Time: new Date(), Message: 'psst, over here' }));
 	await wait(1300);
 	const cardText = await p.$$eval('.sb-card', (e) => e.map((x) => x.textContent));
@@ -173,19 +202,19 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 		for (const m of ['<3', 'hi', 'HiHi', '[3]', '{}', 'LoveYou']) FriendListBeepLog.push({ MemberNumber: 13, MemberName: 'Cat', Sent: false, Read: false, Time: new Date(), Message: m });
 	});
 	await wait(2200);
-	await p.click('#sb-back');
+	await tap('#sb-back');
 	await p.click('[data-open="12"]');
 	await wait(200);
 	const bea = await p.$eval('#sb-msgs', (e) => e.textContent);
 	check(/what/.test(bea) && /lost marker/.test(bea) && !/messageType/.test(bea), 'on R132 the beep settings are cut off, not shown as text');
-	await p.click('#sb-back');
+	await tap('#sb-back');
 	await p.click('[data-open="13"]');
 	await wait(200);
 	const cat = await p.$eval('#sb-msgs', (e) => e.textContent);
 	check(!/ReqRoom|KIKILINK/.test(cat), "other add-ons' signals (ReqRoom, KIKILINK/1 {...}) are not shown as beeps");
 	const catBubbles = await p.$$eval('.sb-b.them', (e) => e.map((x) => x.firstChild.textContent));
 	check(['lol {hug}', '<3', 'hi', 'HiHi', '[3]', '{}', 'LoveYou'].every((m) => catBubbles.includes(m)), `but short and playful beeps always show (${catBubbles.slice(-7).join(' | ')})`);
-	await p.click('#sb-back');
+	await tap('#sb-back');
 
 	// Beeps another add-on handles before the game (EBC): not in the game's list, so SlimeBeep keeps them itself.
 	await p.evaluate(() => {
@@ -207,11 +236,12 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	check(await p.$$eval('.sb-card', (e) => e.some((x) => /Dee/.test(x.textContent))), 'and the EBC beep popped a card');
 	await p.click('#sb-body .sb-row');
 
-	await p.click('#sb-back');
+	await tap('#sb-back');
 	await p.click('[data-tab=friends]');
 	await wait(200);
 	const fr = await p.$$eval('#sb-body .sb-row', (rows) => rows.map((r) => r.textContent.replace(/\s+/g, ' ').trim()));
-	check(fr.length === 3 && /Ann.*Pokepark.*4\/10/.test(fr[0]) && /Bea.*💞.*Private/.test(fr[1]), `friends with where they are (${fr.join(' / ')})`);
+	check(fr.length === 4 && /Ann.*Pokepark.*4\/10/.test(fr[0]) && /Bea.*💞.*Private/.test(fr[1]), `friends with where they are (${fr.join(' / ')})`);
+	check(/Dee.*Offline/.test(fr[3] || '') && await p.$$eval('#sb-body .sb-row.offline', (e) => e.length) === 1, 'offline friends are listed after, greyed out');
 	await p.type('#sb-search', 'cafe');
 	await wait(100);
 	check(await p.$$eval('#sb-body .sb-row', (e) => e.length) === 1, 'search finds by room name too');
@@ -243,70 +273,108 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	await hide(13, 'Cat', { sb: 1, ping: 1 });
 	await wait(400);
 	check(await p.evaluate(() => hidden.length) === 1, 'but only once a minute, so nobody can bounce beeps off you');
-	// Ann (owner) adds me, Cat and Zed (#99, not my friend) to a group.
-	const roster = (v, extra = {}) => ({ name: 'Slime Squad', v, owner: 11, open: false, members: [11, 1, 13, 99], admins: [11], inv: { 1: 11, 13: 11, 99: 11 }, ...extra });
-	await hide(11, 'Ann', { sb: 1, gid: 'squad0001', m: 'msg000001', a: 11, an: 'Ann', roster: roster(1), add: [[99, 'Zed']] });
-	await wait(300);
-	check(await p.$$eval('.sb-card', (e) => e.some((x) => /Slime Squad/.test(x.textContent) && /Ann added you/.test(x.textContent))), 'being added to a group pops a card');
-	await hide(13, 'Cat', { sb: 1, gid: 'squad0001', m: 'msg000002', a: 13, an: 'Cat', t: 'hiii <img src=x onerror="window.pwned=1">' });
-	await hide(11, 'Ann', { sb: 1, gid: 'squad0001', m: 'msg000003', a: 99, an: 'Zed', t: 'hello from a friend of a friend', via: [99, 11] });
-	await hide(13, 'Cat', { sb: 1, gid: 'squad0001', m: 'msg000004', a: 99, an: 'Zed', t: 'FORGED: Cat is no admin', via: [99, 13] });
-	await hide(14, 'Dee', { sb: 1, gid: 'squad0001', m: 'msg000005', a: 14, an: 'Dee', t: 'FORGED: Dee is not in the group' });
-	await hide(13, 'Cat', { sb: 1, gid: 'squad0001', m: 'msg000006', a: 13, an: 'Cat', roster: roster(2, { members: [13, 1], admins: [13], owner: 13 }) });
-	await hide(11, 'Ann', { sb: 1, gid: 'squad0001', m: 'msg000007', a: 11, an: 'Ann', roster: roster(1, { name: 'REPLAYED' }) });
-	await p.evaluate(() => fire('AccountBeep', { MemberNumber: 77, MemberName: 'Stranger', BeepType: 'SlimeBeep', Message: JSON.stringify({ sb: 1, gid: 'squad0001', m: 'msg000008', a: 77, t: 'FORGED: not even a friend' }) }));
-	await wait(300);
-	await p.click('#sb-back').catch(() => {});
-	await p.click('[data-tab=groups]');
-	await wait(200);
-	await p.click('[data-open="g:squad0001"]');
-	await wait(200);
-	const gc = await p.$eval('#sb-msgs', (e) => e.textContent);
-	check(/hiii <img/.test(gc) && await p.evaluate(() => !window.pwned && !document.querySelector('#sb-msgs img')), 'a member’s message shows, and HTML in it stays text');
-	check(/friend of a friend/.test(gc), 'a non-friend member’s message arrives passed on by an admin');
-	check(!/FORGED/.test(gc), 'forgeries are dropped: passed on by a non-admin, from a non-member, a stranger, a member taking the group over');
-	check(await p.$eval('.sb-thead .sb-name', (e) => e.textContent) === 'Slime Squad', 'an old member list replayed does nothing');
-	// Sending: to the members who are my friends (Ann, Cat), never to Zed directly.
-	await p.evaluate(() => { hidden.length = 0; });
-	await p.type('#sb-text', 'hi squad');
-	await p.keyboard.press('Enter');
-	await wait(900);
-	const out = await p.evaluate(() => hidden.map((h) => h.MemberNumber).sort());
-	check(JSON.stringify(out) === '[11,13]', `a group message goes as hidden beeps to the members who are my friends (${out})`);
-	check(await p.evaluate(() => hidden.every((h) => h.BeepType === 'SlimeBeep' && h.IsSecret === true)), 'as SlimeBeep beeps the game never shows');
-	// Members page: I'm a plain member, so no admin buttons.
-	await p.click('#sb-members');
-	await wait(150);
-	check(await p.$$eval('[data-act]', (e) => e.length) === 0 && /👑 Owner/.test(await p.$eval('#sb-body', (e) => e.textContent)), 'a member sees the roles but no admin buttons');
-	await p.click('#sb-back');
-	// Ann makes me admin: now I pass Cat's messages on to my friends in the group who haven't got them.
-	await hide(11, 'Ann', { sb: 1, gid: 'squad0001', m: 'msg000009', a: 11, an: 'Ann', roster: roster(3, { admins: [11, 1] }) });
-	await wait(200);
-	await p.evaluate(() => { hidden.length = 0; });
-	await hide(13, 'Cat', { sb: 1, gid: 'squad0001', m: 'msg000010', a: 13, an: 'Cat', t: 'pass this on', via: [13] });
-	await wait(800);
-	check(JSON.stringify(await p.evaluate(() => hidden.map((h) => h.MemberNumber)))  === '[11]', 'as admin I pass a message on to members who are my friends and don’t have it');
-	await p.click('#sb-members');
-	await wait(150);
-	check(await p.$$eval('[data-act=up]', (e) => e.length) === 2 && await p.$$eval('[data-act=kick]', (e) => e.length) === 2 && await p.$$eval('[data-act=down]', (e) => e.length) === 0, 'as admin I can promote and remove plain members, but not demote anyone or touch the owner');
-	await shot('members');
-	await p.click('#sb-back');
-	await p.click('#sb-back');
-	// A new group from the UI: only SlimeBeep friends can be picked.
-	await p.click('#sb-newgc');
-	await wait(150);
-	check(JSON.stringify(await p.$$eval('#sb-body label input[value]:not(:disabled)', (e) => e.map((x) => x.value))) === '["11","13"]', 'only friends with SlimeBeep can be picked');
-	await p.click('#sb-gc-make');
-	check(/Tick at least one friend/.test(await p.$eval('#sb-gc-count', (e) => e.textContent)), 'Create with nobody ticked says what is missing');
-	await p.type('#sb-gc-name', 'Night Owls');
-	await p.click('#sb-body label input[value="13"]');
-	await p.evaluate(() => { hidden.length = 0; });
-	await p.click('#sb-gc-make');
-	await wait(600);
-	const made = await p.evaluate(() => hidden.map((h) => [h.MemberNumber, JSON.parse(h.Message).roster]));
-	check(made.length === 1 && made[0][0] === 13 && made[0][1].members.join() === '1,13' && made[0][1].owner === 1, 'creating a group sends Cat the member list, with me as owner');
-	await shot('gc');
-	await p.click('#sb-back');
+	// ---- Group chats through the relay (cd relay && npm run dev:test), friends or not.
+	const relayUp = await fetch(RELAY_URL.replace(/^ws/, 'http') + '/').then((r) => r.ok).catch(() => false);
+	if (!relayUp) {
+		console.log('skip group chats: no relay running (cd relay && npm run dev:test)');
+	} else {
+		await p.evaluate((u) => localStorage.setItem('slimebeep.relay', u), RELAY_URL);
+		const ann = await relayUser(11, 'Ann'), zed = await relayUser(99, 'Zed'), cat = await relayUser(13, 'Cat');
+		// Ann's own SlimeBeep told us her key; Cat's told us one the "Cat" who joins below doesn't have.
+		await hide(11, 'Ann', { sb: 1, pong: 1, kf: ann.pub.x.slice(0, 16) });
+		await hide(13, 'Cat', { sb: 1, pong: 1, kf: 'AAAAAAAAAAAAAAAA' });
+		await p.click('#sb-back').catch(() => {});
+		await p.click('[data-tab=groups]');
+		await wait(150);
+		await p.click('#sb-newgc');
+		await wait(150);
+		await p.type('#sb-gc-name', 'Slime Squad');
+		await p.click('#sb-body label input[value="11"]');
+		await p.evaluate(() => { hidden.length = 0; });
+		await p.click('#sb-gc-make');
+		const opened = await waitFor(() => p.evaluate(() => /Slime Squad/.test((document.querySelector('.sb-thead') || {}).textContent || '')), 8000);
+		check(opened, 'a new group is made on the relay and opens');
+		await wait(600);
+		const inv = await p.evaluate(() => hidden.map((h) => JSON.parse(h.Message)).find((m) => m.ginv));
+		check(inv && /^SB-[a-z0-9]+-[A-Z2-9]{10}$/.test(inv.ginv.code) && inv.ginv.name === 'Slime Squad', 'Ann, a SlimeBeep friend, gets her invite as a hidden beep');
+		const [, gid, code] = /^SB-([a-z0-9]+)-([A-Z2-9]+)$/.exec(inv.ginv.code);
+		const a = await relayJoin(gid, ann, { invite: code });
+		check(!!a.welcome, 'Ann joins with it');
+		a.say('hi from Ann <img src=x onerror="window.pwned=1">');
+		await wait(700);
+		const t1 = await p.$eval('#sb-msgs', (e) => e.textContent);
+		check(/hi from Ann <img/.test(t1) && /Ann joined/.test(t1) && await p.evaluate(() => !window.pwned && !document.querySelector('#sb-msgs img')), "Ann's message and her joining show up, HTML as plain text");
+		await p.type('#sb-text', 'hello group');
+		await p.keyboard.press('Enter');
+		await wait(700);
+		check(a.texts().includes('hello group'), 'my message reaches Ann');
+		// A code for anyone: Zed, nobody's friend, joins with it.
+		await p.click('#sb-members');
+		await wait(200);
+		await p.click('#sb-gm-code');
+		await waitFor(() => p.evaluate(() => !!document.querySelector('#sb-gm-out code')), 4000);
+		const openCode = await p.$eval('#sb-gm-out code', (e) => e.textContent);
+		const z = await relayJoin(gid, zed, { invite: openCode.split('-').pop() });
+		check(!!z.welcome, 'Zed, a friend of nobody here, joins with a code');
+		// A code for #13 only: someone with a different key than Cat's own SlimeBeep sent joins as #13.
+		await p.type('#sb-gm-for', '13');
+		await p.click('#sb-gm-code');
+		await wait(700);
+		const catCode = await p.$eval('#sb-gm-out code', (e) => e.textContent);
+		const c = await relayJoin(gid, cat, { invite: catCode.split('-').pop() });
+		await wait(500);
+		check(!!c.welcome && /Only #13/.test(await p.$eval('#sb-gm-out', (e) => e.textContent)), 'a code for one member number works for that number');
+		const rows = await p.$$eval('#sb-body .sb-row .sb-name', (e) => e.map((x) => x.textContent));
+		check(rows.some((r) => /Ann.*✓/.test(r)) && rows.some((r) => /Cat.*⚠/.test(r)) && rows.some((r) => /Zed/.test(r) && !/[✓⚠]/.test(r)),
+			`the key check: ✓ for Ann, ⚠ for a "Cat" whose key is not the one Cat's SlimeBeep sent, nothing for strangers (${rows.join(' | ')})`);
+		await shot('members');
+		z.say('hi, I am a friend of nobody here');
+		await tap('#sb-back');
+		await wait(500);
+		check(/friend of nobody/.test(await p.$eval('#sb-msgs', (e) => e.textContent)), "Zed's message arrives");
+		// Away: two messages while the page is gone, and SlimeBeep catches up when it's back.
+		await tap('#sb-back');
+		await p.reload();
+		a.say('while you were away 1');
+		a.say('while you were away 2');
+		await wait(300);
+		await p.evaluate(stub);
+		await p.evaluate(() => makeLog());
+		await p.addScriptTag({ content: src });
+		const caught = await waitFor(() => p.evaluate(() => [...document.querySelectorAll('.sb-card')].some((x) => /new messages while you were away|while you were away 2/.test(x.textContent))), 12000);
+		check(caught, 'coming back, what was said while away arrives, with a card');
+		await p.click('#sb-toggle');
+		await wait(200);
+		await p.click('[data-tab=groups]');
+		await wait(200);
+		check(/Slime Squad/.test(await p.$eval('#sb-body', (e) => e.textContent)) && await p.$$eval('#sb-body .sb-dot', (e) => e.some((x) => Number(x.textContent) >= 2)), 'and Slime Squad shows them as unread');
+		// A friend's invite to another group: it waits in 👥 Groups until you join.
+		const gid2 = `owls${Date.now().toString(36)}`;
+		const a2 = await relayJoin(gid2, ann, { create: { name: 'Night Owls', open: false } });
+		a2.send({ t: 'invite', member: 1 });
+		await wait(400);
+		const code2 = a2.last('invite').code;
+		await hide(11, 'Ann', { sb: 1, ginv: { code: `SB-${gid2}-${code2}`, name: 'Night Owls' } });
+		await wait(300);
+		await p.click('[data-tab=groups]');
+		await wait(200);
+		check(/Invite from Ann/.test(await p.$eval('#sb-body', (e) => e.textContent)), "a friend's invite waits in 👥 Groups");
+		await shot('gc');
+		await p.click('[data-join="0"]');
+		const joined = await waitFor(() => p.evaluate(() => /Night Owls/.test((document.querySelector('.sb-thead') || {}).textContent || '')), 6000);
+		check(joined, 'Join takes you into the group');
+		// Owner things: I remove Zed from Slime Squad, and he is out.
+		await tap('#sb-back');
+		await p.click(`[data-open="g:${gid}"]`);
+		await wait(200);
+		await p.click('#sb-members');
+		await wait(200);
+		await p.click('[data-act=kick][data-n="99"]');
+		await wait(700);
+		check(!!z.last('gone') && z.closed, 'removing Zed closes his connection');
+		await tap('#sb-back');
+		await tap('#sb-back');
+	}
 
 	// ---- Profile pictures: real image data only, from SlimeBeep friends, in pieces.
 	const pic = await p.evaluate(() => { const c = document.createElement('canvas'); c.width = c.height = 48; const x = c.getContext('2d'); x.fillStyle = '#3c9'; x.fillRect(0, 0, 48, 48); return c.toDataURL('image/webp', 0.8); });

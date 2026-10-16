@@ -1,0 +1,14 @@
+{
+  "name": "slimebeep-relay",
+  "private": true,
+  "description": "SlimeBeep's group chat relay: one Durable Object per group, WebSockets, last 200 messages kept.",
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "dev:test": "wrangler dev --port 8787 --var ALLOW_ANY_ORIGIN:1",
+    "deploy": "wrangler deploy",
+    "test": "node test-relay.js"
+  },
+  "devDependencies": {
+    "wrangler": "4.151.0"
+  }
+}
