@@ -585,6 +585,27 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	check(bugBeep && bugBeep[0] === 255659 && /SlimeBeep bug report/.test(bugBeep[1]) && bugBeep[1].length <= 1000, 'Beep it to her sends one beep to SlimeQueenSamantha');
 	await shot('bug');
 
+	// ---- Actions like *giggles*: italics in the bubble, a soft bubble when the whole beep is one, still plain text.
+	{
+		await p.evaluate(() => {
+			FriendListBeepLog.push({ MemberNumber: 11, MemberName: 'Ann', Sent: false, Read: true, Time: new Date(), Message: 'hi *giggles* there' });
+			FriendListBeepLog.push({ MemberNumber: 11, MemberName: 'Ann', Sent: false, Read: true, Time: new Date(), Message: '*waves at you*' });
+			FriendListBeepLog.push({ MemberNumber: 11, MemberName: 'Ann', Sent: false, Read: true, Time: new Date(), Message: '*<img src=x onerror=window.pwned2=1>*' });
+		});
+		await wait(1200);
+		await p.evaluate(() => SlimeBeep.api.openChat(11));
+		await wait(250);
+		const r = await p.evaluate(() => {
+			const bubbles = [...document.querySelectorAll('#sb-msgs .sb-b')];
+			const find = (t) => bubbles.find((b) => b.textContent.includes(t));
+			return { inline: !!find('hi *giggles* there')?.querySelector('i.sb-emote'), whole: !!find('*waves at you*')?.classList.contains('sb-act'),
+				safe: !window.pwned2 && !document.querySelector('#sb-msgs img') };
+		});
+		check(r.inline && r.whole, '*giggles* shows in italics, and a beep that is only an action gets a soft bubble');
+		check(r.safe, 'and it is still plain text (HTML inside stars does nothing)');
+		await tap('#sb-back');
+	}
+
 	// ---- Offline beeps: to a friend who's offline, a beep waits and goes out when they come online.
 	{
 		await p.evaluate(() => { beeps.length = 0; SlimeBeep.api.openChat(14); });

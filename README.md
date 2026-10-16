@@ -24,6 +24,7 @@ Click the pink slime (drag it anywhere you like; it stays there). A pink dot on 
 - **🌊 WaveBeep:** one beep to every friend you tick (**All** / **None**, or **📍 My room** for just the friends in your room), sent one at a time.
 - **👥 Groups:** group chats of up to 40 people with SlimeBeep, **friends or not**. Make one with **New group chat**; invite SlimeBeep friends with one click (🫧 marks who has it) or make an **invite code** for anyone, who pastes it in 👥 Groups. Messages you missed while offline are waiting when you're back. 🟢 shows who's online. The owner 👑 and admins ⭐ add and remove people, promote and rename; **Anyone can invite** lets every member add people. For friends, ✓ means the person in the group has the same key their own SlimeBeep sent you (⚠ if not).
 - **🖼 Profile picture:** pick one in ⚙ (or Settings > Extensions). It's shrunk to a small square and only SlimeBeep friends get it, as image data, never a web link.
+- **✨ Actions:** `*giggles*` shows in italics, and a beep that's only an action gets a soft bubble of its own.
 - **⏳ Offline beeps:** beep a friend who's offline and it waits, then goes out the moment they're back online (you need to be online then too). Cancel it any time before.
 - **🎨 Theme add-ons:** with Themed or BCNeko running, SlimeBeep's page in Settings > Extensions offers **Match my … colours** (off unless you turn it on).
 - **🌙 Night mode:** the moon in the header (or ⚙) switches to navy with a night blue slime.
@@ -35,38 +36,7 @@ Every beep you send pops up a "✓ Beep sent" note by the slime. A new beep pops
 
 ## For other add-ons
 
-SlimeBeep has a small read-only API at `window.SlimeBeep.api` for other mods. It's there once SlimeBeep has loaded; it also registers with the game's mod SDK as `SlimeBeep`, so `bcModSdk.getModsInfo()` lists it. Everything it hands out is a fresh copy, so changing it changes nothing in SlimeBeep. Group chat message text is never shared.
-
-```js
-const sb = window.SlimeBeep?.api;
-if (sb && sb.apiVersion === 1) {
-	sb.groups();
-	// [{ id, name, owner, admins: [memberNumber], anyoneCanInvite, canInvite,
-	//    members: [{ memberNumber, name, online, role: 'owner' | 'admin' | 'member' }] }]
-	sb.group(id);              // one group, or null
-	sb.slimeBeepFriends();     // member numbers of friends known to have SlimeBeep
-	sb.hasSlimeBeep(12345);    // true / false
-	sb.openGroup(id);          // opens SlimeBeep on that group chat
-	sb.openChat(12345);        // opens SlimeBeep on a chat with that member
-	sb.openInvite(12345);      // opens "Invite them to…", listing the groups you can invite to
-	await sb.inviteToGroup(id, 12345);
-	// a friend with SlimeBeep gets an invite card:   { ok: true, sent: 'invite' }
-	// anyone else gets a code made for them alone:   { ok: true, code: 'SB-…' }  (show or copy it)
-	// not allowed / full / already in it:            { ok: false, why }
-
-	// For theme add-ons: SlimeBeep can take your colours (off unless switched on; Themed and BCNeko are supported).
-	sb.matchTheme(true);       // returns whether a theme add-on was found to match
-	sb.matchingTheme();        // { on, source: 'Themed' | 'BCNeko' | null }
-
-	const stop = sb.on('presence', (group) => { /* online members of a group changed */ });
-	sb.on('group', (group) => { /* a group was joined or changed (members, roles, name) */ });
-	sb.on('groupGone', ({ id }) => { /* left or removed from a group */ });
-	sb.on('slimeBeepFriend', ({ memberNumber }) => { /* a friend was just found to have SlimeBeep */ });
-	stop(); // stops that listener
-}
-```
-
-`canInvite` says whether the player may invite to that group (admins, or everyone when the group lets anyone invite). `groups()` is empty until the player is logged in. `apiVersion` only goes up if something changes in a way that breaks existing use; new functions and events are added without changing it.
+SlimeBeep has an API at `window.SlimeBeep.api` (groups, friends with SlimeBeep, opening chats, invites, theme matching, events). It's all in **[API.md](API.md)**.
 
 ## Group chats and privacy
 

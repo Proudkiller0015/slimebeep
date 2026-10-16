@@ -106,5 +106,11 @@
     "date": "16 Oct 2026",
     "title": "📢 SlimeBeep 2.12",
     "text": "⏳ Beep friends who are offline: it waits and sends when they're back. And WaveBeep has 📍 My room, to beep just the friends in your room."
+  },
+  {
+    "id": "2.13.0",
+    "date": "16 Oct 2026",
+    "title": "📢 SlimeBeep 2.13",
+    "text": "✨ *giggles* and other actions now show in italics in your chats and group chats."
   }
 ]

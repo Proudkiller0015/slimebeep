@@ -13,7 +13,7 @@
 (function () {
 	'use strict';
 
-	const VERSION = '2.12.0';
+	const VERSION = '2.13.0';
 	// Loaded once per page, whatever loads it.
 	if (window.SlimeBeep) return;
 	window.SlimeBeep = { version: VERSION };
@@ -301,6 +301,12 @@
 		const b = [...log()].reverse().find((x) => x.MemberNumber === n && !x.Sent);
 		return b ? b.MemberName : `#${n}`;
 	};
+	/*
+	 * Roleplay actions in a bubble, like the game's emotes: *giggles* in italics. A message that is only
+	 * an action gets a soft bubble of its own (sb-act). Escaped first, so it's still plain text.
+	 */
+	const isAction = (text) => /^\*{1,2}[^*\n]+\*{1,2}$/.test(String(text).trim());
+	const rich = (text) => esc(text).replace(/\*{1,2}([^*\n]{1,300}?)\*{1,2}/g, '<i class="sb-emote">*$1*</i>');
 	const timeOf = (t) => {
 		const d = new Date(t);
 		if (isNaN(d)) return '';
@@ -395,6 +401,8 @@
 		.sb-b em { display: block; font-style: normal; font-size: 10px; opacity: .7; margin-top: 2px; }
 		.sb-b.me em { text-align: right; }
 		.sb-b .sb-room { display: block; font-size: 11px; margin-top: 3px; opacity: .85; }
+		.sb-emote { font-style: italic; opacity: .85; }
+		.sb-b.sb-act { font-style: italic; background: transparent !important; border: 1px dashed currentColor !important; color: inherit; opacity: .85; }
 		.sb-b.sb-wait { opacity: .7; border: 2px dashed #ffb3d9; }
 		.sb-b.sb-wait a { color: inherit; text-decoration: underline; }
 		.sb-compose { display: flex; gap: 6px; align-items: flex-end; padding: 8px; background: #ffe6f3; }
@@ -1674,7 +1682,7 @@
 				<div class="sb-sub" title="${esc(names.join(', '))}">${online ? `<span class="sb-on"></span>${here} online · ` : '⏳ connecting… · '}${g.members.length} members: You${names.length ? `, ${esc(names.join(', '))}` : ''}</div></div>
 				<button id="sb-members" title="Members and invites">👥</button><button id="sb-leave" title="Leave the group">🚪</button></div>
 			<div class="sb-msgs" id="sb-msgs">${msgs.length ? msgs.map((h) => (h.sys ? `<div class="sb-sys">${esc(textOf(h))}</div>`
-				: `<div class="sb-b ${h.Sent ? 'me' : 'them'}">${h.Sent ? '' : `<span class="sb-from">${esc(memberName(g, h.MemberNumber) || h.MemberName)}</span>`}${esc(textOf(h))}<em>${timeOf(h.Time)}</em></div>`)).join('')
+				: `<div class="sb-b ${h.Sent ? 'me' : 'them'}${isAction(textOf(h)) ? ' sb-act' : ''}">${h.Sent ? '' : `<span class="sb-from">${esc(memberName(g, h.MemberNumber) || h.MemberName)}</span>`}${rich(textOf(h))}<em>${timeOf(h.Time)}</em></div>`)).join('')
 				: '<div class="sb-empty">🫧 Say hi to the group!</div>'}</div>
 			<div class="sb-compose">
 				<textarea id="sb-text" maxlength="${LIMITS.text}" placeholder="Message ${esc(g.name)}…"></textarea>
@@ -1751,7 +1759,7 @@
 			<div class="sb-thead"><button id="sb-back" title="Back">‹</button>${avatar(n, nameOf(n))}
 				<div class="sb-main"><div class="sb-name">${esc(nameOf(n))} <small style="font-weight:normal;color:#c08aaa">#${n}</small></div>
 				<div class="sb-sub">${f ? '<span class="sb-on"></span>' : ''}${esc(where(f))}</div></div></div>
-			<div class="sb-msgs" id="sb-msgs">${msgs.length ? msgs.map((b, i) => `<div class="sb-b ${b.Sent ? 'me' : 'them'}">${esc(textOf(b))}` +
+			<div class="sb-msgs" id="sb-msgs">${msgs.length ? msgs.map((b, i) => `<div class="sb-b ${b.Sent ? 'me' : 'them'}${isAction(textOf(b)) ? ' sb-act' : ''}">${rich(textOf(b))}` +
 				`${roomLine(b, msgs, i)}<em>${timeOf(b.Time)}</em></div>`).join('')
 				: (waitingHere.length ? '' : '<div class="sb-empty">🫧 Say hi!</div>')}${waitingHere.map((w) => `<div class="sb-b me sb-wait">${esc(w.text)}<em>⏳ sends when they're online · <a href="#" data-cancel="${esc(w.id)}">cancel</a></em></div>`).join('')}</div>
 			<div class="sb-compose">
