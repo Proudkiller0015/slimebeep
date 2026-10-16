@@ -64,5 +64,11 @@
     "date": "16 Oct 2026",
     "title": "📢 SlimeBeep 2.7.1",
     "text": "Update notes like this one now show up reliably in the room chat after each update."
+  },
+  {
+    "id": "2.8.0",
+    "date": "16 Oct 2026",
+    "title": "📢 SlimeBeep 2.8",
+    "text": "👥 Group chats now work with anyone who has SlimeBeep, friends or not (join with a code), and you see what you missed while offline. Online/offline dots in groups, and offline friends in 💖. Old group chats from before can't come along, sorry: make a new one!"
   }
 ]

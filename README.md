@@ -19,7 +19,7 @@ Click the pink slime (drag it anywhere you like; it stays there). A pink dot on 
 - **💬 Chats:** a chat with each person you've beeped with, newest first. Open one to see your beeps as chat bubbles and reply (Enter sends, Shift+Enter is a new line). 📍 adds a button to join you in your current chat room.
 - **💖 Friends:** who's online and which room they're in. Search by name, number or room; click someone to beep them.
 - **🌊 WaveBeep:** one beep to every friend you tick (**All** / **None**), sent one at a time.
-- **👥 Group chats:** up to 40 people, all with SlimeBeep (🫧 marks friends who have it; **Find SlimeBeep friends** asks). Start one from the **👥 Groups** tab, where all your group chats live. The owner 👑 and admins ⭐ add and remove people, promote, and rename; turn on **Anyone can invite** to let every member add their friends. Messages stay inside SlimeBeep, the game never shows them, and they reach friends of friends because admins (and whoever invited someone) pass them on.
+- **👥 Groups:** group chats of up to 40 people with SlimeBeep, **friends or not**. Make one with **New group chat**; invite SlimeBeep friends with one click (🫧 marks who has it) or make an **invite code** for anyone, who pastes it in 👥 Groups. Messages you missed while offline are waiting when you're back. 🟢 shows who's online. The owner 👑 and admins ⭐ add and remove people, promote and rename; **Anyone can invite** lets every member add people. For friends, ✓ means the person in the group has the same key their own SlimeBeep sent you (⚠ if not).
 - **🖼 Profile picture:** pick one in ⚙ (or Settings > Extensions). It's shrunk to a small square and only SlimeBeep friends get it, as image data, never a web link.
 - **🌙 Night mode:** the moon in the header (or ⚙) switches to navy with a night blue slime.
 - **Settings > Extensions:** SlimeBeep is listed there too, with the same options.
@@ -27,6 +27,10 @@ Click the pink slime (drag it anywhere you like; it stays there). A pink dot on 
 - **⚙ Options:** pop sound for new beeps, whether 📍 starts on, remembering who you picked, the wait between group beeps, and putting the slime back in its corner.
 
 Every beep you send pops up a "✓ Beep sent" note by the slime. A new beep pops a 💌 card (click it to reply), with an optional desktop notification when the game is in the background. Your chats are kept in your browser, per account, so they're still there after you log out (⚙ can turn that off or clear them).
+
+## Group chats and privacy
+
+Group chat messages go through SlimeBeep's own small relay (the `relay/` folder, on Cloudflare's free plan), so they reach people who aren't friends and wait for whoever is offline. The relay keeps each group's last 200 messages and nothing else besides the member list. It only accepts connections from the Bondage Club site, checks every rule itself (roles, sizes, rate limits), and nobody can post as someone else: each SlimeBeep signs in with its own key. DMs stay ordinary game beeps.
 
 ## Updates in the room chat
 

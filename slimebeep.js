@@ -13,7 +13,7 @@
 (function () {
 	'use strict';
 
-	const VERSION = '2.7.1';
+	const VERSION = '2.8.0';
 	// Loaded once per page, whatever loads it.
 	if (window.SlimeBeep) return;
 	window.SlimeBeep = { version: VERSION };
