@@ -26,10 +26,11 @@ const ID_RE = /^[a-z0-9]{8,24}$/;
 const SECRET_RE = /^[A-Z2-9]{10}$/;
 const PIC_RE = /^data:image\/(webp|jpeg|png);base64,[A-Za-z0-9+/]+=*$/;
 const B64URL = /^[A-Za-z0-9_-]{16,128}$/;
-// Only the game's own pages (a browser always sends its page's origin; this keeps other websites out).
+// Only the game's own pages (a browser always sends its page's origin; this keeps other websites out), over https or
+// plain http: the mirrors also open as http://, and a player there could not join any group (16 Oct 2026).
 // Any subdomain of the game's known sites, so a move to a new mirror or subdomain keeps working.
-const ORIGINS = [/^https:\/\/([a-z0-9-]+\.)*bondageprojects\.elementfx\.com$/, /^https:\/\/([a-z0-9-]+\.)*bondageprojects\.com$/,
-	/^https:\/\/([a-z0-9-]+\.)*bondage-europe\.com$/, /^https:\/\/([a-z0-9-]+\.)*bondage-asia\.com$/,
+const ORIGINS = [/^https?:\/\/([a-z0-9-]+\.)*bondageprojects\.elementfx\.com$/, /^https?:\/\/([a-z0-9-]+\.)*bondageprojects\.com$/,
+	/^https?:\/\/([a-z0-9-]+\.)*bondage-europe\.com$/, /^https?:\/\/([a-z0-9-]+\.)*bondage-asia\.com$/,
 	/^http:\/\/localhost(:\d+)?$/, /^http:\/\/127\.0\.0\.1(:\d+)?$/];
 
 const isNum = (n) => Number.isInteger(n) && n > 0 && n < 1e9;
