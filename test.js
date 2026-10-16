@@ -573,7 +573,13 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	await p.click('#sb-o-fit');
 	await wait(300);
 	check(!!await p.$('#sb-crop canvas'), 'Adjust opens the circle again');
-	await p.click('#sb-crop [data-act=cancel]');
+	await p.keyboard.press('Escape');
+	await wait(100);
+	check(!await p.$('#sb-crop'), 'Escape closes the picture window');
+	await p.click('#sb-o-fit');
+	await wait(300);
+	await p.click('#sb-crop .sb-crop-x');
+	check(!await p.$('#sb-crop'), 'and so does its ✕');
 	const chosen = await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.options')).pfp);
 	check(chosen && chosen.v !== 'mypic00001' && /^data:image\/(webp|jpeg);base64,/.test(chosen.data) && chosen.data.length <= 6000, `choosing a picture shrinks it to send (${chosen && chosen.data.length} characters)`);
 	await shot('mypic');

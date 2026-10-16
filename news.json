@@ -120,9 +120,9 @@
     "text": "🖼 Fit your profile picture in the circle (drag and zoom), see yours in the header, and click anyone's picture to see it big. 📍 Beeps from a room now have a Join button that really takes you there."
   },
   {
-    "id": "2.14.1",
+    "id": "2.14.2",
     "date": "16 Oct 2026",
-    "title": "📢 SlimeBeep 2.14.1",
-    "text": "Fitting your profile picture now happens inside the SlimeBeep window instead of covering the whole game."
+    "title": "📢 SlimeBeep 2.14.2",
+    "text": "Fitting your profile picture now happens inside the SlimeBeep window instead of covering the whole game, and it closes with ✕, Cancel, Escape or a click beside it."
   }
 ]

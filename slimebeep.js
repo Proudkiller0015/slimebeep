@@ -13,7 +13,7 @@
 (function () {
 	'use strict';
 
-	const VERSION = '2.14.1';
+	const VERSION = '2.14.2';
 	// Loaded once per page, whatever loads it.
 	if (window.SlimeBeep) return;
 	window.SlimeBeep = { version: VERSION };
@@ -415,6 +415,8 @@
 		#sb-crop canvas:active { cursor: grabbing; }
 		#sb-crop input[type=range] { width: 200px; accent-color: #ff4fa3; }
 		#sb-crop .sb-crop-btns { display: flex; gap: 8px; }
+		#sb-crop .sb-crop-card { position: relative; }
+		#sb-crop .sb-crop-x { position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; border-radius: 50%; border: none; background: #ffe3f1; color: #c2387f; cursor: pointer; }
 		.sb-b.sb-act { font-style: italic; background: transparent !important; border: 1px dashed currentColor !important; color: inherit; opacity: .85; }
 		.sb-b.sb-wait { opacity: .7; border: 2px dashed #ffb3d9; }
 		.sb-b.sb-wait a { color: inherit; text-decoration: underline; }
@@ -837,6 +839,7 @@
 			const box = document.createElement('div');
 			box.id = 'sb-crop';
 			box.innerHTML = `<div class="sb-crop-card">
+				<button class="sb-crop-x" data-act="cancel" title="Close">✕</button>
 				<b>Fit your picture in the circle</b>
 				<div class="sb-crop-ring" style="width:${SIZE}px;height:${SIZE}px"><canvas width="${SIZE}" height="${SIZE}"></canvas></div>
 				<span class="sb-hint">Drag to move it, scroll or slide to zoom.</span>
@@ -846,6 +849,10 @@
 			// Inside the panel, never over the game.
 			if (!isOpen()) setOpen(true);
 			$('sb-panel').appendChild(box);
+			// Ways out: Cancel, ✕, a click beside the card, Escape, or closing SlimeBeep.
+			const onKey = (e) => { if (e.key === 'Escape' && document.body.contains(box)) { e.stopPropagation(); box.remove(); } };
+			document.addEventListener('keydown', onKey, true);
+			new MutationObserver((m, obs) => { if (!document.body.contains(box)) { document.removeEventListener('keydown', onKey, true); obs.disconnect(); } }).observe($('sb-panel'), { childList: true });
 			box.addEventListener('keydown', (e) => e.stopPropagation());
 			const cv = box.querySelector('canvas'), ctx = cv.getContext('2d'), slider = box.querySelector('input');
 			// Keeps the circle covered: the picture can't be dragged past its edges.
@@ -1319,6 +1326,7 @@
 
 	const isOpen = () => $('sb-panel').style.display === 'flex';
 	function setOpen(on) {
+		if (!on) for (const id of ['sb-crop', 'sb-zoom']) if ($(id)) $(id).remove();
 		$('sb-panel').style.display = on ? 'flex' : 'none';
 		if (on) { askFriends(); render(); }
 		place();
