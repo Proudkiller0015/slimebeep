@@ -13,10 +13,12 @@ A simple beep tool for [Bondage Club](https://www.bondageprojects.elementfx.com/
 ## Use
 
 - Click the pink slime button at the bottom right.
+- Drag the slime anywhere you like; it stays there.
 - Write your message (up to 1000 characters).
-- **include my room** sends your current room with the beep so friends can join from it.
+- **Let them join me** (in a chat room) adds a button to the beep that takes them to your room.
 - Tick the online friends you want to beep (or **All** / **None**).
-- Press **Send**. Beeps go out one every 1.5 seconds.
+- Press **Send**. Beeps go out one at a time, 1.5 seconds apart.
+- **⚙ Options:** the wait between beeps, whether "Let them join me" starts ticked, remembering who you picked, and putting the slime back in its corner.
 
 ## Updates
 

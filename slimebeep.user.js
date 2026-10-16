@@ -26,7 +26,7 @@
 	'use strict';
 
 	const SOURCE = 'https://raw.githubusercontent.com/Proudkiller0015/slimebeep/main/slimebeep.js';
-	// A new address every minute, so an update is never stuck behind a cached copy for long.
+	// GitHub may hand out a copy up to five minutes old, so an update lands within about five minutes.
 	fetch(`${SOURCE}?t=${Math.floor(Date.now() / 60000)}`, { cache: 'no-store' })
 		.then((res) => {
 			if (!res.ok) throw new Error(`HTTP ${res.status}`);
