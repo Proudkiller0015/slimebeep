@@ -69,9 +69,9 @@ export default [
 		plugins: { 'no-unsanitized': noUnsanitized },
 		rules: {
 			...rules,
-			// HTML is only ever built from escaped text: esc() and the helpers that return escaped HTML.
-			'no-unsanitized/property': ['error', { escape: { methods: ['esc'] } }],
-			'no-unsanitized/method': ['error', { escape: { methods: ['esc'] } }],
+			// HTML is only built with the html tag (which escapes every inserted value) or esc().
+			'no-unsanitized/property': ['error', { escape: { taggedTemplates: ['html'], methods: ['esc'] } }],
+			'no-unsanitized/method': ['error', { escape: { taggedTemplates: ['html'], methods: ['esc'] } }],
 		},
 	},
 	{

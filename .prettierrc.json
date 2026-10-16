@@ -4,5 +4,6 @@
 	"printWidth": 140,
 	"trailingComma": "all",
 	"arrowParens": "always",
-	"endOfLine": "auto"
+	"endOfLine": "auto",
+	"embeddedLanguageFormatting": "off"
 }

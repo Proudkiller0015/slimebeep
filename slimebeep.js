@@ -339,8 +339,37 @@
 			/* ignore */
 		}
 	}
+	/** Text escaped for HTML (content and quoted attributes). */
 	const esc = (t) =>
 		String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+	/** HTML that can be inserted as is: built by `html`, or markup made from escaped text and marked with trustedHtml. */
+	class SafeHtml {
+		/** @param {string} value */
+		constructor(value) {
+			this.value = value;
+		}
+		toString() {
+			return this.value;
+		}
+	}
+	/** One value inserted into `html`: SafeHtml as is, arrays one after another, null/undefined/false as nothing, the rest escaped. */
+	const htmlPart = (v) => {
+		if (v instanceof SafeHtml) {
+			return v.value;
+		}
+		if (Array.isArray(v)) {
+			return v.map(htmlPart).join('');
+		}
+		if (v === null || v === undefined || v === false) {
+			return '';
+		}
+		return esc(v);
+	};
+	/** Tag for HTML templates: every inserted value is escaped unless it is SafeHtml, so text can never become markup. */
+	const html = (strings, ...values) =>
+		new SafeHtml(strings.reduce((out, s, i) => out + s + (i < values.length ? htmlPart(values[i]) : ''), ''));
+	/** Marks markup assembled from already-escaped text as safe. Used only by rich(). */
+	const trustedHtml = (s) => new SafeHtml(s);
 	const loggedIn = () =>
 		typeof ServerSocket !== 'undefined' && ServerSocket && typeof Player !== 'undefined' && Player && Player.MemberNumber != null;
 	/** Name of the chat room you are in, or null. */
@@ -559,18 +588,20 @@
 	const CODE_IN = /SB-[a-z0-9]{8,24}-[A-Z2-9]{10}/g;
 	/** A message as HTML: escaped, with *actions* in italics, clickable links (new tab) and a Join button after group codes. */
 	const rich = (text) =>
-		esc(text)
-			.replace(/\*{1,2}([^*\n]{1,300}?)\*{1,2}/g, '<i class="sb-emote">*$1*</i>')
-			.replace(/\bhttps?:\/\/[^\s<>"']+/g, (url) => {
-				const tail = (/(?:[.,!?:;)\]]|&#39;|&quot;)+$/.exec(url) || [''])[0];
-				const link = url.slice(0, url.length - tail.length);
-				return `<a class="sb-link" href="${link}" target="_blank" rel="noopener noreferrer nofollow">${link}</a>${tail}`;
-			})
-			.replace(
-				CODE_IN,
-				(code) =>
-					`${code} <button class="sb-pill sb-joincode" data-code="${code}">${groups[CODE_RE.exec(code)[1]] ? 'Open' : 'Join'}</button>`,
-			);
+		trustedHtml(
+			esc(text)
+				.replace(/\*{1,2}([^*\n]{1,300}?)\*{1,2}/g, '<i class="sb-emote">*$1*</i>')
+				.replace(/\bhttps?:\/\/[^\s<>"']+/g, (url) => {
+					const tail = (/(?:[.,!?:;)\]]|&#39;|&quot;)+$/.exec(url) || [''])[0];
+					const link = url.slice(0, url.length - tail.length);
+					return `<a class="sb-link" href="${link}" target="_blank" rel="noopener noreferrer nofollow">${link}</a>${tail}`;
+				})
+				.replace(
+					CODE_IN,
+					(code) =>
+						`${code} <button class="sb-pill sb-joincode" data-code="${code}">${groups[CODE_RE.exec(code)[1]] ? 'Open' : 'Join'}</button>`,
+				),
+		);
 	/** A time as hh:mm today, or as a date. */
 	const timeOf = (t) => {
 		const d = new Date(t);
@@ -628,18 +659,19 @@
 	const pfpOf = (n) =>
 		(loggedIn() && n === Player.MemberNumber ? myPfp() : loadPfps()[n] || (relayPics[n] ? { data: relayPics[n] } : null)) || null;
 	/** A group's avatar HTML: its picture or 👥. */
-	const groupAv = (g) => (g.pic ? `<img class="sb-av sb-pic" src="${esc(g.pic)}" alt="">` : '<span class="sb-av sb-gav">👥</span>');
+	const groupAv = (g) => (g.pic ? html`<img class="sb-av sb-pic" src="${g.pic}" alt="">` : html`<span class="sb-av sb-gav">👥</span>`);
+	/** The slime logo as a card icon. */
+	const logoIcon = () => html`<img src="${ICON}" style="width:34px;height:34px;border-radius:50%;flex:none" alt="">`;
 	/** A member's avatar HTML: their picture or their initials. */
 	const avatar = (n, name) => {
 		const pic = pfpOf(n);
 		if (pic) {
-			return `<img class="sb-av sb-pic" src="${esc(pic.data)}" alt="">`;
+			return html`<img class="sb-av sb-pic" src="${pic.data}" alt="">`;
 		}
-		return `<span class="sb-av" style="background:hsl(${hue(n)} 85% 80%)">${esc(
-			String(name || '?')
-				.trim()
-				.slice(0, 2),
-		)}</span>`;
+		const initials = String(name || '?')
+			.trim()
+			.slice(0, 2);
+		return html`<span class="sb-av" style="background:hsl(${hue(n)} 85% 80%)">${initials}</span>`;
 	};
 
 	const css = `
@@ -889,7 +921,7 @@
 		const toggle = document.createElement('button');
 		toggle.id = 'sb-toggle';
 		toggle.title = 'SlimeBeep (drag to move)';
-		toggle.innerHTML = `<img src="${ICON}" alt="SlimeBeep"><span id="sb-badge"></span>`;
+		toggle.innerHTML = html`<img src="${ICON}" alt="SlimeBeep"><span id="sb-badge"></span>`;
 		document.body.appendChild(toggle);
 		const toast = document.createElement('div');
 		toast.id = 'sb-toast';
@@ -900,7 +932,7 @@
 
 		const panel = document.createElement('div');
 		panel.id = 'sb-panel';
-		panel.innerHTML = `
+		panel.innerHTML = html`
 			<div class="sb-head">
 				<img src="${ICON}" alt="">
 				<b>SlimeBeep <small>v${VERSION}</small></b>
@@ -1052,7 +1084,7 @@
 		}
 		const box = document.createElement('div');
 		box.id = 'sb-ask';
-		box.innerHTML = `<div class="sb-crop-card">
+		box.innerHTML = html`<div class="sb-crop-card">
 			<b>Turn SlimeBeep off?</b>
 			<div class="sb-warn">⚠ To get it back you'll have to <u>reload the game</u> and <u>click your SlimeBeep bookmark again</u> (with the userscript it comes back on its own after the reload).</div>
 			<span class="sb-hint" style="text-align:center">Your chats and settings stay.</span>
@@ -1527,9 +1559,9 @@
 				y = 0; // x, y: the picture's centre offset from the circle's, in screen px
 			const box = document.createElement('div');
 			box.id = 'sb-crop';
-			box.innerHTML = `<div class="sb-crop-card">
+			box.innerHTML = html`<div class="sb-crop-card">
 				<button class="sb-crop-x" data-act="cancel" title="Close">✕</button>
-				<b>${esc(title || 'Fit your picture in the circle')}</b>
+				<b>${title || 'Fit your picture in the circle'}</b>
 				<div class="sb-crop-ring" style="width:${SIZE}px;height:${SIZE}px"><canvas width="${SIZE}" height="${SIZE}"></canvas></div>
 				<span class="sb-hint">Drag to move it, scroll or slide to zoom.</span>
 				<input type="range" min="1" max="4" step="0.01" value="1" aria-label="Zoom">
@@ -1716,7 +1748,7 @@
 		if (!me) {
 			return;
 		}
-		me.innerHTML = loggedIn() ? avatar(Player.MemberNumber, myName()) : '';
+		me.innerHTML = html`${loggedIn() && avatar(Player.MemberNumber, myName())}`;
 		if (!loggedIn()) {
 			me.title = '';
 		} else {
@@ -1846,7 +1878,7 @@
 		}
 		needHttps.told = true;
 		card({
-			icon: `<img src="${ICON}" style="width:34px;height:34px;border-radius:50%;flex:none" alt="">`,
+			icon: logoIcon(),
 			title: '🔒 SlimeBeep',
 			text: 'Group chats need the secure (https) address of the game. Tap to open it; you will log in again there.',
 			ms: 0,
@@ -2419,7 +2451,7 @@
 				}
 			} else {
 				card({
-					icon: '<span class="sb-av sb-gav">👥</span>',
+					icon: groupAv({}),
 					title: `👥 ${g.name}`,
 					text: `${unseen.length} new messages while you were away`,
 					onClick: () => {
@@ -2462,7 +2494,7 @@
 		saveGC();
 		saveHistory();
 		if (note && g) {
-			card({ icon: '<span class="sb-av sb-gav">👥</span>', title: `👥 ${g.name}`, text: note });
+			card({ icon: groupAv({}), title: `👥 ${g.name}`, text: note });
 		}
 		if (g) {
 			emit('groupGone', { id: gid });
@@ -2690,11 +2722,12 @@
 		}
 		const box = document.createElement('div');
 		box.id = 'sb-ask';
-		box.innerHTML = `<div class="sb-crop-card">
-			<b>${esc(g.name)}</b>
+		const canDelete = owner && others > 0;
+		box.innerHTML = html`<div class="sb-crop-card">
+			<b>${g.name}</b>
 			<span class="sb-hint" style="text-align:center">${leaveHint}</span>
-			${owner && others ? `<div class="sb-warn">Delete removes the group and all its messages <u>for everyone</u>. It can't be undone.</div>` : ''}
-			<div class="sb-crop-btns" style="flex-wrap:wrap;justify-content:center"><button class="sb-pill" data-act="keep">Cancel</button><button class="sb-go" data-act="leave">🚪 Leave</button>${owner && others ? '<button class="sb-go sb-danger" data-act="delete">🗑 Delete group</button>' : ''}</div>
+			${canDelete && html`<div class="sb-warn">Delete removes the group and all its messages <u>for everyone</u>. It can't be undone.</div>`}
+			<div class="sb-crop-btns" style="flex-wrap:wrap;justify-content:center"><button class="sb-pill" data-act="keep">Cancel</button><button class="sb-go" data-act="leave">🚪 Leave</button>${canDelete && html`<button class="sb-go sb-danger" data-act="delete">🗑 Delete group</button>`}</div>
 		</div>`;
 		const close = () => {
 			box.remove();
@@ -2772,8 +2805,8 @@
 			return '';
 		}
 		return peerKeys[m.n] === m.kf
-			? ' <span title="Checked: the same key their own SlimeBeep sent you">✓</span>'
-			: ' <span title="Not the key their own SlimeBeep sent you: this may not really be them">⚠</span>';
+			? html` <span title="Checked: the same key their own SlimeBeep sent you">✓</span>`
+			: html` <span title="Not the key their own SlimeBeep sent you: this may not really be them">⚠</span>`;
 	}
 
 	/** Hidden beeps waiting to go out, sent 250 ms apart by drain: [member number, message]. */
@@ -3053,7 +3086,7 @@
 		const box = $('sb-cards');
 		const c = document.createElement('div');
 		c.className = `sb-card ${cls}`;
-		c.innerHTML = `${icon}<span class="sb-main"><b>${esc(title)}</b><span class="sb-txt">${esc(text)}</span>${sub ? `<small>${esc(sub)}</small>` : ''}</span><button class="sb-x" title="Dismiss">✕</button>`;
+		c.innerHTML = html`${icon}<span class="sb-main"><b>${title}</b><span class="sb-txt">${text}</span>${sub && html`<small>${sub}</small>`}</span><button class="sb-x" title="Dismiss">✕</button>`;
 		const close = () => {
 			c.classList.add('out');
 			setTimeout(() => {
@@ -3134,17 +3167,18 @@
 		}
 		const item = newsItems.find((i) => i.id === VERSION);
 		const first = !opts.lastVersion;
-		const head = first ? `SlimeBeep v${esc(VERSION)} is ready!` : `SlimeBeep updated to v${esc(VERSION)}`;
+		const head = first ? `SlimeBeep v${VERSION} is ready!` : `SlimeBeep updated to v${VERSION}`;
 		let body = first ? 'Click the pink slime to beep your friends.' : '';
 		if (item) {
-			body = esc(item.text);
+			body = item.text;
 		}
 		updateNote.pending = true;
 		updateNote.last = Date.now();
+		const iconStyle = `width:1.3em;height:1.3em;vertical-align:middle;border-radius:50%;margin-right:4px${opts.night ? ';filter:hue-rotate(-105deg)' : ''}`;
 		ChatRoomSendLocal(
-			`<div class="sb-update-note" data-v="${esc(VERSION)}" style="margin:2px 0;padding:4px 10px;border-radius:10px;background:#ffe6f3;color:#a3155c;border-left:4px solid #ff4fa3;font-size:.9em">` +
-				`<img src="${ICON}" style="width:1.3em;height:1.3em;vertical-align:middle;border-radius:50%;margin-right:4px${opts.night ? ';filter:hue-rotate(-105deg)' : ''}" alt="">` +
-				`<b>${head}</b>${body ? ` ${body}` : ''}</div>`,
+			String(
+				html`<div class="sb-update-note" data-v="${VERSION}" style="margin:2px 0;padding:4px 10px;border-radius:10px;background:#ffe6f3;color:#a3155c;border-left:4px solid #ff4fa3;font-size:.9em"><img src="${ICON}" style="${iconStyle}" alt=""><b>${head}</b>${body && ` ${body}`}</div>`,
+			),
 		);
 		setTimeout(() => {
 			updateNote.pending = false;
@@ -3173,7 +3207,7 @@
 		setOpt('gameWarned', sig);
 		const what = [...new Set(gone.map(([, , w]) => w))].join(', ');
 		card({
-			icon: `<img src="${ICON}" style="width:34px;height:34px;border-radius:50%;flex:none" alt="">`,
+			icon: logoIcon(),
 			title: '🫧 SlimeBeep',
 			text: `A game update changed something SlimeBeep uses, so this may not work until SlimeBeep updates: ${what}. Everything else works as usual.`,
 			ms: 0,
@@ -3200,7 +3234,7 @@
 				}
 				for (const i of valid.filter((x) => !opts.seenNews.includes(x.id)).slice(-3)) {
 					card({
-						icon: `<img src="${ICON}" style="width:34px;height:34px;border-radius:50%;flex:none" alt="">`,
+						icon: logoIcon(),
 						title: i.title || '📢 SlimeBeep news',
 						text: i.text,
 						sub: i.date || '',
@@ -3240,7 +3274,7 @@
 	}
 	/** The 🔔/🔕 button for a chat header. */
 	const muteButton = (key) =>
-		`<button id="sb-mute" title="${isMuted(key) ? 'Muted: no sound for this chat. Click for sound again' : 'Mute: no sound for this chat'}">${isMuted(key) ? '🔕' : '🔔'}</button>`;
+		html`<button id="sb-mute" title="${isMuted(key) ? 'Muted: no sound for this chat. Click for sound again' : 'Mute: no sound for this chat'}">${isMuted(key) ? '🔕' : '🔔'}</button>`;
 	/** Plays a short two-note sound. */
 	function chime() {
 		try {
@@ -3312,7 +3346,7 @@
 		}, 0);
 		showMe();
 		if (!loggedIn()) {
-			view.innerHTML = '<div class="sb-empty">💤 Log in and SlimeBeep wakes up.</div>';
+			view.innerHTML = html`<div class="sb-empty">💤 Log in and SlimeBeep wakes up.</div>`;
 			return;
 		}
 		if (thread !== null) {
@@ -3321,25 +3355,26 @@
 		const unreadChats = log().filter((h) => !h.group && unread(h)).length;
 		const unreadGroups = log().filter((h) => h.group && unread(h)).length;
 		const on = (t) => (tab === t || (t === 'groups' && tab === 'newgc') ? 'on' : '');
-		const tabs = `<div class="sb-tabs">
-			<button data-tab="chats" class="${on('chats')}" title="Chats">💬 Chats${unreadChats ? `<i>${unreadChats}</i>` : ''}</button>
-			<button data-tab="groups" class="${on('groups')}" title="Group chats">👥 Groups${unreadGroups ? `<i>${unreadGroups}</i>` : ''}</button>
-			<button data-tab="friends" class="${on('friends')}" title="Friends online">💖${friends.length ? `<i>${friends.length}</i>` : ''}</button>
+		const count = (n) => n > 0 && html`<i>${n}</i>`;
+		const tabs = html`<div class="sb-tabs">
+			<button data-tab="chats" class="${on('chats')}" title="Chats">💬 Chats${count(unreadChats)}</button>
+			<button data-tab="groups" class="${on('groups')}" title="Group chats">👥 Groups${count(unreadGroups)}</button>
+			<button data-tab="friends" class="${on('friends')}" title="Friends online">💖${count(friends.length)}</button>
 			<button data-tab="wave" class="${on('wave')}" title="WaveBeep: one beep to many friends">🌊 Wave</button>
 			<button data-tab="bug" class="${on('bug')}" title="Report a bug">🐞</button>
 		</div>`;
 		const body = $('sb-body');
 		const scroll = keepScroll && body ? body.scrollTop : 0;
 		if (tab === 'options') {
-			view.innerHTML = `${tabs}<div class="sb-body" id="sb-body">${optionsHtml()}</div>`;
+			view.innerHTML = html`${tabs}<div class="sb-body" id="sb-body">${optionsHtml()}</div>`;
 		} else if (tab === 'newgc') {
-			view.innerHTML = `${tabs}<div class="sb-body sb-group" id="sb-body">${newGroupHtml()}</div>`;
+			view.innerHTML = html`${tabs}<div class="sb-body sb-group" id="sb-body">${newGroupHtml()}</div>`;
 		} else if (tab === 'wave') {
-			view.innerHTML = `${tabs}<div class="sb-body sb-group" id="sb-body">${groupHtml()}</div>`;
+			view.innerHTML = html`${tabs}<div class="sb-body sb-group" id="sb-body">${groupHtml()}</div>`;
 		} else if (tab === 'bug') {
-			view.innerHTML = `${tabs}<div class="sb-body sb-group" id="sb-body">${bugHtml()}</div>`;
+			view.innerHTML = html`${tabs}<div class="sb-body sb-group" id="sb-body">${bugHtml()}</div>`;
 		} else if (tab === 'invitefor') {
-			view.innerHTML = `${tabs}<div class="sb-body sb-group" id="sb-body">${inviteForHtml()}</div>`;
+			view.innerHTML = html`${tabs}<div class="sb-body sb-group" id="sb-body">${inviteForHtml()}</div>`;
 		} else {
 			const q = search.toLowerCase();
 			const list = {
@@ -3360,10 +3395,10 @@
 			const rows = list.rows(q);
 			const what = list.what;
 			const empty = q ? list.none : list.empty;
-			view.innerHTML = `${tabs}<div class="sb-body" id="sb-body">
-				${tab === 'groups' ? groupsTop() : ''}
-				<input class="sb-search" id="sb-search" placeholder="🔍 Search ${what}…" value="${esc(search)}">
-				${rows || `<div class="sb-empty">${empty}</div>`}
+			view.innerHTML = html`${tabs}<div class="sb-body" id="sb-body">
+				${tab === 'groups' && groupsTop()}
+				<input class="sb-search" id="sb-search" placeholder="🔍 Search ${what}…" value="${search}">
+				${rows.length ? rows : html`<div class="sb-empty">${empty}</div>`}
 			</div>`;
 			const s = $('sb-search');
 			s.addEventListener('input', () => {
@@ -3427,16 +3462,13 @@
 				const text = textOf(c.last);
 				return {
 					time: new Date(c.last.Time).getTime(),
-					html: `<div class="sb-row" data-open="${c.n}">${avatar(c.n, c.name)}
-				<div class="sb-main"><div class="sb-name">${online ? '<span class="sb-on"></span>' : ''}${esc(c.name)}</div>
-				<div class="sb-sub">${c.last.Sent ? 'You: ' : ''}${esc(text)}</div></div>
-				<div class="sb-side">${timeOf(c.last.Time)}${c.unread ? `<br><span class="sb-dot">${c.unread}</span>` : ''}</div></div>`,
+					html: html`<div class="sb-row" data-open="${c.n}">${avatar(c.n, c.name)}
+				<div class="sb-main"><div class="sb-name">${online && html`<span class="sb-on"></span>`}${c.name}</div>
+				<div class="sb-sub">${c.last.Sent && 'You: '}${text}</div></div>
+				<div class="sb-side">${timeOf(c.last.Time)}${c.unread > 0 && html`<br><span class="sb-dot">${c.unread}</span>`}</div></div>`,
 				};
 			});
-		return rows
-			.sort((a, b) => b.time - a.time)
-			.map((r) => r.html)
-			.join('');
+		return rows.sort((a, b) => b.time - a.time).map((r) => r.html);
 	}
 
 	/** Rows of the 👥 Groups tab, newest message first, filtered by `q`. */
@@ -3451,32 +3483,37 @@
 			const n = msgs.filter(unread).length;
 			rows.push({
 				time: last ? last.Time : 0,
-				html: `<div class="sb-row" data-open="g:${g.id}">${groupAv(g)}
-				<div class="sb-main"><div class="sb-name">${esc(g.name)} <small style="font-weight:normal;color:#c08aaa">${g.members.length}</small></div>
-				<div class="sb-sub">${last ? `${last.sys ? '' : `${last.Sent ? 'You' : esc(last.MemberName)}: `}${esc(textOf(last))}` : 'No messages yet'}</div></div>
-				<div class="sb-side">${last ? timeOf(last.Time) : ''}${n ? `<br><span class="sb-dot">${n}</span>` : ''}</div></div>`,
+				html: html`<div class="sb-row" data-open="g:${g.id}">${groupAv(g)}
+				<div class="sb-main"><div class="sb-name">${g.name} <small style="font-weight:normal;color:#c08aaa">${g.members.length}</small></div>
+				<div class="sb-sub">${lastLine(last)}</div></div>
+				<div class="sb-side">${last && timeOf(last.Time)}${n > 0 && html`<br><span class="sb-dot">${n}</span>`}</div></div>`,
 			});
 		}
-		return rows
-			.sort((a, b) => b.time - a.time)
-			.map((r) => r.html)
-			.join('');
+		return rows.sort((a, b) => b.time - a.time).map((r) => r.html);
+	}
+	/** The preview line of a group: "Name: text" of its last message. */
+	function lastLine(last) {
+		if (!last) {
+			return 'No messages yet';
+		}
+		if (last.sys) {
+			return textOf(last);
+		}
+		return `${last.Sent ? 'You' : last.MemberName}: ${textOf(last)}`;
 	}
 
 	/** Checkbox list of online friends (SlimeBeep users first) for inviting, without the member numbers in `exclude`. */
 	function pickList(exclude = []) {
-		return (
-			friends
-				.filter((f) => !exclude.includes(f.MemberNumber))
-				.sort((a, b) => Number(peers.has(b.MemberNumber)) - Number(peers.has(a.MemberNumber)) || a.MemberName.localeCompare(b.MemberName))
-				.map((f) => {
-					const has = peers.has(f.MemberNumber);
-					return `<label><input type="checkbox" value="${f.MemberNumber}">${avatar(f.MemberNumber, f.MemberName)}
-				<span class="sb-main" style="margin-left:8px"><span class="sb-name">${esc(f.MemberName)} ${has ? '🫧' : ''}</span>
+		const rows = friends
+			.filter((f) => !exclude.includes(f.MemberNumber))
+			.sort((a, b) => Number(peers.has(b.MemberNumber)) - Number(peers.has(a.MemberNumber)) || a.MemberName.localeCompare(b.MemberName))
+			.map((f) => {
+				const has = peers.has(f.MemberNumber);
+				return html`<label><input type="checkbox" value="${f.MemberNumber}">${avatar(f.MemberNumber, f.MemberName)}
+				<span class="sb-main" style="margin-left:8px"><span class="sb-name">${f.MemberName} ${has && '🫧'}</span>
 				<span class="sb-sub" style="display:block">${has ? 'Has SlimeBeep: gets an invite card' : `Gets a beep with the code (${PLAIN_MAX} like that at a time)`}</span></span></label>`;
-				})
-				.join('') || '<div class="sb-empty">🌙 No online friends to add right now.</div>'
-		);
+			});
+		return rows.length ? rows : html`<div class="sb-empty">🌙 No online friends to add right now.</div>`;
 	}
 	/** Wires the 🔍 button that asks friends whether they have SlimeBeep (findPeers). */
 	function wireFind() {
@@ -3499,17 +3536,16 @@
 		const inv = invitations
 			.filter((i) => !groups[CODE_RE.exec(i.code)[1]])
 			.map(
-				(i, n) => `<div class="sb-row" style="cursor:default">${avatar(i.from, i.fromName)}
-			<div class="sb-main"><div class="sb-name">${esc(i.name)}</div><div class="sb-sub">Invite from ${esc(i.fromName)}</div></div>
+				(i, n) => html`<div class="sb-row" style="cursor:default">${avatar(i.from, i.fromName)}
+			<div class="sb-main"><div class="sb-name">${i.name}</div><div class="sb-sub">Invite from ${i.fromName}</div></div>
 			<div class="sb-side" style="display:flex;gap:3px"><button class="sb-go" data-join="${n}">Join</button><button class="sb-pill" data-dismiss="${n}" title="Dismiss">✕</button></div></div>`,
-			)
-			.join('');
-		const httpNote = secure()
-			? ''
-			: `<div class="sb-hint" style="margin:0 2px 6px">🔒 Group chats need the game's secure address: <a href="${esc(httpsUrl())}">open it with https</a> (you'll log in again there).</div>`;
-		return `${httpNote}<button class="sb-pill" id="sb-newgc" style="width:100%;margin:2px 0 6px">👥 New group chat</button>
+			);
+		const httpNote =
+			!secure() &&
+			html`<div class="sb-hint" style="margin:0 2px 6px">🔒 Group chats need the game's secure address: <a href="${httpsUrl()}">open it with https</a> (you'll log in again there).</div>`;
+		return html`${httpNote}<button class="sb-pill" id="sb-newgc" style="width:100%;margin:2px 0 6px">👥 New group chat</button>
 			<div class="sb-line" style="margin:0 0 6px"><input class="sb-search" id="sb-join-code" placeholder="Have a code? SB-…" style="margin:0"><button class="sb-pill" id="sb-join">Join</button></div>
-			${inv ? `<div class="sb-hint" style="margin:2px 2px 0">📨 Invitations</div>${inv}` : ''}`;
+			${inv.length > 0 && html`<div class="sb-hint" style="margin:2px 2px 0">📨 Invitations</div>${inv}`}`;
 	}
 	/** Wires groupsTop's buttons. */
 	function wireGroupsTop() {
@@ -3548,7 +3584,7 @@
 
 	/** HTML of the new group form. */
 	function newGroupHtml() {
-		return `<div class="sb-line"><button class="sb-pill" id="sb-gc-back">‹ Back</button><b>👥 New group chat</b></div>
+		return html`<div class="sb-line"><button class="sb-pill" id="sb-gc-back">‹ Back</button><b>👥 New group chat</b></div>
 			<div class="sb-hint" style="margin:4px 0 6px">Up to ${LIMITS.members} people with SlimeBeep, friends or not. Tick friends to invite them now (🫧 have SlimeBeep already); anyone else can join with a code from the group's 👥 page.</div>
 			<input class="sb-search" id="sb-gc-name" maxlength="${LIMITS.name}" placeholder="Group name (optional)">
 			<label><input type="checkbox" id="sb-gc-open"><span>Anyone can invite<span class="sb-hint" style="display:block">Otherwise only you and the admins you pick can add people.</span></span></label>
@@ -3602,7 +3638,7 @@
 		if (!out || !k || !renderMembers.open || k.id !== renderMembers.open) {
 			return;
 		}
-		out.innerHTML = `<div class="sb-row" style="cursor:default;display:block"><code style="font-size:13px;user-select:all">${esc(k.code)}</code>
+		out.innerHTML = html`<div class="sb-row" style="cursor:default;display:block"><code style="font-size:13px;user-select:all">${k.code}</code>
 			<div class="sb-hint">${k.forWho ? `Only #${k.forWho} can use it, once.` : 'Anyone with it can join, for 7 days (20 people at most).'} They paste it in 👥 Groups.</div>
 			<button class="sb-pill" id="sb-gm-copy" style="margin-top:4px">📋 Copy</button></div>`;
 		$('sb-gm-copy').addEventListener('click', async () => {
@@ -3645,47 +3681,45 @@
 				const acts = [];
 				if (n !== me && n !== g.owner) {
 					if (admin && !isAdmin(g, n) && g.admins.length < LIMITS.admins) {
-						acts.push(`<button class="sb-pill" data-act="up" data-n="${n}" title="Make admin">⭐</button>`);
+						acts.push(html`<button class="sb-pill" data-act="up" data-n="${n}" title="Make admin">⭐</button>`);
 					}
 					if (owner && isAdmin(g, n)) {
-						acts.push(`<button class="sb-pill" data-act="down" data-n="${n}" title="Take admin">✩</button>`);
+						acts.push(html`<button class="sb-pill" data-act="down" data-n="${n}" title="Take admin">✩</button>`);
 					}
 					if ((admin && !isAdmin(g, n)) || owner) {
-						acts.push(`<button class="sb-pill" data-act="kick" data-n="${n}" title="Remove">✕</button>`);
+						acts.push(html`<button class="sb-pill" data-act="kick" data-n="${n}" title="Remove">✕</button>`);
 					}
 					if (owner) {
-						acts.push(`<button class="sb-pill" data-act="own" data-n="${n}" title="Make owner">👑</button>`);
+						acts.push(html`<button class="sb-pill" data-act="own" data-n="${n}" title="Make owner">👑</button>`);
 					}
 				}
-				return `<div class="sb-row" style="cursor:default">${avatar(n, memberName(g, n))}
-					<div class="sb-main"><div class="sb-name">${on(n) ? '<span class="sb-on" title="Online"></span>' : '<span class="sb-off" title="Offline"></span>'}${esc(memberName(g, n))}${keyMark(m)}${peers.has(n) ? ' 🫧' : ''}</div><div class="sb-sub">${role} · #${n}${on(n) ? '' : ' · offline'}</div></div>
-					<div class="sb-side" style="display:flex;gap:3px">${acts.join('')}</div></div>`;
-			})
-			.join('');
+				const dot = on(n) ? html`<span class="sb-on" title="Online"></span>` : html`<span class="sb-off" title="Offline"></span>`;
+				return html`<div class="sb-row" style="cursor:default">${avatar(n, memberName(g, n))}
+					<div class="sb-main"><div class="sb-name">${dot}${memberName(g, n)}${keyMark(m)}${peers.has(n) && ' 🫧'}</div><div class="sb-sub">${role} · #${n}${!on(n) && ' · offline'}</div></div>
+					<div class="sb-side" style="display:flex;gap:3px">${acts}</div></div>`;
+			});
 		const invite = canInvite(g, me) && g.members.length < LIMITS.members;
 		const memberNums = g.members.map((m) => m.n);
-		view.innerHTML = `
-			<div class="sb-thead"><button id="sb-back" title="Back to the chat">‹</button>${groupAv(g)}
-				<div class="sb-main"><div class="sb-name">${esc(g.name)}</div><div class="sb-sub">${g.members.length} / ${LIMITS.members} members</div></div></div>
-			<div class="sb-body sb-group" id="sb-body">
-				${
-					admin
-						? `<div class="sb-line"><input class="sb-search" id="sb-gm-name" maxlength="${LIMITS.name}" value="${esc(g.name)}" style="margin:0"><button class="sb-pill" id="sb-gm-rename">Rename</button></div>
-				<div class="sb-line"><span>🖼 Group picture</span><span style="display:flex;gap:4px">${g.pic ? '<button class="sb-pill" id="sb-gm-picoff">Remove</button>' : ''}<button class="sb-pill" id="sb-gm-pic">${g.pic ? 'Change' : 'Add'}</button></span></div>
-				<label><input type="checkbox" id="sb-gm-open" ${g.open ? 'checked' : ''}><span>Anyone can invite</span></label>`
-						: `<div class="sb-hint">${g.open ? 'Anyone can invite people here.' : 'Only admins can invite people here.'}</div>`
-				}
-				${rows}
-				${
-					invite
-						? `<div class="sb-line"><b>🔗 Invite with a code</b></div>
-				<div class="sb-hint">Works for anyone with SlimeBeep, friends or not. ${admin ? 'Put a member number to make it work for that one person only.' : ''}</div>
-				<div class="sb-line">${admin ? '<input class="sb-search" id="sb-gm-for" placeholder="Member # (optional)" style="margin:0;width:150px">' : '<span></span>'}<button class="sb-go" id="sb-gm-code">Make a code</button></div>
+		const settings = admin
+			? html`<div class="sb-line"><input class="sb-search" id="sb-gm-name" maxlength="${LIMITS.name}" value="${g.name}" style="margin:0"><button class="sb-pill" id="sb-gm-rename">Rename</button></div>
+				<div class="sb-line"><span>🖼 Group picture</span><span style="display:flex;gap:4px">${g.pic && html`<button class="sb-pill" id="sb-gm-picoff">Remove</button>`}<button class="sb-pill" id="sb-gm-pic">${g.pic ? 'Change' : 'Add'}</button></span></div>
+				<label><input type="checkbox" id="sb-gm-open" ${g.open && 'checked'}><span>Anyone can invite</span></label>`
+			: html`<div class="sb-hint">${g.open ? 'Anyone can invite people here.' : 'Only admins can invite people here.'}</div>`;
+		const inviting =
+			invite &&
+			html`<div class="sb-line"><b>🔗 Invite with a code</b></div>
+				<div class="sb-hint">Works for anyone with SlimeBeep, friends or not. ${admin && 'Put a member number to make it work for that one person only.'}</div>
+				<div class="sb-line">${admin ? html`<input class="sb-search" id="sb-gm-for" placeholder="Member # (optional)" style="margin:0;width:150px">` : html`<span></span>`}<button class="sb-go" id="sb-gm-code">Make a code</button></div>
 				<div id="sb-gm-out"></div>
 				<div class="sb-line"><b>Invite friends</b><button class="sb-pill" id="sb-gc-find">🔍 Find 🫧</button></div>${pickList(memberNums)}
-				<div class="sb-line" style="position:sticky;bottom:-10px;background:#fff7fb;padding:6px 0"><span></span><button class="sb-go" id="sb-gm-add" disabled>Send invites</button></div>`
-						: ''
-				}
+				<div class="sb-line" style="position:sticky;bottom:-10px;background:#fff7fb;padding:6px 0"><span></span><button class="sb-go" id="sb-gm-add" disabled>Send invites</button></div>`;
+		view.innerHTML = html`
+			<div class="sb-thead"><button id="sb-back" title="Back to the chat">‹</button>${groupAv(g)}
+				<div class="sb-main"><div class="sb-name">${g.name}</div><div class="sb-sub">${g.members.length} / ${LIMITS.members} members</div></div></div>
+			<div class="sb-body sb-group" id="sb-body">
+				${settings}
+				${rows}
+				${inviting}
 			</div>`;
 		for (const k of ['sb-gm-name', 'sb-gm-for']) {
 			const el = $(k);
@@ -3814,25 +3848,23 @@
 		const names = g.members.filter((m) => m.n !== Player.MemberNumber).map((m) => memberName(g, m.n));
 		const online = conns[id] && conns[id].ready;
 		const here = new Set([...(g.online || []), Player.MemberNumber]).size;
-		view.innerHTML = `
+		const status = online ? html`<span class="sb-on"></span>${here} online · ` : '⏳ connecting… · ';
+		const bubble = (h) => {
+			if (h.sys) {
+				return html`<div class="sb-sys">${textOf(h)}</div>`;
+			}
+			const from = !h.Sent && html`<span class="sb-from">${memberName(g, h.MemberNumber) || h.MemberName}</span>`;
+			return html`<div class="sb-b ${h.Sent ? 'me' : 'them'}${isAction(textOf(h)) && ' sb-act'}">${from}${rich(textOf(h))}<em>${timeOf(h.Time)}</em></div>`;
+		};
+		view.innerHTML = html`
 			<div class="sb-thead"><button id="sb-back" title="Back">‹</button>${groupAv(g)}
-				<div class="sb-main"><div class="sb-name">${esc(g.name)}</div>
-				<div class="sb-sub" title="${esc(names.join(', '))}">${online ? `<span class="sb-on"></span>${here} online · ` : '⏳ connecting… · '}${g.members.length} members: You${names.length ? `, ${esc(names.join(', '))}` : ''}</div></div>
+				<div class="sb-main"><div class="sb-name">${g.name}</div>
+				<div class="sb-sub" title="${names.join(', ')}">${status}${g.members.length} members: You${names.length > 0 && `, ${names.join(', ')}`}</div></div>
 				${muteButton(`g:${id}`)}<button id="sb-members" title="Members and invites">👥</button><button id="sb-leave" title="${g.owner === Player.MemberNumber ? 'Leave or delete the group' : 'Leave the group'}">🚪</button></div>
-			<div class="sb-msgs" id="sb-msgs">${
-				msgs.length
-					? msgs
-							.map((h) =>
-								h.sys
-									? `<div class="sb-sys">${esc(textOf(h))}</div>`
-									: `<div class="sb-b ${h.Sent ? 'me' : 'them'}${isAction(textOf(h)) ? ' sb-act' : ''}">${h.Sent ? '' : `<span class="sb-from">${esc(memberName(g, h.MemberNumber) || h.MemberName)}</span>`}${rich(textOf(h))}<em>${timeOf(h.Time)}</em></div>`,
-							)
-							.join('')
-					: '<div class="sb-empty">🫧 Say hi to the group!</div>'
-			}</div>
+			<div class="sb-msgs" id="sb-msgs">${msgs.length ? msgs.map(bubble) : html`<div class="sb-empty">🫧 Say hi to the group!</div>`}</div>
 			<div class="sb-compose">
 				<button class="pin" id="sb-emo" title="Emoji">😊</button>
-				<textarea id="sb-text" maxlength="${LIMITS.text}" placeholder="Message ${esc(g.name)}… (/help)"></textarea>
+				<textarea id="sb-text" maxlength="${LIMITS.text}" placeholder="Message ${g.name}… (/help)"></textarea>
 				<button id="sb-send" title="Send (Enter)">➤</button>
 			</div>`;
 		const box = $('sb-msgs');
@@ -3885,9 +3917,9 @@
 			.filter((f) => match(f.MemberName, f.MemberNumber, f.ChatRoomName || ''))
 			.sort((a, b) => a.MemberName.localeCompare(b.MemberName))
 			.map(
-				(f) => `<div class="sb-row" data-open="${f.MemberNumber}">${avatar(f.MemberNumber, f.MemberName)}
-				<div class="sb-main"><div class="sb-name"><span class="sb-on"></span>${esc(f.MemberName)}${{ Lover: ' 💞', Submissive: ' 🎀' }[f.Type] || ''}${peers.has(f.MemberNumber) ? ' <span title="Has SlimeBeep">🫧</span>' : ''}</div>
-				<div class="sb-sub">${esc(where(f))}${f.ChatRoomMemberCount ? ` · ${f.ChatRoomMemberCount}/${f.ChatRoomLimit || '?'}` : ''}</div></div>
+				(f) => html`<div class="sb-row" data-open="${f.MemberNumber}">${avatar(f.MemberNumber, f.MemberName)}
+				<div class="sb-main"><div class="sb-name"><span class="sb-on"></span>${f.MemberName}${{ Lover: ' 💞', Submissive: ' 🎀' }[f.Type]}${peers.has(f.MemberNumber) && html` <span title="Has SlimeBeep">🫧</span>`}</div>
+				<div class="sb-sub">${where(f)}${f.ChatRoomMemberCount > 0 && ` · ${f.ChatRoomMemberCount}/${f.ChatRoomLimit || '?'}`}</div></div>
 				<div class="sb-side">#${f.MemberNumber}</div></div>`,
 			);
 		const onlineNums = new Set(friends.map((f) => f.MemberNumber));
@@ -3896,13 +3928,14 @@
 			.filter(([n, name]) => isNum(n) && !onlineNums.has(n) && n !== Player.MemberNumber && match(String(name || ''), n))
 			.sort((a, b) => String(a[1] || '').localeCompare(String(b[1] || '')))
 			.map(
-				([n, name]) => `<div class="sb-row offline" data-open="${n}">${avatar(n, name)}
-				<div class="sb-main"><div class="sb-name"><span class="sb-off"></span>${esc(name || `#${n}`)}${peers.has(n) ? ' <span title="Has SlimeBeep">🫧</span>' : ''}</div>
+				([n, name]) => html`<div class="sb-row offline" data-open="${n}">${avatar(n, name)}
+				<div class="sb-main"><div class="sb-name"><span class="sb-off"></span>${name || `#${n}`}${peers.has(n) && html` <span title="Has SlimeBeep">🫧</span>`}</div>
 				<div class="sb-sub">Offline</div></div><div class="sb-side">#${n}</div></div>`,
 			);
-		return [...on, ...(off.length ? [`<div class="sb-hint" style="margin:8px 4px 2px">Offline (${off.length})</div>`, ...off] : [])].join(
-			'',
-		);
+		if (!off.length) {
+			return on;
+		}
+		return [...on, html`<div class="sb-hint" style="margin:8px 4px 2px">Offline (${off.length})</div>`, ...off];
 	}
 
 	/** The 📍 room line under a beep (with Join), shown when the room differs from that side's previous beep. */
@@ -3918,7 +3951,8 @@
 		if (prev && (prev.ChatRoomName || '').trim() === room) {
 			return '';
 		}
-		return `<span class="sb-room">📍 ${b.Sent ? 'invited to' : 'in'} ${esc(room)}${b.Sent ? '' : ` <button class="sb-pill sb-joinroom" data-room="${esc(room)}">Join</button>`}</span>`;
+		const join = !b.Sent && html` <button class="sb-pill sb-joinroom" data-room="${room}">Join</button>`;
+		return html`<span class="sb-room">📍 ${b.Sent ? 'invited to' : 'in'} ${room}${join}</span>`;
 	}
 
 	/** When joinRoom last ran (one try per 3 s). */
@@ -4012,29 +4046,32 @@
 			const title = b.Sent
 				? 'Left in their SlimeBeep mailbox while they were offline'
 				: 'Left in your SlimeBeep mailbox while you were offline';
-			return `<span title="${title}">📬</span> `;
+			return html`<span title="${title}">📬</span> `;
 		};
 		const uncheckedMark = (b) =>
-			b.unchecked ? '<span title="Their SlimeBeep has not told yours its key yet, so who sent this could not be checked">⚠</span> ' : '';
-		let bubbles = waitingHere.length ? '' : '<div class="sb-empty">🫧 Say hi!</div>';
+			b.unchecked && html`<span title="Their SlimeBeep has not told yours its key yet, so who sent this could not be checked">⚠</span> `;
+		let bubbles = !waitingHere.length && html`<div class="sb-empty">🫧 Say hi!</div>`;
 		if (msgs.length) {
-			bubbles = msgs
-				.map(
-					(b, i) =>
-						`<div class="sb-b ${b.Sent ? 'me' : 'them'}${isAction(textOf(b)) ? ' sb-act' : ''}">${rich(textOf(b))}` +
-						`${roomLine(b, msgs, i)}<em>${mailMark(b)}${uncheckedMark(b)}${timeOf(b.Time)}</em></div>`,
-				)
-				.join('');
+			bubbles = msgs.map(
+				(b, i) =>
+					html`<div class="sb-b ${b.Sent ? 'me' : 'them'}${isAction(textOf(b)) && ' sb-act'}">${rich(textOf(b))}${roomLine(b, msgs, i)}<em>${mailMark(b)}${uncheckedMark(b)}${timeOf(b.Time)}</em></div>`,
+			);
 		}
-		view.innerHTML = `
+		const waitingBubbles = waitingHere.map(
+			(w) =>
+				html`<div class="sb-b me sb-wait">${w.text}<em>⏳ sends when they're online · <a href="#" data-cancel="${w.id}">cancel</a></em></div>`,
+		);
+		const pinTitle = room ? `Let them join me: adds a button to join you in "${room}"` : "You're not in a chat room";
+		const placeholder = offline ? `${nameOf(n)} is offline: it'll wait for them…` : `Beep ${nameOf(n)}… (/help)`;
+		view.innerHTML = html`
 			<div class="sb-thead"><button id="sb-back" title="Back">‹</button>${avatar(n, nameOf(n))}
-				<div class="sb-main"><div class="sb-name">${esc(nameOf(n))} <small style="font-weight:normal;color:#c08aaa">#${n}</small></div>
-				<div class="sb-sub">${f ? '<span class="sb-on"></span>' : ''}${esc(where(f))}</div></div>${muteButton(`n:${n}`)}</div>
-			<div class="sb-msgs" id="sb-msgs">${bubbles}${waitingHere.map((w) => `<div class="sb-b me sb-wait">${esc(w.text)}<em>⏳ sends when they're online · <a href="#" data-cancel="${esc(w.id)}">cancel</a></em></div>`).join('')}</div>
+				<div class="sb-main"><div class="sb-name">${nameOf(n)} <small style="font-weight:normal;color:#c08aaa">#${n}</small></div>
+				<div class="sb-sub">${f && html`<span class="sb-on"></span>`}${where(f)}</div></div>${muteButton(`n:${n}`)}</div>
+			<div class="sb-msgs" id="sb-msgs">${bubbles}${waitingBubbles}</div>
 			<div class="sb-compose">
-				<button class="pin ${pinOn ? 'on' : ''}" id="sb-pin" ${room ? '' : 'disabled'} title="${room ? `Let them join me: adds a button to join you in "${esc(room)}"` : "You're not in a chat room"}">📍</button>
+				<button class="pin ${pinOn && 'on'}" id="sb-pin" ${!room && 'disabled'} title="${pinTitle}">📍</button>
 				<button class="pin" id="sb-emo" title="Emoji">😊</button>
-				<textarea id="sb-text" maxlength="1000" placeholder="${offline ? `${esc(nameOf(n))} is offline: it'll wait for them…` : `Beep ${esc(nameOf(n))}… (/help)`}"></textarea>
+				<textarea id="sb-text" maxlength="1000" placeholder="${placeholder}"></textarea>
 				<button id="sb-send" title="Send (Enter)">➤</button>
 			</div>`;
 		const box = $('sb-msgs');
@@ -4196,8 +4233,8 @@
 			emojiTab = tabs[0];
 		}
 		const list = emojiTab === '🕘' ? recentEmoji : EMOJI[emojiTab].split(' ');
-		box.innerHTML = `<div class="sb-emo-tabs">${tabs.map((t) => `<button data-etab="${t}" class="${t === emojiTab ? 'on' : ''}">${t}</button>`).join('')}<button data-eclose="1" title="Close">✕</button></div>
-			<div class="sb-emo-grid">${list.map((e) => `<button data-emo="${esc(e)}">${esc(e)}</button>`).join('')}</div>`;
+		box.innerHTML = html`<div class="sb-emo-tabs">${tabs.map((t) => html`<button data-etab="${t}" class="${t === emojiTab && 'on'}">${t}</button>`)}<button data-eclose="1" title="Close">✕</button></div>
+			<div class="sb-emo-grid">${list.map((e) => html`<button data-emo="${e}">${e}</button>`)}</div>`;
 		box.onclick = (ev) => {
 			const b = ev.target.closest('button');
 			if (!b) {
@@ -4287,9 +4324,9 @@
 		}
 		const box = document.createElement('div');
 		box.id = 'sb-ask';
-		box.innerHTML = `<div class="sb-crop-card" style="align-items:stretch">
+		box.innerHTML = html`<div class="sb-crop-card" style="align-items:stretch">
 			<b style="text-align:center">💬 Chat commands</b>
-			${COMMANDS.map(([c, d]) => `<div class="sb-cmd"><code>${esc(c)}</code><span>${esc(d)}</span></div>`).join('')}
+			${COMMANDS.map(([c, d]) => html`<div class="sb-cmd"><code>${c}</code><span>${d}</span></div>`)}
 			<span class="sb-hint" style="text-align:center">😊 opens the emoji. *giggles* shows as an action.</span>
 			<div class="sb-crop-btns" style="justify-content:center"><button class="sb-go" data-act="keep">Got it</button></div>
 		</div>`;
@@ -4380,16 +4417,20 @@
 			.sort((a, b) => a.MemberName.localeCompare(b.MemberName))
 			.map(
 				(f) =>
-					`<label><input type="checkbox" value="${f.MemberNumber}" ${picked.has(f.MemberNumber) ? 'checked' : ''}>${avatar(f.MemberNumber, f.MemberName)}
-			<span class="sb-main" style="margin-left:8px"><span class="sb-name">${esc(f.MemberName)}</span><span class="sb-sub" style="display:block">${esc(where(f))}</span></span></label>`,
-			)
-			.join('');
-		return `<div class="sb-line" style="margin-top:2px"><b>🌊 WaveBeep</b></div><div class="sb-hint" style="margin:0 0 6px">One beep, sent to every friend you tick.</div>
-			<textarea id="sb-gmsg" maxlength="1000" placeholder="Write your beep…">${esc(groupHtml.draft || '')}</textarea>
-			<label title="Adds a button to your beep that takes them to the chat room you're in."><input type="checkbox" id="sb-groom" ${room ? '' : 'disabled'} ${room && (groupHtml.room ?? opts.shareRoom) ? 'checked' : ''}>
-				<span>📍 Let them join me<span class="sb-hint" style="display:block">${room ? `They get a button to join you in "${esc(room)}".` : "You're not in a chat room, so there's nothing to join."}</span></span></label>
-			<div class="sb-line"><b>Beep who?</b><span>${room && friends.some((f) => f.ChatRoomName === room) ? '<button class="sb-pill" id="sb-myroom" title="Only the friends in your room">📍 My room</button> ' : ''}<button class="sb-pill" id="sb-all">All</button> <button class="sb-pill" id="sb-none">None</button></span></div>
-			${list || '<div class="sb-empty">🌙 None of your friends are online.</div>'}
+					html`<label><input type="checkbox" value="${f.MemberNumber}" ${picked.has(f.MemberNumber) && 'checked'}>${avatar(f.MemberNumber, f.MemberName)}
+			<span class="sb-main" style="margin-left:8px"><span class="sb-name">${f.MemberName}</span><span class="sb-sub" style="display:block">${where(f)}</span></span></label>`,
+			);
+		const roomHint = room ? `They get a button to join you in "${room}".` : "You're not in a chat room, so there's nothing to join.";
+		const myRoomButton =
+			room &&
+			friends.some((f) => f.ChatRoomName === room) &&
+			html`<button class="sb-pill" id="sb-myroom" title="Only the friends in your room">📍 My room</button> `;
+		return html`<div class="sb-line" style="margin-top:2px"><b>🌊 WaveBeep</b></div><div class="sb-hint" style="margin:0 0 6px">One beep, sent to every friend you tick.</div>
+			<textarea id="sb-gmsg" maxlength="1000" placeholder="Write your beep…">${groupHtml.draft || ''}</textarea>
+			<label title="Adds a button to your beep that takes them to the chat room you're in."><input type="checkbox" id="sb-groom" ${!room && 'disabled'} ${room && (groupHtml.room ?? opts.shareRoom) && 'checked'}>
+				<span>📍 Let them join me<span class="sb-hint" style="display:block">${roomHint}</span></span></label>
+			<div class="sb-line"><b>Beep who?</b><span>${myRoomButton}<button class="sb-pill" id="sb-all">All</button> <button class="sb-pill" id="sb-none">None</button></span></div>
+			${list.length ? list : html`<div class="sb-empty">🌙 None of your friends are online.</div>`}
 			<div class="sb-line" style="position:sticky;bottom:-10px;background:#fff7fb;padding:6px 0"><span id="sb-gcount"></span><button class="sb-go" id="sb-gsend">Send 🌊</button></div>
 			<div class="sb-hint" id="sb-gstatus"></div>`;
 	}
@@ -4799,12 +4840,12 @@
 	/** HTML of the 🐞 tab. */
 	function bugHtml() {
 		const draft = bugHtml.draft || {};
-		return `<div class="sb-line" style="margin-top:2px"><b>🐞 Report a bug</b></div>
+		return html`<div class="sb-line" style="margin-top:2px"><b>🐞 Report a bug</b></div>
 			<div class="sb-hint" style="margin:0 0 6px">Tell SlimeQueenSamantha what went wrong. SlimeBeep adds its version and recent errors for you.</div>
-			<textarea id="sb-bug-what" maxlength="1500" placeholder="What happened?">${esc(draft.what || '')}</textarea>
-			<textarea id="sb-bug-how" maxlength="800" placeholder="What were you doing? (optional)" style="height:52px;margin-top:6px">${esc(draft.how || '')}</textarea>
-			<label><input type="checkbox" id="sb-bug-num" ${draft.num === false ? '' : 'checked'}><span>Include my member number so she can beep me back</span></label>
-			<details style="margin:6px 2px"><summary class="sb-hint" style="cursor:pointer">What gets added</summary><pre id="sb-bug-details" style="white-space:pre-wrap;font-size:11px;margin:4px 0 0">${esc(details(draft.num !== false))}</pre></details>
+			<textarea id="sb-bug-what" maxlength="1500" placeholder="What happened?">${draft.what || ''}</textarea>
+			<textarea id="sb-bug-how" maxlength="800" placeholder="What were you doing? (optional)" style="height:52px;margin-top:6px">${draft.how || ''}</textarea>
+			<label><input type="checkbox" id="sb-bug-num" ${draft.num !== false && 'checked'}><span>Include my member number so she can beep me back</span></label>
+			<details style="margin:6px 2px"><summary class="sb-hint" style="cursor:pointer">What gets added</summary><pre id="sb-bug-details" style="white-space:pre-wrap;font-size:11px;margin:4px 0 0">${details(draft.num !== false)}</pre></details>
 			<div class="sb-line" style="flex-wrap:wrap;justify-content:flex-start;gap:6px">
 				<button class="sb-go" id="sb-bug-github" title="Opens a new bug report on GitHub, filled in (needs a GitHub account)">🐙 Open on GitHub</button>
 				<button class="sb-pill" id="sb-bug-copy">📋 Copy</button>
@@ -4886,28 +4927,28 @@
 	/** HTML of the "Invite <member> to…" page. */
 	function inviteForHtml() {
 		if (!inviteFor) {
-			return '';
+			return html``;
 		}
 		const n = inviteFor.n;
 		const name = nameOf(n);
 		let how = `They get a code to paste in 👥 Groups, made for #${n} only.`;
 		if (isFriend(n)) {
-			how = peers.has(n) ? `${esc(name)} has SlimeBeep: they get an invite card.` : `${esc(name)} gets a beep with the code.`;
+			how = peers.has(n) ? `${name} has SlimeBeep: they get an invite card.` : `${name} gets a beep with the code.`;
 		}
 		const list = Object.values(groups).filter((g) => canInvite(g, Player.MemberNumber));
-		const rows = list
-			.map((g) => {
-				const res = inviteFor.results[g.id];
-				const inside = isMember(g, n);
-				return `<div class="sb-row" style="cursor:default;display:block"><div style="display:flex;align-items:center;gap:8px"><span class="sb-av sb-gav">👥</span>
-				<div class="sb-main"><div class="sb-name">${esc(g.name)}</div><div class="sb-sub">${g.members.length} / ${LIMITS.members} members</div></div>
-				${inside ? '<span class="sb-hint">Already in it</span>' : `<button class="sb-go" data-invite="${esc(g.id)}" ${res ? 'disabled' : ''}>Invite</button>`}</div>
-				${res ? `<div class="sb-hint" style="margin-top:4px">${res}</div>` : ''}</div>`;
-			})
-			.join('');
-		return `<div class="sb-line"><button class="sb-pill" id="sb-if-back">‹ Back</button><b>👥 Invite ${esc(name)}</b></div>
+		const rows = list.map((g) => {
+			const res = inviteFor.results[g.id];
+			const action = isMember(g, n)
+				? html`<span class="sb-hint">Already in it</span>`
+				: html`<button class="sb-go" data-invite="${g.id}" ${res && 'disabled'}>Invite</button>`;
+			return html`<div class="sb-row" style="cursor:default;display:block"><div style="display:flex;align-items:center;gap:8px">${groupAv(g)}
+				<div class="sb-main"><div class="sb-name">${g.name}</div><div class="sb-sub">${g.members.length} / ${LIMITS.members} members</div></div>
+				${action}</div>
+				${res && html`<div class="sb-hint" style="margin-top:4px">${res}</div>`}</div>`;
+		});
+		return html`<div class="sb-line"><button class="sb-pill" id="sb-if-back">‹ Back</button><b>👥 Invite ${name}</b></div>
 			<div class="sb-hint" style="margin:2px 0 6px">${how}</div>
-			${rows || '<div class="sb-empty">👥 No group chats you can invite to yet.</div>'}`;
+			${rows.length ? rows : html`<div class="sb-empty">👥 No group chats you can invite to yet.</div>`}`;
 	}
 	/** Wires the "Invite <member> to…" page. */
 	function wireInviteFor() {
@@ -4922,11 +4963,11 @@
 				b.disabled = true;
 				const r = await inviteToGroup(id, inviteFor.n);
 				if (!r.ok) {
-					inviteFor.results[id] = `⚠ ${esc(r.why)}`;
+					inviteFor.results[id] = `⚠ ${r.why}`;
 				} else if (r.sent) {
 					inviteFor.results[id] = '📨 Invite sent!';
 				} else {
-					inviteFor.results[id] = `Code: <code style="user-select:all">${esc(r.code)}</code> — give it to them (copied).`;
+					inviteFor.results[id] = html`Code: <code style="user-select:all">${r.code}</code> — give it to them (copied).`;
 				}
 				if (r.ok && !r.sent) {
 					try {
@@ -4944,18 +4985,19 @@
 
 	/** HTML of the ⚙ tab. */
 	function optionsHtml() {
-		return `<div class="sb-opts">
+		const checked = (on) => on && 'checked';
+		return html`<div class="sb-opts">
 			<b style="display:block;margin:6px 2px">⚙ Options</b>
 			<label style="display:flex;align-items:center;gap:8px">${avatar(Player.MemberNumber, myName())}<span style="flex:1">Profile picture<span class="sb-hint" style="display:block">SlimeBeep friends see it.</span></span>
-				<button class="sb-pill" id="sb-o-pic">Choose</button>${myPfp() && loadSrc() ? '<button class="sb-pill" id="sb-o-fit">Adjust</button>' : ''}${myPfp() ? '<button class="sb-pill" id="sb-o-nopic">Remove</button>' : ''}</label>
-			<label><input type="checkbox" id="sb-o-night" ${opts.night ? 'checked' : ''}>🌙 Night mode (a night blue slime)</label>
-			<label><input type="checkbox" id="sb-o-sound" ${opts.sound ? 'checked' : ''}>Pop sound for new beeps</label>
-			<label><input type="checkbox" id="sb-o-popups" ${opts.popups ? 'checked' : ''}>💌 A card by the slime for each new beep</label>
-			<label><input type="checkbox" id="sb-o-desktop" ${opts.desktop ? 'checked' : ''}>🖥 Desktop notification when the game is in the background</label>
-			<label><input type="checkbox" id="sb-o-keep" ${opts.keep ? 'checked' : ''}>🗂 Keep my beeps in this browser after I log out
+				<button class="sb-pill" id="sb-o-pic">Choose</button>${myPfp() && loadSrc() && html`<button class="sb-pill" id="sb-o-fit">Adjust</button>`}${myPfp() && html`<button class="sb-pill" id="sb-o-nopic">Remove</button>`}</label>
+			<label><input type="checkbox" id="sb-o-night" ${checked(opts.night)}>🌙 Night mode (a night blue slime)</label>
+			<label><input type="checkbox" id="sb-o-sound" ${checked(opts.sound)}>Pop sound for new beeps</label>
+			<label><input type="checkbox" id="sb-o-popups" ${checked(opts.popups)}>💌 A card by the slime for each new beep</label>
+			<label><input type="checkbox" id="sb-o-desktop" ${checked(opts.desktop)}>🖥 Desktop notification when the game is in the background</label>
+			<label><input type="checkbox" id="sb-o-keep" ${checked(opts.keep)}>🗂 Keep my beeps in this browser after I log out
 				<span class="sb-hint" style="display:block">${hist.length} beeps kept. <button class="sb-pill" id="sb-o-clear">Clear them</button></span></label>
-			<label><input type="checkbox" id="sb-o-share" ${opts.shareRoom ? 'checked' : ''}>📍 "Let them join me" starts on</label>
-			<label><input type="checkbox" id="sb-o-remember" ${opts.remember ? 'checked' : ''}>Remember who I picked for WaveBeeps</label>
+			<label><input type="checkbox" id="sb-o-share" ${checked(opts.shareRoom)}>📍 "Let them join me" starts on</label>
+			<label><input type="checkbox" id="sb-o-remember" ${checked(opts.remember)}>Remember who I picked for WaveBeeps</label>
 			<label>Wait <input type="number" id="sb-o-gap" min="1" max="10" step="0.5" value="${opts.gap}"> seconds between WaveBeeps</label>
 			<label>Drag the slime to move it. <button class="sb-pill" id="sb-o-reset">Put it back</button></label>
 			<div class="sb-hint" style="margin:10px 4px">SlimeBeep v${VERSION} updates itself: a reload always runs the newest version.</div>
