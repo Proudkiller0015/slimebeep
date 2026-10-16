@@ -258,11 +258,9 @@ const check = (ok, what) => {
 			MainCanvas.fillStyle = color;
 			MainCanvas.fillRect(l, t, w, h);
 			MainCanvas.strokeRect(l, t, w, h);
+			// Like the game: the label is drawn at the centre with whatever textAlign is set.
 			if (label) {
-				const a = MainCanvas.textAlign;
-				MainCanvas.textAlign = 'center';
 				DrawText(label, l + w / 2, t + h / 2, 'Black');
-				MainCanvas.textAlign = a;
 			}
 			if (img === 'Icons/Checked.png') {
 				MainCanvas.fillStyle = '#393';
@@ -823,6 +821,39 @@ const check = (ok, what) => {
 			rows.some((r) => /Ann.*✓/.test(r)) && rows.some((r) => /Cat.*⚠/.test(r)) && rows.some((r) => /Zed/.test(r) && !/[✓⚠]/.test(r)),
 			`the key check: ✓ for Ann, ⚠ for a "Cat" whose key is not the one Cat's SlimeBeep sent, nothing for strangers (${rows.join(' | ')})`,
 		);
+		// A redraw for new data (here a message) keeps the members page where it was, ticked friends too.
+		const before = await p.$eval('#sb-body', (b) => {
+			b.dataset.probe = '1';
+			const box = b.querySelector('label input[type=checkbox][value]:not(:disabled)');
+			if (box) {
+				box.checked = true;
+				box.dispatchEvent(new Event('change'));
+			}
+			b.scrollTop = b.scrollHeight;
+			return { top: b.scrollTop, ticked: box ? box.value : null };
+		});
+		z.say('a message while you scroll');
+		await wait(700);
+		const after = await p.$eval('#sb-body', (b) => ({
+			redrawn: !b.dataset.probe,
+			top: b.scrollTop,
+			ticked: [...b.querySelectorAll('label input[type=checkbox][value]:checked')].map((x) => x.value),
+			send: !document.getElementById('sb-gm-add').disabled,
+		}));
+		check(
+			before.top > 0 &&
+				after.redrawn &&
+				Math.abs(after.top - before.top) < 2 &&
+				(!before.ticked || (after.ticked.includes(before.ticked) && after.send)),
+			`a redraw keeps the members page's scroll and ticked friends (${JSON.stringify({ before, after })})`,
+		);
+		await p.$eval('#sb-body', (b) => {
+			for (const x of b.querySelectorAll('label input[type=checkbox][value]:checked')) {
+				x.checked = false;
+				x.dispatchEvent(new Event('change'));
+			}
+			b.scrollTop = 0;
+		});
 		await shot('members');
 		z.say('hi, I am a friend of nobody here');
 		await tap('#sb-back');
@@ -1752,6 +1783,36 @@ const check = (ok, what) => {
 		return x.left >= 0 && x.top >= 0 && x.right <= innerWidth && x.bottom <= innerHeight;
 	});
 	check(inside, 'the panel stays inside the window');
+	// Past the top edge: the pointer can be reported far above, or wrapped to a huge value (the bottom).
+	const pastTop = await p.$eval('#sb-toggle', (t) => {
+		const r = t.getBoundingClientRect();
+		const at = (x, y) => ({ clientX: x, clientY: y, button: 0, buttons: 1, pointerId: 1, bubbles: true });
+		t.dispatchEvent(new PointerEvent('pointerdown', at(r.x + 20, r.y + 20)));
+		const tops = [];
+		for (const y of [r.y, 60, 10, -40, 65000, -300]) {
+			t.dispatchEvent(new PointerEvent('pointermove', at(r.x + 20, y)));
+			tops.push(parseFloat(t.style.top));
+		}
+		t.dispatchEvent(new PointerEvent('pointerup', { ...at(r.x + 20, -300), buttons: 0 }));
+		return tops;
+	});
+	check(
+		pastTop.slice(3).every((y) => y === 0),
+		`dragged past the top it stays at the top, never jumps to the bottom (${pastTop})`,
+	);
+	const back = await p.$eval('#sb-toggle', (t) => {
+		const r = t.getBoundingClientRect();
+		const at = (x, y) => ({ clientX: x, clientY: y, button: 0, buttons: 1, pointerId: 1, bubbles: true });
+		t.dispatchEvent(new PointerEvent('pointerdown', at(r.x + 20, r.y + 20)));
+		for (let y = r.y + 20; y <= 200; y += 20) {
+			t.dispatchEvent(new PointerEvent('pointermove', at(300, y)));
+		}
+		t.dispatchEvent(new PointerEvent('pointermove', at(300, 200)));
+		t.dispatchEvent(new PointerEvent('pointerup', { ...at(300, 200), buttons: 0 }));
+		return [parseFloat(t.style.left), parseFloat(t.style.top)];
+	});
+	check(Math.abs(back[0] - 280) < 4 && Math.abs(back[1] - 180) < 4, `and drags back down as usual (${back})`);
+	const spot = await p.$eval('#sb-toggle', (e) => [e.style.left, e.style.top]);
 	newsBody = JSON.stringify([
 		{ id: 'old', text: 'old news' },
 		{ id: 'n1', title: '📢 Hi', text: 'SlimeBeep can now keep your beeps!' },
@@ -1769,7 +1830,7 @@ const check = (ok, what) => {
 	check(newsCards.length === 1 && /keep your beeps/.test(newsCards[0]), `a first install sees only the newest news item (${newsCards})`);
 	check((await p.$$eval('.sb-card:not(.news)', (e) => e.length)) === 0, 'beeps from before the reload pop no cards');
 	check(
-		JSON.stringify(await p.$eval('#sb-toggle', (e) => [e.style.left, e.style.top])) === JSON.stringify(at),
+		JSON.stringify(await p.$eval('#sb-toggle', (e) => [e.style.left, e.style.top])) === JSON.stringify(spot),
 		'the spot survives a reload',
 	);
 	await p.click('#sb-toggle');

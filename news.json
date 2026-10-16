@@ -208,5 +208,11 @@
     "date": "16 Oct 2026",
     "title": "📢 SlimeBeep 3.0.2",
     "text": "Behind the scenes: every update is now checked for mistakes automatically before it goes out, so things break less. Nothing changes for you."
+  },
+  {
+    "id": "3.0.3",
+    "date": "16 Oct 2026",
+    "title": "📢 SlimeBeep 3.0.3",
+    "text": "Fixes: the invite list no longer jumps back to the top (and keeps who you ticked), a bigger back arrow, centred header buttons, the slime no longer jumps to the bottom when dragged past the top, and a tidier SlimeBeep page in Settings > Extensions. SlimeBeep is now in FUSAM's Addon Manager (as beta)!"
   }
 ]

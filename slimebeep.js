@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.0.2';
+	const VERSION = '3.0.3';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -961,6 +961,7 @@
 		.sb-head small { opacity: .85; font-weight: normal; font-size: 11px; }
 		.sb-head button { border: none; background: #ffffff55; color: #fff; width: 28px; height: 28px; border-radius: 50%; font-size: 14px; }
 		.sb-head button:hover { background: #ffffff88; }
+		.sb-head button, .sb-thead button, .sb-compose button, .sb-emo-tabs button, .sb-emo-grid button { padding: 0; display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
 		.sb-tabs { display: flex; gap: 3px; padding: 8px 8px 6px; background: #ffe6f3; }
 		.sb-tabs button { flex: 1 1 auto; min-width: 0; white-space: nowrap; border: none; border-radius: 14px; padding: 5px 5px; background: #fff; color: #c2186b; text-align: center; }
 		.sb-tabs button.on { background: #ff4fa3; color: #fff; box-shadow: 0 2px 6px #ff4fa366; }
@@ -986,6 +987,9 @@
 		.sb-empty { text-align: center; color: #c08aaa; padding: 30px 10px; }
 		.sb-thead { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: #ffe6f3; }
 		.sb-thead button { border: none; background: #fff; color: #ff4fa3; width: 28px; height: 28px; border-radius: 50%; font-size: 15px; }
+		.sb-thead #sb-back { width: 36px; height: 36px; flex: none; }
+		/* Pages and add-ons can style every svg; this one stays put. */
+		#sb-panel #sb-back svg { display: block; position: static; margin: 0; padding: 0; width: 22px; height: 22px; opacity: 1; transform: none; }
 		.sb-msgs { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 6px;
 			background: radial-gradient(circle at 20% 10%, #fff 0, #fff7fb 60%); }
 		.sb-b { max-width: 78%; padding: 7px 11px; border-radius: 18px; white-space: pre-wrap; word-wrap: break-word; }
@@ -1214,7 +1218,7 @@
 		);
 		document.body.appendChild(panel);
 
-		/** @type {{ dx: number, dy: number, x0: number, y0: number, moved: boolean } | null} Toggle drag in progress: pointer offset, start point, whether it moved. */
+		/** @type {{ dx: number, dy: number, x0: number, y0: number, lastX: number, lastY: number, moved: boolean } | null} Toggle drag in progress: pointer offset, start point, last point, whether it moved. */
 		let drag = null;
 		/**
 		 * Ends a drag (saving the position when `save`).
@@ -1238,7 +1242,15 @@
 				return;
 			}
 			const r = toggle.getBoundingClientRect();
-			drag = { dx: e.clientX - r.left, dy: e.clientY - r.top, x0: e.clientX, y0: e.clientY, moved: false };
+			drag = {
+				dx: e.clientX - r.left,
+				dy: e.clientY - r.top,
+				x0: e.clientX,
+				y0: e.clientY,
+				lastX: e.clientX,
+				lastY: e.clientY,
+				moved: false,
+			};
 			try {
 				toggle.setPointerCapture(e.pointerId);
 			} catch (err) {
@@ -1254,12 +1266,21 @@
 				endDrag(true);
 				return;
 			}
-			if (!drag.moved && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 8) {
+			// Outside the window some browsers report the pointer far off, even wrapped around to the other
+			// edge: the pointer is kept inside the window, and a jump of half the window is no real move.
+			const x = Math.max(0, Math.min(innerWidth, e.clientX));
+			const y = Math.max(0, Math.min(innerHeight, e.clientY));
+			if (Math.abs(x - drag.lastX) > innerWidth / 2 || Math.abs(y - drag.lastY) > innerHeight / 2) {
+				return;
+			}
+			drag.lastX = x;
+			drag.lastY = y;
+			if (!drag.moved && Math.hypot(x - drag.x0, y - drag.y0) < 8) {
 				return;
 			}
 			drag.moved = true;
 			toggle.classList.add('dragging');
-			opts.pos = { x: (e.clientX - drag.dx) / innerWidth, y: (e.clientY - drag.dy) / innerHeight };
+			opts.pos = { x: (x - drag.dx) / innerWidth, y: (y - drag.dy) / innerHeight };
 			place();
 		});
 		toggle.addEventListener('pointerup', (e) => {
@@ -4028,6 +4049,7 @@
 		</div>`;
 		const body = $('sb-body');
 		const scroll = keepScroll && body ? body.scrollTop : 0;
+		const page = pageState(tab);
 		if (tab === 'options') {
 			setHtml(view, html`${tabs}<div class="sb-body" id="sb-body">${optionsHtml()}</div>`);
 		} else if (tab === 'newgc') {
@@ -4117,6 +4139,48 @@
 		if (tab === 'options') {
 			wireOptions();
 		}
+		restorePage(tab, page);
+	}
+
+	/**
+	 * Where a page in #sb-body was: its scroll position and the values of its ticked boxes.
+	 * @typedef {{ scroll: number, ticked: string[] }} PageState
+	 */
+	/**
+	 * The state of the page in #sb-body, if that page is `key` (so the coming draw is a redraw for new
+	 * data, not navigation).
+	 * @param {string} key
+	 * @returns {PageState | null}
+	 */
+	function pageState(key) {
+		const body = $('sb-body');
+		if (!body || body.dataset.page !== key) {
+			return null;
+		}
+		return { scroll: body.scrollTop, ticked: $$inputs(body, 'label input[type=checkbox][value]:checked').map((b) => b.value) };
+	}
+	/**
+	 * Marks the new #sb-body as page `key` and puts back what pageState saved. Ticks go back through a
+	 * change event, so counts and buttons follow.
+	 * @param {string} key
+	 * @param {PageState | null} state
+	 */
+	function restorePage(key, state) {
+		const body = $('sb-body');
+		if (!body) {
+			return;
+		}
+		body.dataset.page = key;
+		if (!state) {
+			return;
+		}
+		for (const b of $$inputs(body, 'label input[type=checkbox][value]')) {
+			if (!b.checked && !b.disabled && state.ticked.includes(b.value)) {
+				b.checked = true;
+				b.dispatchEvent(new Event('change'));
+			}
+		}
+		body.scrollTop = state.scroll;
 	}
 
 	/**
@@ -4355,6 +4419,7 @@
 			}
 		}
 		const focused = document.activeElement && document.activeElement.id;
+		const page = pageState(`m:${id}`);
 		/** @param {number} n */
 		const on = (n) => n === me || (g.online || []).includes(n);
 		const rows = g.members
@@ -4406,7 +4471,7 @@
 		setHtml(
 			view,
 			html`
-			<div class="sb-thead"><button id="sb-back" title="Back to the chat">‹</button>${groupAv(g)}
+			<div class="sb-thead"><button id="sb-back" title="Back to the chat">${BACK_ICON}</button>${groupAv(g)}
 				<div class="sb-main"><div class="sb-name">${g.name}</div><div class="sb-sub">${g.members.length} / ${LIMITS.members} members</div></div></div>
 			<div class="sb-body sb-group" id="sb-body">
 				${settings}
@@ -4517,8 +4582,11 @@
 				update();
 			});
 		}
+		restorePage(`m:${id}`, page);
 	}
 
+	/** The chevron on the ‹ back buttons of chat headers (a drawn icon: the ‹ character is tiny in most fonts). */
+	const BACK_ICON = html`<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M15 4.5 7.5 12l7.5 7.5" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 	/**
 	 * Draws an open group chat.
 	 * @param {boolean} [keepScroll]
@@ -4558,7 +4626,7 @@
 		setHtml(
 			view,
 			html`
-			<div class="sb-thead"><button id="sb-back" title="Back">‹</button>${groupAv(g)}
+			<div class="sb-thead"><button id="sb-back" title="Back">${BACK_ICON}</button>${groupAv(g)}
 				<div class="sb-main"><div class="sb-name">${g.name}</div>
 				<div class="sb-sub" title="${names.join(', ')}">${status}${g.members.length} members: You${names.length > 0 && `, ${names.join(', ')}`}</div></div>
 				${muteButton(`g:${id}`)}<button id="sb-members" title="Members and invites">👥</button><button id="sb-leave" title="${g.owner === Player.MemberNumber ? 'Leave or delete the group' : 'Leave the group'}">🚪</button></div>
@@ -4792,7 +4860,7 @@
 		setHtml(
 			view,
 			html`
-			<div class="sb-thead"><button id="sb-back" title="Back">‹</button>${avatar(n, nameOf(n))}
+			<div class="sb-thead"><button id="sb-back" title="Back">${BACK_ICON}</button>${avatar(n, nameOf(n))}
 				<div class="sb-main"><div class="sb-name">${nameOf(n)} <small style="font-weight:normal;color:#c08aaa">#${n}</small></div>
 				<div class="sb-sub">${f && html`<span class="sb-on"></span>`}${where(f)}</div></div>${muteButton(`n:${n}`)}</div>
 			<div class="sb-msgs" id="sb-msgs">${bubbles}${waitingBubbles}</div>
@@ -5381,14 +5449,17 @@
 					shown().forEach(([, label, get], i) =>
 						DrawCheckbox(LEFT, TOP + i * ROW, 64, 64, typeof label === 'function' ? label() : label, !!get()),
 					);
+					// The game centres button labels with the current textAlign.
+					MainCanvas.textAlign = 'center';
 					DrawButton(...MINUS, '-', 'White');
 					DrawButton(...PLUS, '+', 'White');
+					MainCanvas.textAlign = 'left';
 					DrawText(`Wait ${opts.gap} seconds between WaveBeeps`, LEFT + 180, g + 33, 'Black', 'Gray');
 					MainCanvas.textAlign = 'center';
 					DrawButton(...RESET, 'Reset slime position', 'White');
 					DrawButton(...CLEAR, `Clear kept beeps (${hist.length})`, 'White');
 					DrawButton(...PIC, myPfp() ? 'Change profile picture' : 'Choose profile picture', 'White');
-					drawMyPic(PIC[0] - 90, PIC[1], 64);
+					drawMyPic(NOPIC[0] + NOPIC[2] + 20, PIC[1], 64);
 					if (myPfp()) {
 						DrawButton(...NOPIC, 'Remove profile picture', 'White');
 					}
