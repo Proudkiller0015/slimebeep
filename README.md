@@ -18,4 +18,6 @@ A simple beep tool for [Bondage Club](https://www.bondageprojects.elementfx.com/
 - Tick the online friends you want to beep (or **All** / **None**).
 - Press **Send**. Beeps go out one every 1.5 seconds.
 
-Updates install automatically through your userscript manager.
+## Updates
+
+You install once. The installed script is a tiny loader that fetches the newest SlimeBeep from this repository every time the game loads, so any change pushed here reaches everybody on their next reload or relog. The tool itself is [`slimebeep.js`](slimebeep.js); bump `VERSION` in it when you change it (the box shows it next to the name).

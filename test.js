@@ -1,6 +1,6 @@
 // Headless test: stubs the game's socket and beep sender, drives the real box.
 const puppeteer = require('C:/Users/Sam_0/Documents/Project/bc-plushies/node_modules/puppeteer-core');
-const src = require('fs').readFileSync(__dirname + '/slimebeep.user.js', 'utf8');
+const src = require('fs').readFileSync(__dirname + '/slimebeep.js', 'utf8');
 (async () => {
 	const b = await puppeteer.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: 'new' });
 	const p = await b.newPage();
