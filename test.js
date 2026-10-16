@@ -497,7 +497,13 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	{
 		const r = await p.evaluate(async () => {
 			document.getElementById('sb-quit').click();
+			const asked = !!document.querySelector('#sb-ask') && !!document.getElementById('sb-toggle') && /bookmark again/.test(document.querySelector('#sb-ask .sb-warn').textContent);
+			document.querySelector('#sb-ask [data-act=keep]').click();
+			const kept = !document.querySelector('#sb-ask') && !!document.getElementById('sb-toggle');
+			document.getElementById('sb-quit').click();
+			document.querySelector('#sb-ask [data-act=quit]').click();
 			await new Promise((res) => setTimeout(res, 300));
+			if (!asked || !kept) return { left: ['no confirm'], asked, kept };
 			const left = [...document.querySelectorAll('[id^="sb-"]')].map((e) => e.id);
 			fire('AccountBeep', { MemberNumber: 11, MemberName: 'Ann', BeepType: '', Message: 'still there?' });
 			await new Promise((res) => setTimeout(res, 300));

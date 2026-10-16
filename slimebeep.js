@@ -13,7 +13,7 @@
 (function () {
 	'use strict';
 
-	const VERSION = '2.15.0';
+	const VERSION = '2.15.1';
 	// Loaded once per page, whatever loads it.
 	if (window.SlimeBeep) return;
 	window.SlimeBeep = { version: VERSION };
@@ -409,14 +409,17 @@
 		#sb-zoom { position: absolute; inset: 0; z-index: 5; background: #0008; backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; cursor: zoom-out; }
 		#sb-zoom img { width: 220px; height: 220px; border-radius: 50%; border: 4px solid #fff; box-shadow: 0 10px 40px #000a; background: #fff; }
 		#sb-me .sb-av { width: 28px; height: 28px; border: 2px solid #fff; font-size: 11px; }
-		#sb-crop { position: absolute; inset: 0; z-index: 5; background: #fff8; backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; font-family: inherit; }
-		#sb-crop .sb-crop-card { background: #fff; color: #5a2a48; border-radius: 18px; padding: 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; box-shadow: 0 10px 40px #0008; max-width: calc(100% - 24px); }
+		#sb-crop, #sb-ask { position: absolute; inset: 0; z-index: 5; background: #fff8; backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; font-family: inherit; }
+		#sb-crop .sb-crop-card, #sb-ask .sb-crop-card { background: #fff; color: #5a2a48; border-radius: 18px; padding: 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; box-shadow: 0 10px 40px #0008; max-width: calc(100% - 24px); }
 		#sb-crop .sb-crop-ring { border-radius: 50%; overflow: hidden; border: 3px solid #ff7ac0; background: repeating-conic-gradient(#eee 0 25%, #fff 0 50%) 0 0 / 16px 16px; touch-action: none; }
 		/* The game styles every canvas as its full-screen one (absolute, 100% wide); not this one. */
 		#sb-crop canvas { display: block; cursor: grab; position: static; inset: auto; margin: 0; padding: 0; width: 200px !important; height: 200px !important; max-width: none; }
 		#sb-crop canvas:active { cursor: grabbing; }
 		#sb-crop input[type=range] { width: 200px; accent-color: #ff4fa3; }
-		#sb-crop .sb-crop-btns { display: flex; gap: 8px; }
+		#sb-ask { align-items: flex-start; padding-top: 70px; }
+		#sb-ask .sb-warn { background: #ffe1e1; color: #b00020; border: 2px solid #e5303f; border-radius: 12px; padding: 10px 12px; font-weight: 700; font-size: 13px; line-height: 1.35; text-align: center; }
+		#sb-ask [data-act=quit] { background: #e5303f; }
+		#sb-crop .sb-crop-btns, #sb-ask .sb-crop-btns { display: flex; gap: 8px; }
 		#sb-crop .sb-crop-card { position: relative; }
 		#sb-crop .sb-crop-x { position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; border-radius: 50%; border: none; background: #ffe3f1; color: #c2387f; cursor: pointer; }
 		.sb-b.sb-act { font-style: italic; background: transparent !important; border: 1px dashed currentColor !important; color: inherit; opacity: .85; }
@@ -614,7 +617,7 @@
 			setOpen(panel.style.display !== 'flex');
 		});
 		addEventListener('resize', place);
-		$('sb-quit').addEventListener('click', quit);
+		$('sb-quit').addEventListener('click', askQuit);
 		$('sb-close').addEventListener('click', () => setOpen(false));
 		$('sb-moon').addEventListener('click', () => setNight(!opts.night));
 		setNight(opts.night);
@@ -653,6 +656,26 @@
 	 * saved is touched, and the bookmarklet (or a reload, with the userscript) starts it again.
 	 */
 	let stopped = false, tickTimer = null;
+	/** ⏻ asks first, inside the panel: one stray click must not turn SlimeBeep off. */
+	function askQuit() {
+		if (stopped || $('sb-ask')) return;
+		const box = document.createElement('div');
+		box.id = 'sb-ask';
+		box.innerHTML = `<div class="sb-crop-card">
+			<b>Turn SlimeBeep off?</b>
+			<div class="sb-warn">⚠ To get it back you'll have to <u>reload the game</u> and <u>click your SlimeBeep bookmark again</u> (with the userscript or FUSAM it comes back on its own after the reload).</div>
+			<span class="sb-hint" style="text-align:center">Your chats and settings stay.</span>
+			<div class="sb-crop-btns"><button class="sb-pill" data-act="keep">Keep it on</button><button class="sb-go" data-act="quit">⏻ Turn off</button></div>
+		</div>`;
+		const close = () => { box.remove(); document.removeEventListener('keydown', onKey, true); };
+		const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+		box.addEventListener('click', (e) => {
+			const act = e.target.dataset && e.target.dataset.act;
+			if (act === 'quit') { close(); quit(); } else if (act === 'keep' || e.target === box) close();
+		});
+		document.addEventListener('keydown', onKey, true);
+		$('sb-panel').appendChild(box);
+	}
 	function quit() {
 		if (stopped) return;
 		stopped = true;
@@ -667,7 +690,7 @@
 		} catch (e) { /* gone */ }
 		listening = null;
 		for (const c of Object.values(conns)) { c.dead = true; try { if (c.ws) c.ws.close(); } catch (e) { /* gone */ } }
-		for (const id of ['sb-toggle', 'sb-panel', 'sb-toast', 'sb-cards', 'sb-crop', 'sb-zoom', 'sb-style']) { const el = $(id); if (el) el.remove(); }
+		for (const id of ['sb-toggle', 'sb-panel', 'sb-toast', 'sb-cards', 'sb-crop', 'sb-zoom', 'sb-ask', 'sb-style']) { const el = $(id); if (el) el.remove(); }
 		const root = document.documentElement;
 		for (const k of [...root.classList]) if (/^sb-/.test(k)) root.classList.remove(k);
 		for (const set of Object.values(apiListeners)) set.clear();
@@ -1365,7 +1388,7 @@
 
 	const isOpen = () => $('sb-panel').style.display === 'flex';
 	function setOpen(on) {
-		if (!on) for (const id of ['sb-crop', 'sb-zoom']) if ($(id)) $(id).remove();
+		if (!on) for (const id of ['sb-crop', 'sb-zoom', 'sb-ask']) if ($(id)) $(id).remove();
 		$('sb-panel').style.display = on ? 'flex' : 'none';
 		if (on) { askFriends(); render(); }
 		place();
@@ -2200,6 +2223,7 @@
 					DrawCharacter(Player, 50, 50, 0.9);
 					if (stopped) {
 						DrawText('SlimeBeep is off until you reload the game.', 1100, 300, 'Black', 'Gray');
+						DrawText('Then click your SlimeBeep bookmark again (the userscript or FUSAM start it on their own).', 1100, 370, '#B00020', 'Gray');
 						DrawButton(...EXIT, '', 'White', 'Icons/Exit.png');
 						return;
 					}
