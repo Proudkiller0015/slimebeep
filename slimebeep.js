@@ -13,7 +13,7 @@
 (function () {
 	'use strict';
 
-	const VERSION = '2.18.0';
+	const VERSION = '2.18.1';
 	// Loaded once per page, whatever loads it.
 	if (window.SlimeBeep) return;
 	window.SlimeBeep = { version: VERSION };
@@ -1112,11 +1112,137 @@
 	let myKey = null;
 	const b64url = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
+	/*
+	 * Signing without the browser's crypto.subtle, which only exists on https pages: the game's sites also
+	 * open as plain http://, and there a player could not join or make any group ("could not reach the
+	 * group", 16 Oct 2026). The same P-256 ECDSA the relay checks, in plain JavaScript, with the browser's
+	 * own random numbers (crypto.getRandomValues works on http too). The key is kept in the same form, so it
+	 * is the same key either way. Used only when crypto.subtle is missing.
+	 */
+	const softEc = (() => {
+		const P = 0xffffffff00000001000000000000000000000000ffffffffffffffffffffffffn;
+		const N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n;
+		const G = [0x6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296n, 0x4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5n];
+		const mod = (a, m) => { const r = a % m; return r >= 0n ? r : r + m; };
+		const inv = (a, m) => {
+			let [r0, r1, s0, s1] = [mod(a, m), m, 1n, 0n];
+			while (r1) { const q = r0 / r1; [r0, r1] = [r1, r0 - q * r1]; [s0, s1] = [s1, s0 - q * s1]; }
+			return mod(s0, m);
+		};
+		// Jacobian points [X, Y, Z]; Z = 0 is the point at infinity.
+		const dbl = ([x, y, z]) => {
+			if (!z || !y) return [0n, 1n, 0n];
+			const yy = mod(y * y, P), s = mod(4n * x * yy, P), zz = mod(z * z, P);
+			const m = mod(3n * (x - zz) * (x + zz), P);
+			const x3 = mod(m * m - 2n * s, P);
+			return [x3, mod(m * (s - x3) - 8n * yy * yy, P), mod(2n * y * z, P)];
+		};
+		const add = (a, b) => {
+			if (!a[2]) return b;
+			if (!b[2]) return a;
+			const z1z1 = mod(a[2] * a[2], P), z2z2 = mod(b[2] * b[2], P);
+			const u1 = mod(a[0] * z2z2, P), u2 = mod(b[0] * z1z1, P);
+			const s1 = mod(a[1] * b[2] * z2z2, P), s2 = mod(b[1] * a[2] * z1z1, P);
+			if (u1 === u2) return s1 === s2 ? dbl(a) : [0n, 1n, 0n];
+			const h = mod(u2 - u1, P), r = mod(s2 - s1, P), hh = mod(h * h, P), hhh = mod(h * hh, P), v = mod(u1 * hh, P);
+			const x3 = mod(r * r - hhh - 2n * v, P);
+			return [x3, mod(r * (v - x3) - s1 * hhh, P), mod(a[2] * b[2] * h, P)];
+		};
+		const mul = (k, pt) => {
+			let q = [0n, 1n, 0n], d = [pt[0], pt[1], 1n];
+			for (; k > 0n; k >>= 1n) { if (k & 1n) q = add(q, d); d = dbl(d); }
+			if (!q[2]) return null;
+			const zi = inv(q[2], P), zi2 = mod(zi * zi, P);
+			return [mod(q[0] * zi2, P), mod(q[1] * zi2 * zi, P)];
+		};
+		const toBig = (bytes) => bytes.reduce((n, b) => (n << 8n) | BigInt(b), 0n);
+		const toBytes = (n) => { const out = new Uint8Array(32); for (let i = 31; i >= 0; i--) { out[i] = Number(n & 0xffn); n >>= 8n; } return out; };
+		const b64 = (bytes) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+		const unb64 = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (s.length % 4)) % 4)), (c) => c.charCodeAt(0));
+		const scalar = () => {
+			for (;;) {
+				const k = toBig(crypto.getRandomValues(new Uint8Array(32)));
+				if (k > 0n && k < N) return k;
+			}
+		};
+		// SHA-256 (FIPS 180-4).
+		const K = [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
+			0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+			0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
+			0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+			0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
+			0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2];
+		const sha256 = (msg) => {
+			const len = msg.length, total = ((len + 9 + 63) >> 6) << 6, m = new Uint8Array(total);
+			m.set(msg);
+			m[len] = 0x80;
+			const bits = len * 8;
+			for (let i = 0; i < 4; i++) m[total - 1 - i] = (bits / 2 ** (8 * i)) & 0xff;
+			const h = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+			const w = new Array(64);
+			const rot = (x, n) => (x >>> n) | (x << (32 - n));
+			for (let o = 0; o < total; o += 64) {
+				for (let i = 0; i < 16; i++) w[i] = (m[o + i * 4] << 24) | (m[o + i * 4 + 1] << 16) | (m[o + i * 4 + 2] << 8) | m[o + i * 4 + 3];
+				for (let i = 16; i < 64; i++) {
+					const s0 = rot(w[i - 15], 7) ^ rot(w[i - 15], 18) ^ (w[i - 15] >>> 3), s1 = rot(w[i - 2], 17) ^ rot(w[i - 2], 19) ^ (w[i - 2] >>> 10);
+					w[i] = (w[i - 16] + s0 + w[i - 7] + s1) | 0;
+				}
+				let [a, b, c, d, e, f, g, hh] = h;
+				for (let i = 0; i < 64; i++) {
+					const t1 = (hh + (rot(e, 6) ^ rot(e, 11) ^ rot(e, 25)) + ((e & f) ^ (~e & g)) + K[i] + w[i]) | 0;
+					const t2 = ((rot(a, 2) ^ rot(a, 13) ^ rot(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) | 0;
+					[hh, g, f, e, d, c, b, a] = [g, f, e, (d + t1) | 0, c, b, a, (t1 + t2) | 0];
+				}
+				[a, b, c, d, e, f, g, hh].forEach((v, i) => { h[i] = (h[i] + v) | 0; });
+			}
+			const out = new Uint8Array(32);
+			h.forEach((v, i) => { out[i * 4] = v >>> 24; out[i * 4 + 1] = (v >>> 16) & 0xff; out[i * 4 + 2] = (v >>> 8) & 0xff; out[i * 4 + 3] = v & 0xff; });
+			return out;
+		};
+		return {
+			/** A new key, as { x, y, d } in base64url (a JWK's fields). */
+			generate() {
+				const d = scalar();
+				const [x, y] = mul(d, G);
+				return { x: b64(toBytes(x)), y: b64(toBytes(y)), d: b64(toBytes(d)) };
+			},
+			/** The 64-byte r||s signature of `text`, as WebCrypto's ECDSA SHA-256 gives it. */
+			sign(dB64, text) {
+				const d = toBig(unb64(dB64));
+				const e = mod(toBig(sha256(new TextEncoder().encode(text))), N);
+				for (;;) {
+					const k = scalar();
+					const R = mul(k, G);
+					const r = R ? mod(R[0], N) : 0n;
+					if (!r) continue;
+					const s = mod(inv(k, N) * (e + r * d), N);
+					if (!s) continue;
+					const out = new Uint8Array(64);
+					out.set(toBytes(r), 0);
+					out.set(toBytes(s), 32);
+					return out.buffer;
+				}
+			},
+			sha256,
+		};
+	})();
+	const hasSubtle = () => typeof crypto !== 'undefined' && !!crypto.subtle;
+
 	/** This account's key in this browser (made the first time it's needed). */
 	async function getKey() {
 		const me = Player.MemberNumber;
 		if (myKey && myKey.owner === me) return myKey;
 		const k = `slimebeep.key.${me}`;
+		if (!hasSubtle()) {
+			// A plain http:// page: the same key, signed by softEc.
+			let saved = null;
+			try { saved = JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { /* make a new one */ }
+			if (!saved || !saved.d || !saved.x || !saved.y) {
+				saved = softEc.generate();
+				try { localStorage.setItem(k, JSON.stringify(saved)); } catch (e) { /* this visit only */ }
+			}
+			return (myKey = { owner: me, priv: { soft: saved.d }, pub: { x: saved.x, y: saved.y }, kf: saved.x.slice(0, 16) });
+		}
 		try {
 			const saved = JSON.parse(localStorage.getItem(k) || 'null');
 			if (saved && saved.d && saved.x && saved.y) {
@@ -1166,7 +1292,8 @@
 		const me = Player.MemberNumber;
 		if (p.t === 'hello' && typeof p.nonce === 'string') {
 			const k = await getKey();
-			const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, k.priv, new TextEncoder().encode(`${p.nonce}|${gid}|${me}`));
+			const signed = `${p.nonce}|${gid}|${me}`;
+			const sig = k.priv.soft ? softEc.sign(k.priv.soft, signed) : await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, k.priv, new TextEncoder().encode(signed));
 			const g = groups[gid];
 			c.ws.send(JSON.stringify({ t: 'auth', member: me, name: myName(), pub: k.pub, sig: b64url(sig), after: g ? g.last || 0 : 0,
 				...(c.create ? { create: c.create } : {}), ...(c.invite ? { invite: c.invite } : {}) }));

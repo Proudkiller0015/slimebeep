@@ -933,6 +933,40 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	const upd = await p.evaluate(() => local);
 	check(upd.length === 1 && upd[0].includes(`updated to v${ver}`) && upd[0].includes('Shiny new things.'), `after an update, one room note with what's new, even when the first try was lost`);
 	await shot('reload');
+
+	// ---- A plain http:// page (no crypto.subtle): joining a group still signs in, with the key made on https
+	// and with a brand new one.
+	{
+		const ann = await relayUser(11, 'Ann');
+		const joinOn = async (keepKey) => {
+			const gid = `http${Date.now().toString(36)}`;
+			const host = await relayJoin(gid, ann, { create: { name: keepKey ? 'Plain HTTP' : 'Plain HTTP 2', open: true } });
+			host.send({ t: 'invite' });
+			await wait(400);
+			const code = `SB-${gid}-${host.last('invite').code}`;
+			await p.reload();
+			await p.evaluate(stub);
+			await p.evaluate((keep) => {
+				Object.defineProperty(Crypto.prototype, 'subtle', { get: () => undefined, configurable: true });
+				if (!keep) localStorage.removeItem(`slimebeep.key.${Player.MemberNumber}`);
+				makeLog();
+			}, keepKey);
+			await p.addScriptTag({ content: src });
+			await wait(1500);
+			if (await p.evaluate(() => document.getElementById('sb-panel').style.display !== 'flex')) await p.click('#sb-toggle');
+			await wait(200);
+			await p.click('[data-tab=groups]');
+			await wait(200);
+			await p.type('#sb-join-code', code);
+			await p.click('#sb-join');
+			const joined = await waitFor(() => p.evaluate((g) => !!SlimeBeep.api.group(g), gid), 8000);
+			const noSubtle = await p.evaluate(() => !crypto.subtle);
+			host.ws.close();
+			return joined && noSubtle;
+		};
+		check(await joinOn(true), 'on an http:// page (no crypto.subtle) joining a group works with the key made on https');
+		check(await joinOn(false), 'and with a key made right there');
+	}
 	await b.close();
 	console.log(failed ? `\n${failed} FAILED` : '\nall passed');
 	process.exit(failed ? 1 : 0);

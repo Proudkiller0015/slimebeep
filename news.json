@@ -160,5 +160,11 @@
     "date": "16 Oct 2026",
     "title": "📢 SlimeBeep 2.18",
     "text": "🖼 Group chats can have a picture (admins: 👥 page). Links in chats are clickable, and a group code gets a Join button, in SlimeBeep and in the room chat. Friendlier invite beeps. Fixed: the slime could move by itself after a drag."
+  },
+  {
+    "id": "2.18.1",
+    "date": "16 Oct 2026",
+    "title": "📢 SlimeBeep 2.18.1",
+    "text": "Fixed: group chats couldn't be joined or made when the game was opened on a plain http:// address (like the mirrors). They work there now."
   }
 ]
