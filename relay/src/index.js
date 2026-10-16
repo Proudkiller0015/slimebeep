@@ -116,6 +116,7 @@ export class Group extends DurableObject {
 				case 'rename': return await this.rename(att.member, p.name);
 				case 'open': return await this.setOpen(att.member, p.on === true);
 				case 'profile': return await this.profile(att.member, p);
+				case 'gpic': return await this.groupPic(att.member, p.pic);
 				case 'leave': return await this.leave(att.member);
 				case 'disband': return await this.disband(att.member);
 				default: return this.send(ws, { t: 'error', why: 'unknown' });
@@ -181,6 +182,7 @@ export class Group extends DurableObject {
 		ws.serializeAttachment(att);
 		this.send(ws, { t: 'welcome', me: member, roster: this.roster() });
 		for (const m of Object.values(this.members)) if (m.pic) this.send(ws, { t: 'pic', n: m.n, data: m.pic });
+		if (this.meta.pic) this.send(ws, { t: 'gpic', data: this.meta.pic });
 		this.history(ws, p.after);
 		this.broadcast({ t: 'roster', roster: this.roster() });
 	}
@@ -296,6 +298,17 @@ export class Group extends DurableObject {
 		await this.save();
 		this.broadcast({ t: 'pic', n: member, data: m.pic || null });
 		this.broadcast({ t: 'roster', roster: this.roster() });
+	}
+
+	/** The group's own picture: admins set or remove it (null). Kept in meta, sent to everyone. */
+	async groupPic(by, pic) {
+		if (!this.meta.admins.includes(by)) return;
+		if (pic === null) { if (!this.meta.pic) return; delete this.meta.pic; }
+		else if (typeof pic === 'string' && pic.length <= LIMITS.pic && PIC_RE.test(pic)) { if (pic === this.meta.pic) return; this.meta.pic = pic; }
+		else return;
+		await this.save();
+		await this.note(pic ? `${this.members[by].name} changed the group picture` : `${this.members[by].name} removed the group picture`);
+		this.broadcast({ t: 'gpic', data: this.meta.pic || null });
 	}
 
 	async leave(member) {

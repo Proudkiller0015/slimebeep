@@ -123,6 +123,22 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 
 	// The owner leaves (after the flood limit has passed): the admin (Cat) gets the group.
 	await wait(10500);
+
+	// The group picture: admins set it, everyone gets it, newcomers get it on sign-in, SVGs never.
+	const png = 'data:image/png;base64,iVBORw0KGgo=';
+	c3.send({ t: 'gpic', pic: png });
+	await wait(300);
+	check(a.last('gpic') && a.last('gpic').data === png && a.texts().some((t) => /changed the group picture/.test(t)), 'an admin sets the group picture and everyone gets it');
+	c3.send({ t: 'gpic', pic: 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=' });
+	await wait(300);
+	check(a.last('gpic').data === png, 'an SVG is never taken as the group picture');
+	const c4 = await connect(gid, cat);
+	check(c4.last('gpic') && c4.last('gpic').data === png, 'signing in brings the group picture');
+	c4.ws.close();
+	c3.send({ t: 'gpic', pic: null });
+	await wait(300);
+	check(a.last('gpic').data === null, 'and it can be removed');
+
 	a.send({ t: 'leave' });
 	await wait(300);
 	check(c3.last('roster').roster.owner === 13, 'when the owner leaves, the group passes to an admin');

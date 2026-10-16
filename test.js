@@ -351,7 +351,7 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 			const card = hidden.map((h) => JSON.parse(h.Message)).find((m) => m.ginv);
 			return { bea, beaBeep, zed, cat, catCard: hidden.some((h) => h.MemberNumber === 13 && /ginv/.test(h.Message)) && !!card, me: await SlimeBeep.api.inviteToGroup(g, 1), canInvite: SlimeBeep.api.group(g).canInvite };
 		}, gid);
-		check(viaApi.bea.ok && viaApi.bea.sent === 'beep' && viaApi.beaBeep && viaApi.beaBeep[1].includes(viaApi.bea.code) && /install\.html/.test(viaApi.beaBeep[1]),
+		check(viaApi.bea.ok && viaApi.bea.sent === 'beep' && viaApi.beaBeep && viaApi.beaBeep[1].includes(viaApi.bea.code) && /github\.io\/slimebeep/.test(viaApi.beaBeep[1]) && !/invited you/.test(viaApi.beaBeep[1]),
 			`a friend without SlimeBeep gets a normal beep with her code and where to get SlimeBeep (${viaApi.beaBeep && viaApi.beaBeep[1].slice(0, 90)})`);
 		check(viaApi.cat.ok && viaApi.cat.sent === 'invite' && viaApi.catCard, 'a SlimeBeep friend gets an invite card');
 		check(viaApi.zed.ok && !viaApi.zed.sent && /^SB-[a-z0-9]+-[A-Z2-9]{10}$/.test(viaApi.zed.code), 'someone who is no friend: the code comes back, to pass on');
@@ -395,6 +395,7 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 		check(apiG.untouched && apiG.events.some((e) => e[0] === 'group' && e[1] === 'Slime Squad'), 'they get copies (changing one changes nothing) and hear when the group changes');
 		// A code for #13 only: someone with a different key than Cat's own SlimeBeep sent joins as #13.
 		await p.type('#sb-gm-for', '13');
+		await p.$eval('#sb-gm-code', (b) => b.scrollIntoView({ block: 'center' }));
 		await p.click('#sb-gm-code');
 		await wait(700);
 		const catCode = await p.$eval('#sb-gm-out code', (e) => e.textContent);
@@ -446,11 +447,85 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 		await wait(200);
 		await p.click('#sb-members');
 		await wait(200);
+		// The group picture: picked, placed in the circle, and everyone in the group gets it.
+		const myPicBefore = await p.evaluate(() => JSON.stringify(JSON.parse(localStorage.getItem('slimebeep.options') || '{}').pfp || null));
+		const [chooser] = await Promise.all([p.waitForFileChooser(), p.click('#sb-gm-pic')]);
+		await chooser.accept([`${__dirname}/icon-128.png`]);
+		await waitFor(() => p.evaluate(() => !!document.querySelector('#sb-crop [data-act=save]')), 4000);
+		check(/group picture/.test(await p.$eval('#sb-crop', (e) => e.textContent)), 'Add opens the cropper for the group picture');
+		await p.click('#sb-crop [data-act=save]');
+		const gotPic = await waitFor(() => !!a.last('gpic') && /^data:image\/(webp|jpeg)/.test(a.last('gpic').data || ''), 4000);
+		check(gotPic, 'Ann gets the group picture');
+		await wait(300);
+		const picShown = await p.evaluate((g) => ({ head: !!document.querySelector('.sb-thead img.sb-pic'), api: /^data:image/.test(SlimeBeep.api.group(g).picture || ''),
+			mine: JSON.stringify(JSON.parse(localStorage.getItem('slimebeep.options') || '{}').pfp || null) }), gid);
+		check(picShown.head && picShown.api && picShown.mine === myPicBefore, `it shows on the group, other add-ons see it, and it is not your own picture (${JSON.stringify(picShown)})`);
+		await shot('group-pic');
 		await p.click('[data-act=kick][data-n="99"]');
 		await wait(700);
 		check(!!z.last('gone') && z.closed, 'removing Zed closes his connection');
 		await tap('#sb-back');
 		await tap('#sb-back');
+
+		// Links you can click, and a group code with a button, in a chat.
+		const sqCode = `SB-${gid}-ABCDEFGH23`;
+		await p.evaluate((code) => {
+			FriendListBeepLog.push({ MemberNumber: 12, MemberName: 'Bea', Sent: false, Read: false, Time: new Date(), Message: `look https://example.com/a?b=1&c=2. and ${code} <b>x</b> javascript:alert(1)` });
+			SlimeBeep.api.openChat(12);
+		}, sqCode);
+		await wait(1300);
+		const links = await p.evaluate(() => ({
+			a: [...document.querySelectorAll('#sb-msgs .sb-b:last-child a.sb-link')].map((x) => [x.getAttribute('href'), x.target, x.rel]),
+			btn: [...document.querySelectorAll('#sb-msgs .sb-b:last-child button.sb-joincode')].map((x) => [x.dataset.code, x.textContent]),
+			bold: !!document.querySelector('#sb-msgs .sb-b:last-child b'),
+		}));
+		check(links.a.length === 1 && links.a[0][0] === 'https://example.com/a?b=1&c=2' && links.a[0][1] === '_blank' && /noopener/.test(links.a[0][2]) && !links.bold,
+			`a web link is clickable (new tab, the full stop left out), HTML stays text, javascript: is not a link (${JSON.stringify(links.a)})`);
+		check(links.btn.length === 1 && links.btn[0][0] === sqCode && links.btn[0][1] === 'Open', `a group code gets a button (Open: already in it) (${JSON.stringify(links.btn)})`);
+		await p.click('#sb-msgs .sb-b:last-child button.sb-joincode');
+		await wait(300);
+		check(await p.evaluate(() => /Slime Squad/.test(document.querySelector('.sb-thead').textContent)), 'and it opens the group');
+		await tap('#sb-back');
+
+		// The game's own chat: a Join button after a group code, for SlimeBeep users.
+		await p.evaluate((code) => {
+			makeLog();
+			const log = document.getElementById('TextAreaChatLog');
+			log.style.display = '';
+			log.insertAdjacentHTML('beforeend', `<div class="ChatMessage ChatMessageBeep sb-t">Beep from Ann: come join ${code}</div><div class="ChatMessage sb-t">nothing here</div>`);
+		}, sqCode);
+		await wait(1500);
+		const bc = await p.evaluate(() => [...document.querySelectorAll('#TextAreaChatLog .sb-bcjoin')].map((b) => b.textContent));
+		check(bc.length === 1 && /Open in SlimeBeep/.test(bc[0]), `a code in the game's chat gets a button (${bc})`);
+		await wait(1200);
+		check(await p.$$eval('#TextAreaChatLog .sb-bcjoin', (e) => e.length) === 1, 'once only');
+		await p.click('#TextAreaChatLog .sb-bcjoin');
+		await wait(300);
+		check(await p.evaluate(() => /Slime Squad/.test((document.querySelector('.sb-thead') || {}).textContent || '')), "clicking it opens the group in SlimeBeep");
+		await p.evaluate(() => { for (const x of document.querySelectorAll('#TextAreaChatLog .sb-t')) x.remove(); document.getElementById('TextAreaChatLog').style.display = 'none'; });
+		await tap('#sb-back');
+	}
+
+	// ---- The bubble only moves while the left button is held: a lost release must not leave it following the mouse.
+	{
+		const r = await p.evaluate(() => {
+			const t = document.getElementById('sb-toggle');
+			const at = () => `${t.style.left},${t.style.top}`;
+			const before = at();
+			const box = t.getBoundingClientRect();
+			const ev = (type, x, y, extra) => t.dispatchEvent(new PointerEvent(type, { bubbles: true, clientX: x, clientY: y, pointerId: 1, ...extra }));
+			ev('pointerdown', box.left + 5, box.top + 5, { button: 0, buttons: 1 });
+			// The release never arrives; the mouse then passes over with no button held.
+			ev('pointermove', box.left - 200, box.top - 200, { button: -1, buttons: 0 });
+			ev('pointermove', box.left - 250, box.top - 250, { button: -1, buttons: 0 });
+			const afterLost = at();
+			ev('pointerdown', box.left + 5, box.top + 5, { button: 2, buttons: 2 });
+			ev('pointermove', box.left - 200, box.top - 200, { button: -1, buttons: 2 });
+			const afterRight = at();
+			ev('pointerup', box.left - 200, box.top - 200, { button: 2, buttons: 0 });
+			return { before, afterLost, afterRight };
+		});
+		check(r.afterLost === r.before && r.afterRight === r.before, `the bubble stays put without a held left button (${JSON.stringify(r)})`);
 	}
 
 	// ---- 🎨 Theme add-ons: off by default, a toggle on the Extensions page only when one is running,

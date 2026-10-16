@@ -13,7 +13,7 @@
 (function () {
 	'use strict';
 
-	const VERSION = '2.17.0';
+	const VERSION = '2.18.0';
 	// Loaded once per page, whatever loads it.
 	if (window.SlimeBeep) return;
 	window.SlimeBeep = { version: VERSION };
@@ -127,7 +127,8 @@
 				groups[g.id] = { id: g.id, name: clean(g.name, LIMITS.name) || 'Group chat', owner: isNum(g.owner) ? g.owner : 0,
 					admins: Array.isArray(g.admins) ? g.admins.filter(isNum) : [], open: g.open === true,
 					members: g.members.filter((m) => m && isNum(m.n)).map((m) => ({ n: m.n, name: clean(m.name, LIMITS.name), kf: typeof m.kf === 'string' ? m.kf.slice(0, 16) : '' })),
-					last: Number.isInteger(g.last) ? g.last : 0, picv: typeof g.picv === 'string' ? g.picv : undefined };
+					last: Number.isInteger(g.last) ? g.last : 0, picv: typeof g.picv === 'string' ? g.picv : undefined,
+					pic: typeof g.pic === 'string' && g.pic.length <= PFP_MAX && PFP_RE.test(g.pic) ? g.pic : undefined };
 			}
 			for (const n of saved.peers || []) if (isNum(n)) peers.add(n);
 			for (const [k, v] of Object.entries(saved.peerKeys || {})) if (isNum(Number(k)) && typeof v === 'string') peerKeys[Number(k)] = v.slice(0, 16);
@@ -306,7 +307,19 @@
 	 * an action gets a soft bubble of its own (sb-act). Escaped first, so it's still plain text.
 	 */
 	const isAction = (text) => /^\*{1,2}[^*\n]+\*{1,2}$/.test(String(text).trim());
-	const rich = (text) => esc(text).replace(/\*{1,2}([^*\n]{1,300}?)\*{1,2}/g, '<i class="sb-emote">*$1*</i>');
+	const CODE_IN = /SB-[a-z0-9]{8,24}-[A-Z2-9]{10}/g;
+	/*
+	 * A message as HTML: escaped first, then *actions* in italics, web links you can click (opened in a new
+	 * tab, never loaded or shown here, like the game's chat), and a Join button after a group code.
+	 */
+	const rich = (text) => esc(text)
+		.replace(/\*{1,2}([^*\n]{1,300}?)\*{1,2}/g, '<i class="sb-emote">*$1*</i>')
+		.replace(/\bhttps?:\/\/[^\s<>"']+/g, (url) => {
+			const tail = (/(?:[.,!?:;)\]]|&#39;|&quot;)+$/.exec(url) || [''])[0];
+			const link = url.slice(0, url.length - tail.length);
+			return `<a class="sb-link" href="${link}" target="_blank" rel="noopener noreferrer nofollow">${link}</a>${tail}`;
+		})
+		.replace(CODE_IN, (code) => `${code} <button class="sb-pill sb-joincode" data-code="${code}">${groups[CODE_RE.exec(code)[1]] ? 'Open' : 'Join'}</button>`);
 	const timeOf = (t) => {
 		const d = new Date(t);
 		if (isNaN(d)) return '';
@@ -342,6 +355,7 @@
 	}
 	const myPfp = () => (opts.pfp && isId(opts.pfp.v) && typeof opts.pfp.data === 'string' && PFP_RE.test(opts.pfp.data) ? opts.pfp : null);
 	const pfpOf = (n) => (loggedIn() && n === Player.MemberNumber ? myPfp() : loadPfps()[n] || (relayPics[n] ? { data: relayPics[n] } : null)) || null;
+	const groupAv = (g) => (g.pic ? `<img class="sb-av sb-pic" src="${esc(g.pic)}" alt="">` : '<span class="sb-av sb-gav">👥</span>');
 	const avatar = (n, name) => {
 		const pic = pfpOf(n);
 		if (pic) return `<img class="sb-av sb-pic" src="${esc(pic.data)}" alt="">`;
@@ -403,6 +417,10 @@
 		.sb-b.me em { text-align: right; }
 		.sb-b .sb-room { display: block; font-size: 11px; margin-top: 3px; opacity: .85; }
 		.sb-emote { font-style: italic; opacity: .85; }
+		.sb-link { color: inherit; text-decoration: underline; word-break: break-all; }
+		.sb-joincode { margin-left: 2px; padding: 1px 8px !important; font-size: 11px !important; }
+		.sb-bcjoin { margin-left: 6px; padding: 1px 8px; border: 0; border-radius: 10px; background: #ff7ac0; color: #fff; font: bold 12px sans-serif; cursor: pointer; }
+		.sb-bcjoin:hover { background: #e85aa6; }
 		.sb-joinroom { margin-left: 4px; padding: 1px 8px !important; font-size: 11px !important; }
 		#sb-me { display: flex; cursor: pointer; }
 		img.sb-pic { cursor: zoom-in; }
@@ -611,29 +629,43 @@
 			<div id="sb-view" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>`;
 		document.body.appendChild(panel);
 
-		// Drag to move; a press that barely moves is a click.
+		/*
+		 * Drag to move; a press that barely moves is a click. Only a held left button drags: the bubble once
+		 * kept following the mouse after the release was lost (the game or another window took it), and moved
+		 * on its own whenever the pointer passed over it.
+		 */
 		let drag = null;
+		const endDrag = (save) => {
+			if (!drag) return;
+			const moved = drag.moved;
+			drag = null;
+			toggle.classList.remove('dragging');
+			if (moved && save) saveOpts();
+			return moved;
+		};
 		toggle.addEventListener('pointerdown', (e) => {
+			if (e.button !== 0) return;
 			const r = toggle.getBoundingClientRect();
 			drag = { dx: e.clientX - r.left, dy: e.clientY - r.top, x0: e.clientX, y0: e.clientY, moved: false };
-			toggle.setPointerCapture(e.pointerId);
+			try { toggle.setPointerCapture(e.pointerId); } catch (err) { /* fine without */ }
 		});
 		toggle.addEventListener('pointermove', (e) => {
 			if (!drag) return;
-			if (!drag.moved && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 5) return;
+			if (!(e.buttons & 1)) return endDrag(true);
+			if (!drag.moved && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 8) return;
 			drag.moved = true;
 			toggle.classList.add('dragging');
 			opts.pos = { x: (e.clientX - drag.dx) / innerWidth, y: (e.clientY - drag.dy) / innerHeight };
 			place();
 		});
-		toggle.addEventListener('pointerup', () => {
-			if (!drag) return;
-			const moved = drag.moved;
-			drag = null;
-			toggle.classList.remove('dragging');
-			if (moved) return saveOpts();
+		toggle.addEventListener('pointerup', (e) => {
+			if (!drag || e.button !== 0) return;
+			if (endDrag(true)) return;
 			setOpen(panel.style.display !== 'flex');
 		});
+		toggle.addEventListener('pointercancel', () => endDrag(true));
+		toggle.addEventListener('lostpointercapture', () => endDrag(true));
+		addEventListener('blur', () => endDrag(true));
 		addEventListener('resize', place);
 		$('sb-quit').addEventListener('click', askQuit);
 		$('sb-close').addEventListener('click', () => setOpen(false));
@@ -641,6 +673,14 @@
 		setNight(opts.night);
 		$('sb-gear').addEventListener('click', () => { tab = tab === 'options' ? 'chats' : 'options'; thread = null; render(); });
 		// A click on someone's picture shows it big (and doesn't also open what it sits on).
+		panel.addEventListener('click', (e) => {
+			const join = e.target.closest && e.target.closest('button.sb-joincode');
+			if (join) {
+				e.preventDefault();
+				e.stopPropagation();
+				return joinCode(join.dataset.code, openJoined);
+			}
+		}, true);
 		panel.addEventListener('click', (e) => {
 			const img = e.target.closest && e.target.closest('img.sb-pic');
 			if (!img || img.closest('#sb-me')) return;
@@ -710,6 +750,7 @@
 		} catch (e) { /* gone */ }
 		listening = null;
 		for (const c of Object.values(conns)) { c.dead = true; try { if (c.ws) c.ws.close(); } catch (e) { /* gone */ } }
+		for (const b of document.querySelectorAll('.sb-bcjoin')) b.remove();
 		for (const id of ['sb-toggle', 'sb-panel', 'sb-toast', 'sb-cards', 'sb-crop', 'sb-zoom', 'sb-ask', 'sb-emoji', 'sb-style']) { const el = $(id); if (el) el.remove(); }
 		const root = document.documentElement;
 		for (const k of [...root.classList]) if (/^sb-/.test(k)) root.classList.remove(k);
@@ -782,6 +823,7 @@
 			id: g.id, name: g.name, owner: g.owner, admins: [...g.admins], anyoneCanInvite: !!g.open, canInvite: canInvite(g, me) && g.members.length < LIMITS.members,
 			members: g.members.map((m) => ({ memberNumber: m.n, name: m.n === me ? myName() : m.name, online: online.has(m.n),
 				role: m.n === g.owner ? 'owner' : g.admins.includes(m.n) ? 'admin' : 'member' })),
+			picture: g.pic || null,
 		};
 	}
 	window.SlimeBeep.api = Object.freeze({
@@ -877,7 +919,7 @@
 	 */
 	const srcKey = () => `slimebeep.pfpsrc.${Player.MemberNumber}`;
 	const loadSrc = () => { try { const d = localStorage.getItem(srcKey()); return d && /^data:image\/(webp|jpeg|png);base64,/.test(d) ? d : null; } catch (e) { return null; } };
-	function setPicture(file) {
+	function setPicture(file, onSave = null, title = '') {
 		if (!file || !/^image\//.test(file.type)) return notify('That is not a picture');
 		const url = URL.createObjectURL(file);
 		const img = new Image();
@@ -890,22 +932,23 @@
 				c.height = Math.max(1, Math.round(img.naturalHeight * k));
 				c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
 				const src = c.toDataURL('image/jpeg', 0.9);
-				try { localStorage.setItem(srcKey(), src); } catch (e) { /* this visit only */ }
-				openCropper(src);
+				// Only your own is kept for "Adjust"; a group picture is placed once.
+				if (!onSave) try { localStorage.setItem(srcKey(), src); } catch (e) { /* this visit only */ }
+				openCropper(src, onSave, title);
 			} catch (e) { notify('That picture could not be read'); } finally { URL.revokeObjectURL(url); }
 		};
 		img.onerror = () => { URL.revokeObjectURL(url); notify('That picture could not be read'); };
 		img.src = url;
 	}
-	function pickPicture() {
+	function pickPicture(onSave = null, title = '') {
 		const input = document.createElement('input');
 		input.type = 'file';
 		input.accept = 'image/*';
-		input.addEventListener('change', () => setPicture(input.files && input.files[0]));
+		input.addEventListener('change', () => setPicture(input.files && input.files[0], onSave, title));
 		input.click();
 	}
-	/** Place the picture in the circle; Save makes it your picture. */
-	function openCropper(src) {
+	/** Place the picture in the circle; Save makes it your picture (or hands it to `onSave`: a group's). */
+	function openCropper(src, onSave = null, title = '') {
 		if ($('sb-crop')) $('sb-crop').remove();
 		const SIZE = 200;
 		const img = new Image();
@@ -917,7 +960,7 @@
 			box.id = 'sb-crop';
 			box.innerHTML = `<div class="sb-crop-card">
 				<button class="sb-crop-x" data-act="cancel" title="Close">✕</button>
-				<b>Fit your picture in the circle</b>
+				<b>${esc(title || 'Fit your picture in the circle')}</b>
 				<div class="sb-crop-ring" style="width:${SIZE}px;height:${SIZE}px"><canvas width="${SIZE}" height="${SIZE}"></canvas></div>
 				<span class="sb-hint">Drag to move it, scroll or slide to zoom.</span>
 				<input type="range" min="1" max="4" step="0.01" value="1" aria-label="Zoom">
@@ -971,6 +1014,7 @@
 				}
 				if (data.length > PFP_MAX || !PFP_RE.test(data)) return notify('That picture is too big, try another');
 				box.remove();
+				if (onSave) return onSave(data);
 				setOpt('pfp', { v: newId(), data });
 				pushPicture();
 				showMe();
@@ -1163,6 +1207,16 @@
 			}
 			return;
 		}
+		if (p.t === 'gpic') {
+			const g = groups[gid];
+			if (g && (p.data === null || (typeof p.data === 'string' && p.data.length <= PFP_MAX && PFP_RE.test(p.data)))) {
+				if (p.data) g.pic = p.data; else delete g.pic;
+				saveGC();
+				emit('group', groupView(g));
+				if (isOpen()) render(true);
+			}
+			return;
+		}
 		if (p.t === 'invite') {
 			const cb = c.waiters.shift();
 			if (cb) cb(typeof p.code === 'string' && /^[A-Z2-9]{10}$/.test(p.code) ? `SB-${gid}-${p.code}` : null);
@@ -1192,7 +1246,7 @@
 		groups[gid] = { id: gid, name: clean(r.name, LIMITS.name) || 'Group chat', owner: isNum(r.owner) ? r.owner : 0,
 			admins: Array.isArray(r.admins) ? r.admins.filter(isNum).slice(0, LIMITS.admins) : [], open: r.open === true, members,
 			online: Array.isArray(r.online) ? r.online.filter(isNum).slice(0, LIMITS.members) : old ? old.online || [] : [],
-			last: old ? old.last || 0 : 0, picv: old ? old.picv : undefined };
+			last: old ? old.last || 0 : 0, picv: old ? old.picv : undefined, pic: old ? old.pic : undefined };
 		saveGC();
 		emit('group', groupView(groups[gid]));
 		if (isOpen()) render(true);
@@ -1289,15 +1343,37 @@
 	function inviteFriend(id, n) {
 		requestInvite(id, n, (code) => { if (code) deliverInvite(n, code, groups[id] ? groups[id].name : 'Group chat'); });
 	}
-	const INSTALL = 'https://proudkiller0015.github.io/slimebeep/install.html';
+	const SITE = 'https://proudkiller0015.github.io/slimebeep/';
 	/** A friend's invite: a card when they have SlimeBeep, otherwise a beep they can read without it. Returns how it went. */
 	function deliverInvite(n, code, name) {
 		if (peers.has(n)) {
 			sendHidden(n, { sb: 1, ginv: { code, name } });
 			return 'invite';
 		}
-		beep(n, `👥 ${myName()} invited you to the SlimeBeep group chat "${name}"! Get SlimeBeep at ${INSTALL} then paste this code in 👥 Groups: ${code}`, false);
+		beep(n, `👥 Come join my group chat "${name}"! It's on SlimeBeep, a BC add-on (in FUSAM, or ${SITE}). Group code: ${code}`, false);
 		return 'beep';
+	}
+	/** After joining (or for a group you're already in): that group's chat. */
+	const openJoined = (gid) => { tab = 'groups'; thread = `g:${gid}`; if (!isOpen()) setOpen(true); else render(); };
+	/*
+	 * A group code anywhere in the game's own chat (a beep, someone pasting it): a Join button after it,
+	 * for SlimeBeep users only (nobody else has this). Each message is looked at once.
+	 */
+	function joinButtonsInChat() {
+		const log = document.getElementById('TextAreaChatLog');
+		if (!log) return;
+		for (const el of log.querySelectorAll('.ChatMessage:not([data-sb-seen])')) {
+			el.dataset.sbSeen = '1';
+			const codes = [...new Set(String(el.textContent || '').match(CODE_IN) || [])].slice(0, 3);
+			for (const code of codes) {
+				const b = document.createElement('button');
+				b.className = 'sb-bcjoin';
+				b.textContent = groups[CODE_RE.exec(code)[1]] ? '👥 Open in SlimeBeep' : '👥 Join';
+				b.title = `SlimeBeep group ${code}`;
+				b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); joinCode(code, openJoined); });
+				el.appendChild(b);
+			}
+		}
 	}
 	function joinCode(raw, done) {
 		const m = CODE_RE.exec(String(raw || '').trim());
@@ -1476,6 +1552,7 @@
 			gameCheck();
 			if (waiting.length && loggedIn() && Date.now() - (tick.asked || 0) > 60000) { tick.asked = Date.now(); askFriends(); }
 			if (!tick.n || ++tick.n % 5 === 0) applyThemed();
+			if (loggedIn()) joinButtonsInChat();
 			tick.n = tick.n || 1;
 			// Listen from login on, not only once the panel has been opened.
 			if (loggedIn()) listen();
@@ -1506,7 +1583,7 @@
 		if (h.group && isOpen() && thread === `g:${h.group}` && !document.hidden) return;
 		const open = () => { thread = g ? `g:${g.id}` : h.MemberNumber; renderThread.pin = undefined; if (!isOpen()) setOpen(true); else render(); };
 		if (opts.popups) {
-			card(g ? { icon: '<span class="sb-av sb-gav">👥</span>', title: `👥 ${g.name}`, text: h.announceText || `${h.MemberName}: ${text}`, onClick: open }
+			card(g ? { icon: groupAv(g), title: `👥 ${g.name}`, text: h.announceText || `${h.MemberName}: ${text}`, onClick: open }
 				: { icon: avatar(h.MemberNumber, h.MemberName), title: `💌 ${h.MemberName}`, text, sub: room, onClick: open });
 		}
 		if (opts.desktop && document.hidden && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
@@ -1738,7 +1815,7 @@
 			const msgs = hist.filter((h) => h.group === g.id);
 			const last = msgs[msgs.length - 1];
 			const n = msgs.filter(unread).length;
-			rows.push({ time: last ? last.Time : 0, html: `<div class="sb-row" data-open="g:${g.id}"><span class="sb-av sb-gav">👥</span>
+			rows.push({ time: last ? last.Time : 0, html: `<div class="sb-row" data-open="g:${g.id}">${groupAv(g)}
 				<div class="sb-main"><div class="sb-name">${esc(g.name)} <small style="font-weight:normal;color:#c08aaa">${g.members.length}</small></div>
 				<div class="sb-sub">${last ? `${last.sys ? '' : `${last.Sent ? 'You' : esc(last.MemberName)}: `}${esc(textOf(last))}` : 'No messages yet'}</div></div>
 				<div class="sb-side">${last ? timeOf(last.Time) : ''}${n ? `<br><span class="sb-dot">${n}</span>` : ''}</div></div>` });
@@ -1846,6 +1923,10 @@
 		const admin = isAdmin(g, me);
 		const owner = g.owner === me;
 		const view = $('sb-view');
+		// What is being typed survives a redraw (someone joining, a presence change), as does where the cursor is.
+		const typing = {};
+		for (const k of ['sb-gm-name', 'sb-gm-for']) if ($(k) && $(k).dataset.touched) typing[k] = $(k).value;
+		const focused = document.activeElement && document.activeElement.id;
 		const on = (n) => n === me || (g.online || []).includes(n);
 		const rows = g.members.slice().sort((a, b) => Number(on(b.n)) - Number(on(a.n)) || Number(b.n === g.owner) - Number(a.n === g.owner) || Number(isAdmin(g, b.n)) - Number(isAdmin(g, a.n)))
 			.map((m) => {
@@ -1865,10 +1946,11 @@
 		const invite = canInvite(g, me) && g.members.length < LIMITS.members;
 		const memberNums = g.members.map((m) => m.n);
 		view.innerHTML = `
-			<div class="sb-thead"><button id="sb-back" title="Back to the chat">‹</button><span class="sb-av sb-gav">👥</span>
+			<div class="sb-thead"><button id="sb-back" title="Back to the chat">‹</button>${groupAv(g)}
 				<div class="sb-main"><div class="sb-name">${esc(g.name)}</div><div class="sb-sub">${g.members.length} / ${LIMITS.members} members</div></div></div>
 			<div class="sb-body sb-group" id="sb-body">
 				${admin ? `<div class="sb-line"><input class="sb-search" id="sb-gm-name" maxlength="${LIMITS.name}" value="${esc(g.name)}" style="margin:0"><button class="sb-pill" id="sb-gm-rename">Rename</button></div>
+				<div class="sb-line"><span>🖼 Group picture</span><span style="display:flex;gap:4px">${g.pic ? '<button class="sb-pill" id="sb-gm-picoff">Remove</button>' : ''}<button class="sb-pill" id="sb-gm-pic">${g.pic ? 'Change' : 'Add'}</button></span></div>
 				<label><input type="checkbox" id="sb-gm-open" ${g.open ? 'checked' : ''}><span>Anyone can invite</span></label>` : `<div class="sb-hint">${g.open ? 'Anyone can invite people here.' : 'Only admins can invite people here.'}</div>`}
 				${rows}
 				${invite ? `<div class="sb-line"><b>🔗 Invite with a code</b></div>
@@ -1878,6 +1960,13 @@
 				<div class="sb-line"><b>Invite friends</b><button class="sb-pill" id="sb-gc-find">🔍 Find 🫧</button></div>${pickList(memberNums)}
 				<div class="sb-line" style="position:sticky;bottom:-10px;background:#fff7fb;padding:6px 0"><span></span><button class="sb-go" id="sb-gm-add" disabled>Send invites</button></div>` : ''}
 			</div>`;
+		for (const k of ['sb-gm-name', 'sb-gm-for']) {
+			const el = $(k);
+			if (!el) continue;
+			if (k in typing) { el.value = typing[k]; el.dataset.touched = '1'; }
+			el.addEventListener('input', () => { el.dataset.touched = '1'; });
+			if (focused === k) el.focus();
+		}
 		$('sb-back').addEventListener('click', () => { renderMembers.open = null; render(); });
 		const act = (x) => { relaySend(id, x); };
 		for (const b of view.querySelectorAll('[data-act]')) b.addEventListener('click', () => {
@@ -1892,6 +1981,8 @@
 			if (name && name !== g.name) act({ t: 'rename', name });
 		});
 		if ($('sb-gm-open')) $('sb-gm-open').addEventListener('change', (e) => act({ t: 'open', on: e.target.checked }));
+		if ($('sb-gm-pic')) $('sb-gm-pic').addEventListener('click', () => pickPicture((data) => { act({ t: 'gpic', pic: data }); notify('✓ Group picture sent'); }, 'Fit the group picture in the circle'));
+		if ($('sb-gm-picoff')) $('sb-gm-picoff').addEventListener('click', () => act({ t: 'gpic', pic: null }));
 		if (invite) {
 			wireFind();
 			$('sb-gm-code').addEventListener('click', () => {
@@ -1939,7 +2030,7 @@
 		const online = conns[id] && conns[id].ready;
 		const here = new Set([...(g.online || []), Player.MemberNumber]).size;
 		view.innerHTML = `
-			<div class="sb-thead"><button id="sb-back" title="Back">‹</button><span class="sb-av sb-gav">👥</span>
+			<div class="sb-thead"><button id="sb-back" title="Back">‹</button>${groupAv(g)}
 				<div class="sb-main"><div class="sb-name">${esc(g.name)}</div>
 				<div class="sb-sub" title="${esc(names.join(', '))}">${online ? `<span class="sb-on"></span>${here} online · ` : '⏳ connecting… · '}${g.members.length} members: You${names.length ? `, ${esc(names.join(', '))}` : ''}</div></div>
 				<button id="sb-members" title="Members and invites">👥</button><button id="sb-leave" title="${g.owner === Player.MemberNumber ? 'Leave or delete the group' : 'Leave the group'}">🚪</button></div>

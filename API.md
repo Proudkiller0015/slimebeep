@@ -20,7 +20,8 @@ if (sb && sb.apiVersion === 1) {
 ```js
 sb.groups();
 // [{ id, name, owner, admins: [memberNumber], anyoneCanInvite, canInvite,
-//    members: [{ memberNumber, name, online, role: 'owner' | 'admin' | 'member' }] }]
+//    members: [{ memberNumber, name, online, role: 'owner' | 'admin' | 'member' }],
+//    picture }]   // the group's picture (a data: image) or null
 sb.group(id);              // one group, or null
 ```
 
