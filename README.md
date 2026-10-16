@@ -8,9 +8,13 @@ A bubble gum beep messenger for [Bondage Club](https://www.bondageprojects.eleme
 
 ## Install
 
-1. Install a userscript manager: [Violentmonkey](https://violentmonkey.github.io/) or [Tampermonkey](https://www.tampermonkey.net/).
-2. Click **[Install SlimeBeep](https://raw.githubusercontent.com/Proudkiller0015/slimebeep/main/slimebeep.user.js)** and confirm.
-3. Reload Bondage Club and log in.
+**Easiest: [the install page](https://proudkiller0015.github.io/slimebeep/install.html)** has all three ways.
+
+- **🔖 Bookmark, no extension needed:** drag the SlimeBeep button from the install page onto your bookmarks bar, then click it whenever you're in Bondage Club.
+- **🐒 Userscript:** with [Violentmonkey](https://violentmonkey.github.io/) or [Tampermonkey](https://www.tampermonkey.net/), click **[Install SlimeBeep](https://raw.githubusercontent.com/Proudkiller0015/slimebeep/main/slimebeep.user.js)** and confirm. It starts with the game every time.
+- **🧩 FUSAM:** turn on SlimeBeep in FUSAM's add-on list.
+
+All three run the same SlimeBeep and always load its newest version, so there's nothing to update by hand.
 
 ## Use
 
