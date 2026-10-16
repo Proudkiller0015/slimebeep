@@ -20,15 +20,16 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 		const handlers = {};
 		window.Player = { MemberNumber: 1, FriendNames: new Map([[11, 'Ann'], [12, 'Bea'], [13, 'Cat'], [14, 'Dee']]) };
 		window.ChatRoomData = { Name: 'Velvet Lounge' };
-		const SEP = '\u2063';
-		window.FriendListBeepParseMessage = (m) => { const i = m.lastIndexOf(SEP); return i < 0 ? { text: m, metadata: null } : { text: m.slice(0, i), metadata: JSON.parse(m.slice(i + 1)) }; };
+		// The real game's settings marker, after a new line.
+		const SEP = '\uf124';
+		window.FriendListBeepParseMessage = (m) => { const i = m.lastIndexOf(SEP); return i < 0 ? { text: m, metadata: null } : { text: m.slice(0, i).trimEnd(), metadata: JSON.parse(m.slice(i + 1)) }; };
 		const t = (min) => new Date(Date.now() - min * 60000);
 		window.FriendListBeepLog = [
-			{ MemberNumber: 11, MemberName: 'Ann', Sent: false, Read: true, Time: t(50), Message: 'hiii' + SEP + '{"messageType":"Message"}' },
+			{ MemberNumber: 11, MemberName: 'Ann', Sent: false, Read: true, Time: t(50), Message: 'hiii\n' + SEP + '{"messageType":"Message"}' },
 			{ MemberNumber: 11, MemberName: 'Ann', Sent: true, Read: true, Time: t(45), Message: 'hey Ann <3' },
 			{ MemberNumber: 13, MemberName: 'Cat', Sent: false, Read: false, Time: t(5), Message: 'come to my room!', ChatRoomName: 'Cat Cafe' },
 			{ MemberNumber: 13, MemberName: 'Cat', Sent: false, Read: false, Time: t(4), Message: '<b>not bold</b>' },
-			{ MemberNumber: 12, MemberName: 'Bea', Sent: false, Read: false, Time: t(3), Message: '👍' + SEP + '{"messageType":"Reaction"}' },
+			{ MemberNumber: 12, MemberName: 'Bea', Sent: false, Read: false, Time: t(3), Message: '👍\n' + SEP + '{"messageType":"Reaction"}' },
 		];
 		window.beeps = [];
 		// Like socket.io: event listeners plus catch-all ones, which an add-on can clear.
@@ -154,8 +155,26 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	await p.click('.sb-card');
 	await wait(300);
 	check(await p.$eval('.sb-thead', (e) => /Ann/.test(e.textContent)), 'clicking the card opens that chat');
-	// Beeps another add-on handles before the game (EBC): not in the game's list, so SlimeBeep keeps them itself.
+	// R132: no FriendListBeepParseMessage, but beeps from newer clients carry settings after the marker.
+	await p.evaluate(() => {
+		delete window.FriendListBeepParseMessage;
+		FriendListBeepLog.push({ MemberNumber: 12, MemberName: 'Bea', Sent: false, Read: false, Time: new Date(), Message: 'what\n{"messageType":"Message","messageColor":"#F4CC00"}' });
+		FriendListBeepLog.push({ MemberNumber: 12, MemberName: 'Bea', Sent: false, Read: true, Time: new Date(), Message: 'lost marker\n{"messageType":"Message","messageColor":"#F4CC00"}' });
+		fire('AccountBeep', { MemberNumber: 13, MemberName: 'Cat', BeepType: 'EBC', Message: 'ReqRoom' });
+	});
+	await wait(2200);
 	await p.click('#sb-back');
+	await p.click('[data-open="12"]');
+	await wait(200);
+	const bea = await p.$eval('#sb-msgs', (e) => e.textContent);
+	check(/what/.test(bea) && /lost marker/.test(bea) && !/messageType/.test(bea), 'on R132 the beep settings are cut off, not shown as text');
+	await p.click('#sb-back');
+	await p.click('[data-open="13"]');
+	await wait(200);
+	check(!/ReqRoom/.test(await p.$eval('#sb-msgs', (e) => e.textContent)), "another add-on's one-word signal (ReqRoom) is not shown as a beep");
+	await p.click('#sb-back');
+
+	// Beeps another add-on handles before the game (EBC): not in the game's list, so SlimeBeep keeps them itself.
 	await p.evaluate(() => {
 		// An add-on that takes beeps over: clears every beep listener and empties the message for the rest.
 		ServerSocket.removeAllListeners('AccountBeep');

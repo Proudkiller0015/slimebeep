@@ -13,7 +13,7 @@
 (function () {
 	'use strict';
 
-	const VERSION = '2.5.0';
+	const VERSION = '2.5.1';
 	// Loaded once per page, whatever loads it.
 	if (window.SlimeBeep) return;
 	window.SlimeBeep = { version: VERSION };
@@ -185,14 +185,33 @@
 		return added.filter((h) => !h.Sent && !isReaction(h));
 	}
 	/** A beep's visible text, without the metadata the game appends. */
+	/*
+	 * A beep's text and its settings. Newer game versions put settings (name colour, message type) after
+	 * a marker character at the end of a beep, with FriendListBeepParseMessage to read them; R132 has no
+	 * such function and just cuts at the marker. So SlimeBeep reads it the same way itself, on any version.
+	 */
+	const MARK = '';
+	function parseBeep(msg) {
+		if (typeof msg !== 'string') return { text: '', meta: null };
+		let text = msg, raw = null;
+		const i = msg.indexOf(MARK);
+		if (i >= 0) { text = msg.slice(0, i); raw = msg.slice(msg.lastIndexOf(MARK) + 1); }
+		else {
+			// The marker lost on the way (some add-ons strip odd characters): a last line that is a settings object.
+			const m = /\n\s*(\{"messageType"[^\n]*\})\s*$/.exec(msg);
+			if (m) { text = msg.slice(0, m.index); raw = m[1]; }
+		}
+		let meta = null;
+		if (raw) try { const x = JSON.parse(raw); if (x && typeof x === 'object' && !Array.isArray(x)) meta = x; } catch (e) { /* not settings after all */ }
+		return { text: text.trimEnd(), meta };
+	}
 	const textOf = (beep) => {
 		if (beep.group) return beep.sys === 'left' ? `${beep.MemberName} left the group` : beep.text;
 		if (typeof beep.Message !== 'string') return beep.ChatRoomName ? `📍 ${beep.ChatRoomName}` : '🔔 Beep!';
-		return typeof FriendListBeepParseMessage === 'function' ? FriendListBeepParseMessage(beep.Message).text : beep.Message;
+		return parseBeep(beep.Message).text || '🔔 Beep!';
 	};
 	const isReaction = (beep) => {
-		if (typeof beep.Message !== 'string' || typeof FriendListBeepParseMessage !== 'function') return false;
-		const meta = FriendListBeepParseMessage(beep.Message).metadata;
+		const meta = typeof beep.Message === 'string' ? parseBeep(beep.Message).meta : null;
 		return !!meta && meta.messageType === 'Reaction';
 	};
 	// Unread is the game's own flag, so reading a beep here or in the game's beep list is the same thing.
@@ -857,7 +876,10 @@
 		const type = typeof d.BeepType === 'string' ? d.BeepType : '';
 		if (/leash/i.test(type)) return;
 		const msg = typeof d.Message === 'string' ? d.Message : undefined;
-		if (type && msg && /^\s*[[{]/.test(msg)) return;
+		// Another add-on's own signals, not something a person wrote: raw data, or a joined-up code like
+		// EBC's "ReqRoom" (a one-word message a person types, like "beep", still comes through).
+		if (type && msg && (/^\s*[[{]/.test(msg) || /^[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+$/.test(msg.trim()))) return;
+		if (type && !parseBeep(msg).text) return;
 		const at = Date.now();
 		setTimeout(() => {
 			try {
