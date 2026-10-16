@@ -15,7 +15,7 @@
 	// The address this copy was loaded from, when it came in a <script src> (FUSAM loads it that way).
 	const LOADED_FROM = (document.currentScript && document.currentScript.src) || '';
 
-	const VERSION = '2.19.1';
+	const VERSION = '2.19.2';
 	// Loaded once per page, whatever loads it.
 	if (window.SlimeBeep) return;
 	window.SlimeBeep = { version: VERSION };
@@ -1603,15 +1603,40 @@
 	function inviteFriend(id, n) {
 		requestInvite(id, n, (code) => { if (code) deliverInvite(n, code, groups[id] ? groups[id].name : 'Group chat'); });
 	}
-	const SITE = 'https://proudkiller0015.github.io/slimebeep/';
-	/** A friend's invite: a card when they have SlimeBeep, otherwise a beep they can read without it. Returns how it went. */
+	/*
+	 * A friend's invite: a card when they have SlimeBeep, otherwise a beep they can read without it. That
+	 * beep has no link (the owner, 16 Oct 2026: nothing that reads like an ad), and at most PLAIN_MAX go out a
+	 * minute, PLAIN_GAP apart, so inviting a crowd never becomes a burst of beeps. Returns how it went:
+	 * 'invite', 'beep', or 'later' (over the limit: no beep; the code still works when passed on).
+	 */
+	const PLAIN_MAX = 3, PLAIN_GAP = 3000;
+	const plainSent = [];
+	let plainAt = 0;
 	function deliverInvite(n, code, name) {
 		if (peers.has(n)) {
 			sendHidden(n, { sb: 1, ginv: { code, name } });
 			return 'invite';
 		}
-		beep(n, `👥 Come join my group chat "${name}"! It's on SlimeBeep, a free BC add-on: ${SITE} Group code: ${code}`, false);
+		const now = Date.now();
+		while (plainSent.length && now - plainSent[0] > 60000) plainSent.shift();
+		if (plainSent.length >= PLAIN_MAX) {
+			notify(`⏳ ${nameOf(n)} has no SlimeBeep: invite beeps like that go ${PLAIN_MAX} a minute, try again shortly`);
+			return 'later';
+		}
+		plainSent.push(now);
+		plainAt = Math.max(now, plainAt + PLAIN_GAP);
+		setTimeout(() => beep(n, `👥 Come join my group chat "${name}" on SlimeBeep (a BC add-on, ask me where to get it). Group code: ${code}`, false), plainAt - now);
 		return 'beep';
+	}
+	/** In a pick list: at most PLAIN_MAX friends without SlimeBeep ticked at once. */
+	function capPlain(boxes, full) {
+		const plain = boxes.filter((b) => b.checked && !peers.has(Number(b.value))).length;
+		for (const b of boxes) {
+			if (b.checked) continue;
+			const capped = !peers.has(Number(b.value)) && plain >= PLAIN_MAX;
+			b.disabled = full || capped;
+			b.title = capped ? `${PLAIN_MAX} friends without SlimeBeep at a time (they get a beep each)` : '';
+		}
 	}
 	/** After joining (or for a group you're already in): that group's chat. */
 	const openJoined = (gid) => { tab = 'groups'; thread = `g:${gid}`; if (!isOpen()) setOpen(true); else render(); };
@@ -2108,7 +2133,7 @@
 				const has = peers.has(f.MemberNumber);
 				return `<label><input type="checkbox" value="${f.MemberNumber}">${avatar(f.MemberNumber, f.MemberName)}
 				<span class="sb-main" style="margin-left:8px"><span class="sb-name">${esc(f.MemberName)} ${has ? '🫧' : ''}</span>
-				<span class="sb-sub" style="display:block">${has ? 'Has SlimeBeep: gets an invite card' : 'Gets a beep with the code and where to get SlimeBeep'}</span></span></label>`;
+				<span class="sb-sub" style="display:block">${has ? 'Has SlimeBeep: gets an invite card' : `Gets a beep with the code (${PLAIN_MAX} like that at a time)`}</span></span></label>`;
 			}).join('') || '<div class="sb-empty">🌙 No online friends to add right now.</div>';
 	}
 	function wireFind() {
@@ -2159,7 +2184,7 @@
 		const update = () => {
 			const n = boxes().filter((b) => b.checked).length;
 			$('sb-gc-count').textContent = n ? `${n} to invite` : 'Just you for now';
-			for (const b of boxes()) if (!b.checked) b.disabled = n >= LIMITS.members - 1;
+			capPlain(boxes(), n >= LIMITS.members - 1);
 		};
 		for (const b of boxes()) b.addEventListener('change', update);
 		$('sb-gc-back').addEventListener('click', () => { tab = 'groups'; render(); });
@@ -2278,7 +2303,7 @@
 			const update = () => {
 				const n = boxes().filter((b) => b.checked).length;
 				$('sb-gm-add').disabled = !n;
-				for (const b of boxes()) if (!b.checked) b.disabled = n >= room;
+				capPlain(boxes(), n >= room);
 			};
 			for (const b of boxes()) b.addEventListener('change', update);
 			$('sb-gm-add').addEventListener('click', () => {

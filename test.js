@@ -338,22 +338,33 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 		const inv = await p.evaluate(() => hidden.map((h) => JSON.parse(h.Message)).find((m) => m.ginv));
 		check(inv && /^SB-[a-z0-9]+-[A-Z2-9]{10}$/.test(inv.ginv.code) && inv.ginv.name === 'Slime Squad', 'Ann, a SlimeBeep friend, gets her invite as a hidden beep');
 		const [, gid, code] = /^SB-([a-z0-9]+)-([A-Z2-9]+)$/.exec(inv.ginv.code);
-		// Other add-ons inviting: Bea is a friend without SlimeBeep, so a beep with her code and the install link;
+		// Other add-ons inviting: Bea is a friend without SlimeBeep, so a beep with her code (no link);
 		// Cat (has SlimeBeep) gets a card; Zed (#99) is no friend, so the code comes back to pass on.
 		const viaApi = await p.evaluate(async (g) => {
 			hidden.length = 0;
 			beeps.length = 0;
 			const bea = await SlimeBeep.api.inviteToGroup(g, 12);
-			const beaBeep = beeps.find((b) => b[0] === 12);
 			const zed = await SlimeBeep.api.inviteToGroup(g, 99);
 			const cat = await SlimeBeep.api.inviteToGroup(g, 13);
 			await new Promise((r) => setTimeout(r, 500));
 			const card = hidden.map((h) => JSON.parse(h.Message)).find((m) => m.ginv);
-			return { bea, beaBeep, zed, cat, catCard: hidden.some((h) => h.MemberNumber === 13 && /ginv/.test(h.Message)) && !!card, me: await SlimeBeep.api.inviteToGroup(g, 1), canInvite: SlimeBeep.api.group(g).canInvite };
+			return { bea, beaBeep: beeps.find((b) => b[0] === 12), zed, cat, catCard: hidden.some((h) => h.MemberNumber === 13 && /ginv/.test(h.Message)) && !!card, me: await SlimeBeep.api.inviteToGroup(g, 1), canInvite: SlimeBeep.api.group(g).canInvite };
 		}, gid);
-		check(viaApi.bea.ok && viaApi.bea.sent === 'beep' && viaApi.beaBeep && viaApi.beaBeep[1].includes(viaApi.bea.code) && /github\.io\/slimebeep/.test(viaApi.beaBeep[1]) && !/invited you/.test(viaApi.beaBeep[1]),
-			`a friend without SlimeBeep gets a normal beep with her code and where to get SlimeBeep (${viaApi.beaBeep && viaApi.beaBeep[1].slice(0, 90)})`);
+		check(viaApi.bea.ok && viaApi.bea.sent === 'beep' && viaApi.beaBeep && viaApi.beaBeep[1].includes(viaApi.bea.code) && /ask me where to get it/.test(viaApi.beaBeep[1]) && !/https?:/.test(viaApi.beaBeep[1]),
+			`a friend without SlimeBeep gets a normal beep with her code, and no link in it (the owner: nothing like an ad) (${viaApi.beaBeep && viaApi.beaBeep[1].slice(0, 90)})`);
 		check(viaApi.cat.ok && viaApi.cat.sent === 'invite' && viaApi.catCard, 'a SlimeBeep friend gets an invite card');
+		// Invite beeps to friends without SlimeBeep: 3 a minute, a few seconds apart (Bea's above was the first).
+		const many = await p.evaluate(async (g) => {
+			const out = [];
+			const times = [];
+			let seen = beeps.length;
+			const watch = setInterval(() => { for (; seen < beeps.length; seen++) if (/Group code/.test(beeps[seen][1])) times.push(Date.now()); }, 50);
+			for (const n of [14, 12, 14]) out.push((await SlimeBeep.api.inviteToGroup(g, n)).sent);
+			await new Promise((r) => setTimeout(r, 7000));
+			clearInterval(watch);
+			return { out, gaps: times.slice(1).map((t, i) => t - times[i]) };
+		}, gid);
+		check(many.out.join() === 'beep,beep,later' && many.gaps.length === 1 && many.gaps.every((d) => d >= 2500), `invite beeps to friends without SlimeBeep go 3 a minute, ~3 s apart (${JSON.stringify(many)})`);
 		check(viaApi.zed.ok && !viaApi.zed.sent && /^SB-[a-z0-9]+-[A-Z2-9]{10}$/.test(viaApi.zed.code), 'someone who is no friend: the code comes back, to pass on');
 		check(!viaApi.me.ok && viaApi.canInvite === true, `inviting yourself is refused, and groups() says you can invite (${viaApi.me.why})`);
 		// openInvite: SlimeBeep's own "Invite Dee to…" screen.

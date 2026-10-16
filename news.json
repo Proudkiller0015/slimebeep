@@ -184,5 +184,11 @@
     "date": "16 Oct 2026",
     "title": "📢 SlimeBeep 2.19.1",
     "text": "Small tidy-up under the hood: SlimeBeep starts a little faster when loaded from its own site. Nothing to do on your side."
+  },
+  {
+    "id": "2.19.2",
+    "date": "16 Oct 2026",
+    "title": "📢 SlimeBeep 2.19.2",
+    "text": "Group invites to friends without SlimeBeep are now a plain beep with the code (no link), and go 3 at a time."
   }
 ]
