@@ -712,7 +712,7 @@ const check = (ok, what) => {
 				viaApi.bea.sent === 'beep' &&
 				viaApi.beaBeep &&
 				viaApi.beaBeep[1].includes(viaApi.bea.code) &&
-				/ask me where to get it/.test(viaApi.beaBeep[1]) &&
+				/in FUSAM's Addon Manager/.test(viaApi.beaBeep[1]) &&
 				!/https?:/.test(viaApi.beaBeep[1]),
 			`a friend without SlimeBeep gets a normal beep with her code, and no link in it (the owner: nothing like an ad) (${viaApi.beaBeep && viaApi.beaBeep[1].slice(0, 90)})`,
 		);
@@ -859,6 +859,17 @@ const check = (ok, what) => {
 		await tap('#sb-back');
 		await wait(500);
 		check(/friend of nobody/.test(await p.$eval('#sb-msgs', (e) => e.textContent)), "Zed's message arrives");
+		// A group message stays in the group: it is not in the one-to-one chat with its sender.
+		await p.evaluate(() => SlimeBeep.api.openChat(99));
+		await wait(250);
+		check(
+			!/friend of nobody/.test(await p.$eval('#sb-msgs', (e) => e.textContent)),
+			"Zed's group message is not in the one-to-one chat with Zed",
+		);
+		await tap('#sb-back');
+		await wait(150);
+		await p.evaluate((gid) => SlimeBeep.api.openGroup(gid), gid);
+		await wait(250);
 		// Away: two messages while the page is gone, and SlimeBeep catches up when it's back.
 		await tap('#sb-back');
 		await p.reload();
@@ -887,6 +898,28 @@ const check = (ok, what) => {
 				(await p.$$eval('#sb-body .sb-dot', (e) => e.some((x) => Number(x.textContent) >= 2))),
 			'and Slime Squad shows them as unread',
 		);
+		// A friend you never beeped (on the friend list only, offline, no name known): their invite still arrives.
+		await p.evaluate(() => {
+			Player.FriendList = [11, 12, 13, 14, 77];
+		});
+		await hide(77, 'Nia', { sb: 1, ginv: { code: 'SB-niagroup1-ABCDEFGHJK', name: 'Nia Nook' } });
+		await hide(78, 'Stranger', { sb: 1, ginv: { code: 'SB-strgroup1-ABCDEFGHJK', name: 'Stranger Den' } });
+		await wait(300);
+		await p.click('[data-tab=groups]');
+		await wait(200);
+		const invitesText = await p.$eval('#sb-body', (e) => e.textContent);
+		check(
+			/Invite from Nia/.test(invitesText) && /Nia Nook/.test(invitesText) && !/Stranger Den/.test(invitesText),
+			`an invite from a friend you never beeped arrives; a stranger's does not`,
+		);
+		await p.$$eval('#sb-body [data-dismiss]', (bs) => {
+			const b = bs.find((x) => /Nia Nook/.test((x.closest('.sb-row') || x.parentElement.parentElement).textContent));
+			if (b) {
+				b.click();
+			}
+		});
+		await wait(200);
+		check(!/Nia Nook/.test(await p.$eval('#sb-body', (e) => e.textContent)), 'and Dismiss takes it away');
 		// A friend's invite to another group: it waits in 👥 Groups until you join.
 		const gid2 = `owls${Date.now().toString(36)}`;
 		const a2 = await relayJoin(gid2, ann, { create: { name: 'Night Owls', open: false } });
@@ -1325,6 +1358,18 @@ const check = (ok, what) => {
 		'at 128×128, sharp enough to zoom on',
 	);
 	await shot('mypic');
+	const picButtons = await p.evaluate(() => {
+		const panel = document.getElementById('sb-panel').getBoundingClientRect();
+		return ['sb-o-pic', 'sb-o-fit', 'sb-o-nopic'].map((id) => {
+			const b = document.getElementById(id);
+			const r = b ? b.getBoundingClientRect() : null;
+			return r ? r.right <= panel.right - 3 && r.left >= panel.left + 3 : null;
+		});
+	});
+	check(
+		picButtons.every((x) => x === true),
+		`the picture buttons (Choose, Adjust, Remove) are all inside the window (${picButtons})`,
+	);
 	await p.click('#sb-gear');
 
 	// ---- 🐞 Bug report: the player's words plus SlimeBeep's own details, out to GitHub, the clipboard or a beep.
@@ -1812,6 +1857,89 @@ const check = (ok, what) => {
 		return [parseFloat(t.style.left), parseFloat(t.style.top)];
 	});
 	check(Math.abs(back[0] - 280) < 4 && Math.abs(back[1] - 180) < 4, `and drags back down as usual (${back})`);
+	// The window: moved by its top bar and resized by its edges like a desktop window (real mouse), and
+	// it stays put when the slime moves.
+	const win = () =>
+		p.$eval('#sb-panel', (e) => {
+			const r = e.getBoundingClientRect();
+			return { l: r.left, t: r.top, w: r.width, h: r.height, r: r.right, b: r.bottom };
+		});
+	const centre = (sel) =>
+		p.$eval(sel, (e) => {
+			const r = e.getBoundingClientRect();
+			return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+		});
+	const mouseDrag = async (from, dx, dy) => {
+		await p.mouse.move(from.x, from.y);
+		await p.mouse.down();
+		await p.mouse.move(from.x + dx, from.y + dy, { steps: 6 });
+		await p.mouse.up();
+		await wait(100);
+	};
+	const same = (a, b) => Math.abs(a - b) < 1.5;
+	await mouseDrag(await centre('#sb-toggle'), 0, 0);
+	if (!(await p.$eval('#sb-panel', (e) => e.style.display === 'flex'))) {
+		await mouseDrag(await centre('#sb-toggle'), 0, 0);
+	}
+	const w0 = await win();
+	await mouseDrag(await centre('#sb-panel .sb-head b'), -250, -60);
+	const w1 = await win();
+	check(
+		same(w1.l, w0.l - 250) && same(w1.t, w0.t - 60) && same(w1.w, w0.w) && same(w1.h, w0.h),
+		`the top bar moves the window (${JSON.stringify([w0, w1])})`,
+	);
+	check(await p.$eval('#sb-panel', (e) => e.style.display === 'flex'), 'and moving it does not close it');
+	await mouseDrag(await centre('#sb-toggle'), -120, 40);
+	const w2 = await win();
+	check(same(w2.l, w1.l) && same(w2.t, w1.t), 'moving the slime leaves the window where it is');
+	// Dropped on the window, the slime stays on top, so it can always be reached.
+	const t2 = await centre('#sb-toggle');
+	await mouseDrag(t2, w2.l + 150 - t2.x, w2.t + 200 - t2.y);
+	const onTop = await p.evaluate(() => {
+		const r = document.getElementById('sb-toggle').getBoundingClientRect();
+		return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2).closest('#sb-toggle') !== null;
+	});
+	check(onTop, 'a slime dropped on the window stays on top of it');
+	await mouseDrag(await centre('#sb-toggle'), t2.x - (w2.l + 150), t2.y - (w2.t + 200));
+	await mouseDrag(await centre('#sb-panel .sb-rs[data-rs="se"]'), 100, 60);
+	const w3 = await win();
+	check(
+		same(w3.l, w2.l) && same(w3.t, w2.t) && same(w3.w, w2.w + 100) && same(w3.h, w2.h + 60),
+		`the bottom right corner resizes it (${w3.w}x${w3.h})`,
+	);
+	await mouseDrag(await centre('#sb-panel .sb-rs[data-rs="nw"]'), -40, -30);
+	const w4 = await win();
+	check(
+		same(w4.r, w3.r) && same(w4.b, w3.b) && same(w4.w, w3.w + 40) && same(w4.h, w3.h + 30),
+		`the top left corner too, the other sides stay (${w4.w}x${w4.h})`,
+	);
+	await mouseDrag(await centre('#sb-panel .sb-rs[data-rs="e"]'), -30, 200);
+	const w5 = await win();
+	check(same(w5.w, w4.w - 30) && same(w5.h, w4.h) && same(w5.t, w4.t), `a side edge changes only the width (${w5.w}x${w5.h})`);
+	await mouseDrag(await centre('#sb-panel .sb-rs[data-rs="se"]'), -2000, -2000);
+	const w6 = await win();
+	check(w6.w === 340 && w6.h === 320, `it never gets smaller than 340 x 320 (${w6.w}x${w6.h})`);
+	await mouseDrag(await centre('#sb-panel .sb-head b'), 3000, 3000);
+	const w7 = await win();
+	check(w7.r <= 1200 - 8 && w7.b <= 800 - 8 && w7.l >= 8 && w7.t >= 8, `nor leaves the screen (${JSON.stringify(w7)})`);
+	const c7 = await centre('#sb-panel .sb-rs[data-rs="w"]');
+	await p.mouse.click(c7.x, c7.y, { count: 2 });
+	await wait(100);
+	const w8 = await win();
+	check(w8.w === 340 && w8.h === 480, `double-clicking an edge gives the usual size back (${w8.w}x${w8.h})`);
+	await mouseDrag(await centre('#sb-panel .sb-head b'), -300, -100);
+	await mouseDrag(await centre('#sb-panel .sb-rs[data-rs="se"]'), 60, -40);
+	const placed = await win();
+	const savedWin = await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.options')).win);
+	check(
+		savedWin && same(savedWin.x, placed.l) && same(savedWin.y, placed.t) && savedWin.w === 400 && savedWin.h === 440,
+		`where it is and its size are saved (${JSON.stringify(savedWin)})`,
+	);
+	await shot('window');
+	const closeAt = await centre('#sb-close');
+	await p.mouse.click(closeAt.x, closeAt.y);
+	await wait(150);
+	check(await p.$eval('#sb-panel', (e) => e.style.display === 'none'), "the top bar's buttons still work (✕ closes)");
 	const spot = await p.$eval('#sb-toggle', (e) => [e.style.left, e.style.top]);
 	newsBody = JSON.stringify([
 		{ id: 'old', text: 'old news' },
@@ -1835,6 +1963,11 @@ const check = (ok, what) => {
 	);
 	await p.click('#sb-toggle');
 	await wait(200);
+	const reopened = await win();
+	check(
+		same(reopened.l, placed.l) && same(reopened.t, placed.t) && reopened.w === 400 && reopened.h === 440,
+		`the window opens where it was left (${JSON.stringify(reopened)})`,
+	);
 	await p.click('[data-tab=wave]');
 	await wait(100);
 	check(

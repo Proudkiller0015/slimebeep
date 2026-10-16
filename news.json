@@ -214,5 +214,11 @@
     "date": "16 Oct 2026",
     "title": "📢 SlimeBeep 3.0.3",
     "text": "Fixes: the invite list no longer jumps back to the top (and keeps who you ticked), a bigger back arrow, centred header buttons, the slime no longer jumps to the bottom when dragged past the top, and a tidier SlimeBeep page in Settings > Extensions. SlimeBeep is now in FUSAM's Addon Manager (as beta)!"
+  },
+  {
+    "id": "3.0.4",
+    "date": "16 Oct 2026",
+    "title": "📢 SlimeBeep 3.0.4",
+    "text": "The window is now its own window: drag it by its top bar and resize it from any edge or corner (double-click an edge for the usual size, ⚙ Put it back resets everything). Group messages no longer show up in one-to-one chats, invites from friends you never beeped arrive, buttons are centred everywhere, and the picture buttons in ⚙ fit."
   }
 ]

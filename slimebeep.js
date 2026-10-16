@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.0.3';
+	const VERSION = '3.0.4';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -25,6 +25,8 @@
 	const DEFAULTS = {
 		/** @type {{ x: number, y: number } | null} Toggle button position as window fractions; null puts it bottom right. */
 		pos: null,
+		/** @type {{ x: number, y: number, w: number, h: number } | null} The window's place and size in px once moved or resized; null keeps it by the slime at its usual size. */
+		win: null,
 		/** Seconds between beeps when a WaveBeep goes to several friends. */
 		gap: 1.5,
 		/** Whether 📍 (a join button for your room) starts switched on in a chat. */
@@ -268,10 +270,12 @@
 					.slice(0, max)
 			: '';
 	/**
-	 * Whether a member is on your friend list (or online as a friend).
+	 * Whether a member is on your friend list. FriendNames only knows the friends whose names the game has
+	 * seen (a beep, the online list), so FriendList (every friend's number) is checked first.
 	 * @param {number} n
 	 */
 	const isFriend = (n) =>
+		(Array.isArray(Player.FriendList) && Player.FriendList.includes(n)) ||
 		!!(Player.FriendNames && typeof Player.FriendNames.has === 'function' && Player.FriendNames.has(n)) ||
 		friends.some((f) => f.MemberNumber === n);
 	/** Your name, as groups and mailboxes see it. */
@@ -940,8 +944,28 @@
 		return html`<span class="sb-av" style="background:hsl(${hue(n)} 85% 80%)">${initials}</span>`;
 	};
 
+	/**
+	 * A drawn icon (24 x 24 grid, stroked in the text colour). Symbols like ✕ or ⏻ sit off-centre in
+	 * some fonts; these are centred everywhere.
+	 * @param {number} size in px
+	 * @param {SafeHtml} shape the paths
+	 */
+	const svgIcon = (size, shape) =>
+		html`<svg class="sb-ic" viewBox="0 0 24 24" width="${size}" height="${size}" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">${shape}</svg>`;
+	/** The icons of SlimeBeep's round buttons. */
+	const ICONS = {
+		close: svgIcon(14, html`<path d="M6 6l12 12M18 6 6 18"/>`),
+		power: svgIcon(15, html`<path d="M12 3v8M7 6.6a7.5 7.5 0 1 0 10 0"/>`),
+		// A cog with eight teeth around a hole.
+		gear: svgIcon(
+			17,
+			html`<path d="M18.9 9.9L21.9 10.4L21.9 13.6L18.9 14.1L18.4 15.4L20.1 17.9L17.9 20.1L15.4 18.4L14.1 18.9L13.6 21.9L10.4 21.9L9.9 18.9L8.6 18.4L6.1 20.1L3.9 17.9L5.6 15.4L5.1 14.1L2.1 13.6L2.1 10.4L5.1 9.9L5.6 8.6L3.9 6.1L6.1 3.9L8.6 5.6L9.9 5.1L10.4 2.1L13.6 2.1L14.1 5.1L15.4 5.6L17.9 3.9L20.1 6.1L18.4 8.6Z" stroke-width="2.2"/><circle cx="12" cy="12" r="3" stroke-width="2.2"/>`,
+		),
+		send: svgIcon(18, html`<path d="M4 11.5 20 4l-6.5 16-2.6-6.4z" fill="currentColor"/>`),
+		back: svgIcon(22, html`<path d="M15 4.5 7.5 12l7.5 7.5" stroke-width="3.2"/>`),
+	};
 	const css = `
-		#sb-toggle { position: fixed; z-index: 99999; width: 46px; height: 46px; border-radius: 50%; padding: 0; overflow: visible;
+		#sb-toggle { position: fixed; z-index: 100000; width: 46px; height: 46px; border-radius: 50%; padding: 0; overflow: visible;
 			border: 3px solid #fff; background: #ffd6ec; cursor: pointer; box-shadow: 0 3px 10px #ff4fa366; touch-action: none; }
 		#sb-toggle img { width: 100%; height: 100%; display: block; border-radius: 50%; pointer-events: none; }
 		#sb-toggle.dragging { cursor: grabbing; opacity: .8; }
@@ -961,6 +985,18 @@
 		.sb-head small { opacity: .85; font-weight: normal; font-size: 11px; }
 		.sb-head button { border: none; background: #ffffff55; color: #fff; width: 28px; height: 28px; border-radius: 50%; font-size: 14px; }
 		.sb-head button:hover { background: #ffffff88; }
+		.sb-head { cursor: move; touch-action: none; user-select: none; }
+		/* Resize edges and corners of the window. */
+		.sb-rs { position: absolute; z-index: 3; touch-action: none; }
+		.sb-rs[data-rs="n"], .sb-rs[data-rs="s"] { left: 14px; right: 14px; height: 6px; cursor: ns-resize; }
+		.sb-rs[data-rs="e"], .sb-rs[data-rs="w"] { top: 14px; bottom: 14px; width: 6px; cursor: ew-resize; }
+		.sb-rs[data-rs="nw"], .sb-rs[data-rs="ne"], .sb-rs[data-rs="sw"], .sb-rs[data-rs="se"] { width: 14px; height: 14px; }
+		.sb-rs[data-rs="n"], .sb-rs[data-rs="nw"], .sb-rs[data-rs="ne"] { top: 0; }
+		.sb-rs[data-rs="s"], .sb-rs[data-rs="sw"], .sb-rs[data-rs="se"] { bottom: 0; }
+		.sb-rs[data-rs="w"], .sb-rs[data-rs="nw"], .sb-rs[data-rs="sw"] { left: 0; }
+		.sb-rs[data-rs="e"], .sb-rs[data-rs="ne"], .sb-rs[data-rs="se"] { right: 0; }
+		.sb-rs[data-rs="nw"], .sb-rs[data-rs="se"] { cursor: nwse-resize; }
+		.sb-rs[data-rs="ne"], .sb-rs[data-rs="sw"] { cursor: nesw-resize; }
 		.sb-head button, .sb-thead button, .sb-compose button, .sb-emo-tabs button, .sb-emo-grid button { padding: 0; display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
 		.sb-tabs { display: flex; gap: 3px; padding: 8px 8px 6px; background: #ffe6f3; }
 		.sb-tabs button { flex: 1 1 auto; min-width: 0; white-space: nowrap; border: none; border-radius: 14px; padding: 5px 5px; background: #fff; color: #c2186b; text-align: center; }
@@ -988,8 +1024,9 @@
 		.sb-thead { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: #ffe6f3; }
 		.sb-thead button { border: none; background: #fff; color: #ff4fa3; width: 28px; height: 28px; border-radius: 50%; font-size: 15px; }
 		.sb-thead #sb-back { width: 36px; height: 36px; flex: none; }
-		/* Pages and add-ons can style every svg; this one stays put. */
-		#sb-panel #sb-back svg { display: block; position: static; margin: 0; padding: 0; width: 22px; height: 22px; opacity: 1; transform: none; }
+		/* Pages and add-ons can style every svg; the icons stay put. Clicks go to their button. */
+		svg.sb-ic { display: block; position: static; flex: none; margin: 0; padding: 0; opacity: 1; transform: none; overflow: visible; pointer-events: none; }
+		.sb-card .sb-x { display: inline-flex; align-items: center; justify-content: center; }
 		.sb-msgs { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 6px;
 			background: radial-gradient(circle at 20% 10%, #fff 0, #fff7fb 60%); }
 		.sb-b { max-width: 78%; padding: 7px 11px; border-radius: 18px; white-space: pre-wrap; word-wrap: break-word; }
@@ -1021,7 +1058,7 @@
 		#sb-ask [data-act=quit], #sb-ask .sb-danger { background: #e5303f; }
 		#sb-crop .sb-crop-btns, #sb-ask .sb-crop-btns { display: flex; gap: 8px; }
 		#sb-crop .sb-crop-card { position: relative; }
-		#sb-crop .sb-crop-x { position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; border-radius: 50%; border: none; background: #ffe3f1; color: #c2387f; cursor: pointer; }
+		#sb-crop .sb-crop-x { position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; border-radius: 50%; border: none; background: #ffe3f1; color: #c2387f; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
 		.sb-b.sb-act { font-style: italic; background: transparent !important; border: 1px dashed currentColor !important; color: inherit; opacity: .85; }
 		.sb-b.sb-wait { opacity: .7; border: 2px dashed #ffb3d9; }
 		.sb-b.sb-wait a { color: inherit; text-decoration: underline; }
@@ -1091,7 +1128,7 @@
 		html.sb-night .sb-tabs button.on { background: #5b8cff; color: #fff; box-shadow: 0 2px 6px #5b8cff66; }
 		html.sb-night .sb-tabs button i { background: #5b8cff; }
 		html.sb-night .sb-tabs button.on i { background: #fff; color: #3b55c4; }
-		html.sb-night .sb-row, html.sb-night .sb-group label, html.sb-night .sb-opts label { background: #1d2550; border-color: #2c3866; color: #dfe6ff; }
+		html.sb-night .sb-row, html.sb-night .sb-group label, html.sb-night .sb-opts label, html.sb-night .sb-opts .sb-opt-pic { background: #1d2550; border-color: #2c3866; color: #dfe6ff; }
 		html.sb-night .sb-row:hover { background: #253064; border-color: #5b8cff; }
 		html.sb-night .sb-sub, html.sb-night .sb-hint, html.sb-night .sb-side, html.sb-night .sb-empty { color: #8f9fd6; }
 		html.sb-night .sb-dot { background: #5b8cff; }
@@ -1132,7 +1169,7 @@
 		html.sb-themed .sb-tabs button.on { background: var(--sb-t-accent); color: var(--sb-t-text); box-shadow: none; }
 		html.sb-themed .sb-tabs button i, html.sb-themed .sb-dot { background: var(--sb-t-accent-hover); color: var(--sb-t-text); }
 		html.sb-themed .sb-tabs button.on i { background: var(--sb-t-text); color: var(--sb-t-accent); }
-		html.sb-themed .sb-row, html.sb-themed .sb-group label, html.sb-themed .sb-opts label { background: var(--sb-t-element); border-color: var(--sb-t-element-hover); color: var(--sb-t-text); }
+		html.sb-themed .sb-row, html.sb-themed .sb-group label, html.sb-themed .sb-opts label, html.sb-themed .sb-opts .sb-opt-pic { background: var(--sb-t-element); border-color: var(--sb-t-element-hover); color: var(--sb-t-text); }
 		html.sb-themed .sb-row:hover { background: var(--sb-t-element-hover); border-color: var(--sb-t-accent); }
 		html.sb-themed .sb-sub, html.sb-themed .sb-hint, html.sb-themed .sb-side, html.sb-themed .sb-empty { color: var(--sb-t-text-disabled); }
 		html.sb-themed .sb-search, html.sb-themed .sb-compose textarea, html.sb-themed .sb-group textarea, html.sb-themed .sb-opts input[type=number] {
@@ -1163,7 +1200,9 @@
 		#sb-toast.show { opacity: 1; transform: none; }
 		#sb-toggle.boing { animation: sb-boing .45s; }
 		@keyframes sb-boing { 30% { transform: scale(1.25, .8); } 60% { transform: scale(.9, 1.15); } }
-		.sb-opts label { display: block; padding: 6px 8px; margin: 4px 0; border-radius: 12px; background: #fff; }
+		.sb-opts label, .sb-opts .sb-opt-pic { display: block; padding: 6px 8px; margin: 4px 0; border-radius: 12px; background: #fff; }
+		.sb-opts .sb-opt-pic { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+		.sb-opt-pic-buttons { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; }
 		#sb-quit { font-size: 13px; }
 		.sb-opts input[type=number] { width: 54px; border: 1px solid #ffb3d9; border-radius: 8px; padding: 2px 4px; font: inherit; }
 	`;
@@ -1210,13 +1249,15 @@
 				<b>SlimeBeep <small>v${VERSION}</small></b>
 				<span id="sb-me"></span>
 				<button id="sb-moon" title="Night mode">🌙</button>
-				<button id="sb-gear" title="Options">⚙</button>
-				<button id="sb-quit" title="Quit SlimeBeep until you reload">⏻</button>
-				<button id="sb-close" title="Close">✕</button>
+				<button id="sb-gear" title="Options">${ICONS.gear}</button>
+				<button id="sb-quit" title="Quit SlimeBeep until you reload">${ICONS.power}</button>
+				<button id="sb-close" title="Close">${ICONS.close}</button>
 			</div>
-			<div id="sb-view" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>`,
+			<div id="sb-view" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>
+			${['n', 's', 'e', 'w', 'nw', 'ne', 'sw', 'se'].map((d) => html`<div class="sb-rs" data-rs="${d}" title="Drag to resize (double-click: usual size)"></div>`)}`,
 		);
 		document.body.appendChild(panel);
+		wireWindow(panel);
 
 		/** @type {{ dx: number, dy: number, x0: number, y0: number, lastX: number, lastY: number, moved: boolean } | null} Toggle drag in progress: pointer offset, start point, last point, whether it moved. */
 		let drag = null;
@@ -1277,6 +1318,10 @@
 			drag.lastY = y;
 			if (!drag.moved && Math.hypot(x - drag.x0, y - drag.y0) < 8) {
 				return;
+			}
+			if (!drag.moved && isOpen() && !opts.win) {
+				const pr = panel.getBoundingClientRect();
+				opts.win = { x: Math.round(pr.left), y: Math.round(pr.top), w: Math.round(pr.width), h: Math.round(pr.height) };
 			}
 			drag.moved = true;
 			toggle.classList.add('dragging');
@@ -1959,7 +2004,7 @@
 			setHtml(
 				box,
 				html`<div class="sb-crop-card">
-				<button class="sb-crop-x" data-act="cancel" title="Close">✕</button>
+				<button class="sb-crop-x" data-act="cancel" title="Close">${ICONS.close}</button>
 				<b>${title || 'Fit your picture in the circle'}</b>
 				<div class="sb-crop-ring" style="width:${SIZE}px;height:${SIZE}px"><canvas width="${SIZE}" height="${SIZE}"></canvas></div>
 				<span class="sb-hint">Drag to move it, scroll or slide to zoom.</span>
@@ -3190,7 +3235,8 @@
 		plainSent.push(now);
 		plainAt = Math.max(now, plainAt + PLAIN_GAP);
 		setTimeout(
-			() => beep(n, `👥 Come join my group chat "${name}" on SlimeBeep (a BC add-on, ask me where to get it). Group code: ${code}`, false),
+			() =>
+				beep(n, `👥 Come join my group chat "${name}" on SlimeBeep (a BC add-on, in FUSAM's Addon Manager). Group code: ${code}`, false),
 			plainAt - now,
 		);
 		return 'beep';
@@ -3563,7 +3609,7 @@
 		place();
 	}
 
-	/** Positions the toggle (opts.pos, kept on screen) and the panel next to it. */
+	/** Positions the toggle (opts.pos, kept on screen) and the window (opts.win, or next to the toggle). */
 	function place() {
 		const t = $('sb-toggle'),
 			panel = $('sb-panel');
@@ -3578,21 +3624,156 @@
 		if (!isOpen()) {
 			return;
 		}
-		const w = panel.offsetWidth,
-			h = Math.min(480, innerHeight - 16);
-		panel.style.height = `${h}px`;
-		// Above the toggle if it fits, else below, else clamped to the window.
-		panel.style.left = `${Math.max(8, Math.min(innerWidth - w - 8, left + size - w))}px`;
+		const r = windowRect(left, top, size);
+		panel.style.left = `${r.x}px`;
+		panel.style.top = `${r.y}px`;
+		panel.style.width = `${r.w}px`;
+		panel.style.height = `${r.h}px`;
+		placeCards();
+	}
+
+	/** The window's usual size, and the smallest it can be made (narrower squeezes the tabs). */
+	const WIN = { w: 340, h: 480, minW: 340, minH: 320 };
+	/**
+	 * `v` kept between `lo` and `hi` (`lo` wins when they cross, as in a window smaller than the minimum).
+	 * @param {number} v
+	 * @param {number} lo
+	 * @param {number} hi
+	 */
+	const fit = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+	/**
+	 * Where the window goes: opts.win (kept inside the browser window), else by the toggle at the usual
+	 * size, above it if it fits, else below, else as low as fits.
+	 * @param {number} left the toggle's place
+	 * @param {number} top
+	 * @param {number} size the toggle's size
+	 * @returns {{ x: number, y: number, w: number, h: number }}
+	 */
+	function windowRect(left, top, size) {
+		const win = opts.win;
+		if (win && [win.x, win.y, win.w, win.h].every(Number.isFinite)) {
+			const w = Math.round(fit(win.w, Math.min(WIN.minW, innerWidth - 16), innerWidth - 16));
+			const h = Math.round(fit(win.h, Math.min(WIN.minH, innerHeight - 16), innerHeight - 16));
+			return { x: Math.round(fit(win.x, 8, innerWidth - w - 8)), y: Math.round(fit(win.y, 8, innerHeight - h - 8)), w, h };
+		}
+		const w = Math.min(WIN.w, innerWidth - 16);
+		const h = Math.min(WIN.h, innerHeight - 16);
 		const above = top - h - 10;
 		const below = top + size + 10;
-		let panelTop = Math.max(8, innerHeight - h - 8);
+		let y = Math.max(8, innerHeight - h - 8);
 		if (above >= 8) {
-			panelTop = above;
+			y = above;
 		} else if (below + h <= innerHeight - 8) {
-			panelTop = below;
+			y = below;
 		}
-		panel.style.top = `${panelTop}px`;
-		placeCards();
+		return { x: Math.max(8, Math.min(innerWidth - w - 8, left + size - w)), y, w, h };
+	}
+	/**
+	 * Makes the window move by its header and resize by its edges and corners, like a desktop window;
+	 * the result is saved in opts.win. Double-clicking an edge gives back the usual size.
+	 * @param {HTMLElement} panel
+	 */
+	function wireWindow(panel) {
+		/** @type {{ mode: string, x0: number, y0: number, lastX: number, lastY: number, r: DOMRect } | null} The move or resize in progress ('move', or the edges: 'n', 'se'...). */
+		let op = null;
+		const head = /** @type {HTMLElement} */ (panel.querySelector('.sb-head'));
+		/**
+		 * @param {PointerEvent} e
+		 * @param {string} mode
+		 * @param {HTMLElement} el gets the pointer capture
+		 */
+		const begin = (e, mode, el) => {
+			e.preventDefault();
+			op = { mode, x0: e.clientX, y0: e.clientY, lastX: e.clientX, lastY: e.clientY, r: panel.getBoundingClientRect() };
+			try {
+				el.setPointerCapture(e.pointerId);
+			} catch (err) {
+				/* works without capture */
+			}
+		};
+		/** @param {PointerEvent} e */
+		const move = (e) => {
+			if (!op) {
+				return;
+			}
+			if (!(e.buttons & 1)) {
+				end();
+				return;
+			}
+			// As with the slime: the pointer is kept inside the window, and a jump of half of it is no real move.
+			const x = fit(e.clientX, 0, innerWidth);
+			const y = fit(e.clientY, 0, innerHeight);
+			if (Math.abs(x - op.lastX) > innerWidth / 2 || Math.abs(y - op.lastY) > innerHeight / 2) {
+				return;
+			}
+			op.lastX = x;
+			op.lastY = y;
+			const dx = x - op.x0;
+			const dy = y - op.y0;
+			const r = op.r;
+			let left = r.left;
+			let top = r.top;
+			let right = r.right;
+			let bottom = r.bottom;
+			if (op.mode === 'move') {
+				left = fit(r.left + dx, 8, innerWidth - r.width - 8);
+				top = fit(r.top + dy, 8, innerHeight - r.height - 8);
+				right = left + r.width;
+				bottom = top + r.height;
+			} else {
+				if (op.mode.includes('w')) {
+					left = fit(r.left + dx, 8, right - WIN.minW);
+				}
+				if (op.mode.includes('e')) {
+					right = fit(r.right + dx, left + WIN.minW, innerWidth - 8);
+				}
+				if (op.mode.includes('n')) {
+					top = fit(r.top + dy, 8, bottom - WIN.minH);
+				}
+				if (op.mode.includes('s')) {
+					bottom = fit(r.bottom + dy, top + WIN.minH, innerHeight - 8);
+				}
+			}
+			opts.win = { x: Math.round(left), y: Math.round(top), w: Math.round(right - left), h: Math.round(bottom - top) };
+			panel.style.left = `${opts.win.x}px`;
+			panel.style.top = `${opts.win.y}px`;
+			panel.style.width = `${opts.win.w}px`;
+			panel.style.height = `${opts.win.h}px`;
+			placeCards();
+		};
+		/** Ends a move or resize and saves where the window is. */
+		const end = () => {
+			if (!op) {
+				return;
+			}
+			op = null;
+			saveOpts();
+			place();
+		};
+		head.addEventListener('pointerdown', (e) => {
+			if (e.button === 0 && !targetOf(e).closest('button')) {
+				begin(e, 'move', head);
+			}
+		});
+		const handles = $$(panel, '.sb-rs');
+		for (const el of [head, ...handles]) {
+			el.addEventListener('pointermove', move);
+			el.addEventListener('pointerup', end);
+			el.addEventListener('pointercancel', end);
+			el.addEventListener('lostpointercapture', end);
+		}
+		for (const g of handles) {
+			g.addEventListener('pointerdown', (e) => {
+				if (e.button === 0) {
+					begin(e, g.dataset.rs || 'se', g);
+				}
+			});
+			g.addEventListener('dblclick', () => {
+				const r = panel.getBoundingClientRect();
+				setOpt('win', { x: Math.round(r.left), y: Math.round(r.top), w: WIN.w, h: WIN.h });
+				place();
+			});
+		}
 	}
 
 	/** Ticks since start (theme matching runs every 5th). */
@@ -3656,7 +3837,7 @@
 	 * @param {HistEntry} h
 	 */
 	function announce(h) {
-		if (isOpen() && thread === h.MemberNumber && !document.hidden) {
+		if (!h.group && isOpen() && thread === h.MemberNumber && !document.hidden) {
 			return;
 		}
 		const text = textOf(h);
@@ -3723,7 +3904,7 @@
 		c.className = `sb-card ${cls}`;
 		setHtml(
 			c,
-			html`${icon}<span class="sb-main"><b>${title}</b><span class="sb-txt">${text}</span>${sub && html`<small>${sub}</small>`}</span><button class="sb-x" title="Dismiss">✕</button>`,
+			html`${icon}<span class="sb-main"><b>${title}</b><span class="sb-txt">${text}</span>${sub && html`<small>${sub}</small>`}</span><button class="sb-x" title="Dismiss">${ICONS.close}</button>`,
 		);
 		const close = () => {
 			c.classList.add('out');
@@ -4471,7 +4652,7 @@
 		setHtml(
 			view,
 			html`
-			<div class="sb-thead"><button id="sb-back" title="Back to the chat">${BACK_ICON}</button>${groupAv(g)}
+			<div class="sb-thead"><button id="sb-back" title="Back to the chat">${ICONS.back}</button>${groupAv(g)}
 				<div class="sb-main"><div class="sb-name">${g.name}</div><div class="sb-sub">${g.members.length} / ${LIMITS.members} members</div></div></div>
 			<div class="sb-body sb-group" id="sb-body">
 				${settings}
@@ -4585,8 +4766,6 @@
 		restorePage(`m:${id}`, page);
 	}
 
-	/** The chevron on the ‹ back buttons of chat headers (a drawn icon: the ‹ character is tiny in most fonts). */
-	const BACK_ICON = html`<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M15 4.5 7.5 12l7.5 7.5" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 	/**
 	 * Draws an open group chat.
 	 * @param {boolean} [keepScroll]
@@ -4626,7 +4805,7 @@
 		setHtml(
 			view,
 			html`
-			<div class="sb-thead"><button id="sb-back" title="Back">${BACK_ICON}</button>${groupAv(g)}
+			<div class="sb-thead"><button id="sb-back" title="Back">${ICONS.back}</button>${groupAv(g)}
 				<div class="sb-main"><div class="sb-name">${g.name}</div>
 				<div class="sb-sub" title="${names.join(', ')}">${status}${g.members.length} members: You${names.length > 0 && `, ${names.join(', ')}`}</div></div>
 				${muteButton(`g:${id}`)}<button id="sb-members" title="Members and invites">👥</button><button id="sb-leave" title="${g.owner === Player.MemberNumber ? 'Leave or delete the group' : 'Leave the group'}">🚪</button></div>
@@ -4634,7 +4813,7 @@
 			<div class="sb-compose">
 				<button class="pin" id="sb-emo" title="Emoji">😊</button>
 				<textarea id="sb-text" maxlength="${LIMITS.text}" placeholder="Message ${g.name}… (/help)"></textarea>
-				<button id="sb-send" title="Send (Enter)">➤</button>
+				<button id="sb-send" title="Send (Enter)">${ICONS.send}</button>
 			</div>`,
 		);
 		const box = $('sb-msgs');
@@ -4817,7 +4996,7 @@
 		const mayFocus = wantsFocus();
 		const n = Number(thread);
 		const view = $('sb-view');
-		const msgs = log().filter((b) => b.MemberNumber === n && !isReaction(b));
+		const msgs = log().filter((b) => b.MemberNumber === n && !b.group && !isReaction(b));
 		// Opening the chat marks it read (in the game's log too).
 		for (const b of msgs) {
 			markRead(b);
@@ -4860,7 +5039,7 @@
 		setHtml(
 			view,
 			html`
-			<div class="sb-thead"><button id="sb-back" title="Back">${BACK_ICON}</button>${avatar(n, nameOf(n))}
+			<div class="sb-thead"><button id="sb-back" title="Back">${ICONS.back}</button>${avatar(n, nameOf(n))}
 				<div class="sb-main"><div class="sb-name">${nameOf(n)} <small style="font-weight:normal;color:#c08aaa">#${n}</small></div>
 				<div class="sb-sub">${f && html`<span class="sb-on"></span>`}${where(f)}</div></div>${muteButton(`n:${n}`)}</div>
 			<div class="sb-msgs" id="sb-msgs">${bubbles}${waitingBubbles}</div>
@@ -4868,7 +5047,7 @@
 				<button class="pin ${pinOn && 'on'}" id="sb-pin" ${!room && 'disabled'} title="${pinTitle}">📍</button>
 				<button class="pin" id="sb-emo" title="Emoji">😊</button>
 				<textarea id="sb-text" maxlength="1000" placeholder="${placeholder}"></textarea>
-				<button id="sb-send" title="Send (Enter)">➤</button>
+				<button id="sb-send" title="Send (Enter)">${ICONS.send}</button>
 			</div>`,
 		);
 		const box = $('sb-msgs');
@@ -5038,7 +5217,7 @@
 		const list = open === '🕘' ? recentEmoji : EMOJI[/** @type {keyof typeof EMOJI} */ (open)].split(' ');
 		setHtml(
 			box,
-			html`<div class="sb-emo-tabs">${tabs.map((t) => html`<button data-etab="${t}" class="${t === emojiTab && 'on'}">${t}</button>`)}<button data-eclose="1" title="Close">✕</button></div>
+			html`<div class="sb-emo-tabs">${tabs.map((t) => html`<button data-etab="${t}" class="${t === emojiTab && 'on'}">${t}</button>`)}<button data-eclose="1" title="Close">${ICONS.close}</button></div>
 			<div class="sb-emo-grid">${list.map((e) => html`<button data-emo="${e}">${e}</button>`)}</div>`,
 		);
 		box.onclick = (ev) => {
@@ -5456,7 +5635,7 @@
 					MainCanvas.textAlign = 'left';
 					DrawText(`Wait ${opts.gap} seconds between WaveBeeps`, LEFT + 180, g + 33, 'Black', 'Gray');
 					MainCanvas.textAlign = 'center';
-					DrawButton(...RESET, 'Reset slime position', 'White');
+					DrawButton(...RESET, 'Reset position and size', 'White');
 					DrawButton(...CLEAR, `Clear kept beeps (${hist.length})`, 'White');
 					DrawButton(...PIC, myPfp() ? 'Change profile picture' : 'Choose profile picture', 'White');
 					drawMyPic(NOPIC[0] + NOPIC[2] + 20, PIC[1], 64);
@@ -5497,6 +5676,7 @@
 					}
 					if (mouse(RESET)) {
 						setOpt('pos', null);
+						setOpt('win', null);
 						place();
 					}
 					if (mouse(CLEAR)) {
@@ -5854,8 +6034,8 @@
 		const checked = (on) => on && 'checked';
 		return html`<div class="sb-opts">
 			<b style="display:block;margin:6px 2px">⚙ Options</b>
-			<label style="display:flex;align-items:center;gap:8px">${avatar(Player.MemberNumber, myName())}<span style="flex:1">Profile picture<span class="sb-hint" style="display:block">SlimeBeep friends see it.</span></span>
-				<button class="sb-pill" id="sb-o-pic">Choose</button>${myPfp() && loadSrc() && html`<button class="sb-pill" id="sb-o-fit">Adjust</button>`}${myPfp() && html`<button class="sb-pill" id="sb-o-nopic">Remove</button>`}</label>
+			<div class="sb-opt-pic">${avatar(Player.MemberNumber, myName())}<span style="flex:1;min-width:0">Profile picture<span class="sb-hint" style="display:block">SlimeBeep friends see it.</span></span>
+				<span class="sb-opt-pic-buttons"><button class="sb-pill" id="sb-o-pic">Choose</button>${myPfp() && loadSrc() && html`<button class="sb-pill" id="sb-o-fit">Adjust</button>`}${myPfp() && html`<button class="sb-pill" id="sb-o-nopic">Remove</button>`}</span></div>
 			<label><input type="checkbox" id="sb-o-night" ${checked(opts.night)}>🌙 Night mode (a night blue slime)</label>
 			<label><input type="checkbox" id="sb-o-sound" ${checked(opts.sound)}>Pop sound for new beeps</label>
 			<label><input type="checkbox" id="sb-o-popups" ${checked(opts.popups)}>💌 A card by the slime for each new beep</label>
@@ -5865,7 +6045,7 @@
 			<label><input type="checkbox" id="sb-o-share" ${checked(opts.shareRoom)}>📍 "Let them join me" starts on</label>
 			<label><input type="checkbox" id="sb-o-remember" ${checked(opts.remember)}>Remember who I picked for WaveBeeps</label>
 			<label>Wait <input type="number" id="sb-o-gap" min="1" max="10" step="0.5" value="${opts.gap}"> seconds between WaveBeeps</label>
-			<label>Drag the slime to move it. <button class="sb-pill" id="sb-o-reset">Put it back</button></label>
+			<label>Drag the slime to move it, the window by its top bar, and the window's edges to resize it. <button class="sb-pill" id="sb-o-reset">Put it back</button></label>
 			<div class="sb-hint" style="margin:10px 4px">SlimeBeep v${VERSION} updates itself: a reload always runs the newest version.</div>
 		</div>`;
 	}
@@ -5921,6 +6101,7 @@
 		});
 		$('sb-o-reset').addEventListener('click', () => {
 			setOpt('pos', null);
+			setOpt('win', null);
 			place();
 		});
 	}

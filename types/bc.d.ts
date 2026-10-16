@@ -11,6 +11,8 @@ interface BcPlayer {
 	Nickname?: string;
 	/** Friend list: member number -> name. */
 	FriendNames: Map<number, string>;
+	/** Every friend's member number. */
+	FriendList?: number[];
 	IsSlow(): boolean;
 }
 
