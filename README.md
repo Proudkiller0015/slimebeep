@@ -2,6 +2,8 @@
 
 # SlimeBeep
 
+Made by **SlimeQueenSamantha**.
+
 A bubble gum beep messenger for [Bondage Club](https://www.bondageprojects.elementfx.com/): chat with each friend, see who's online and where, and send one beep to a group.
 
 ## Install
@@ -16,8 +18,8 @@ Click the pink slime (drag it anywhere you like; it stays there). A pink dot on 
 
 - **💬 Chats:** a chat with each person you've beeped with, newest first. Open one to see your beeps as chat bubbles and reply (Enter sends, Shift+Enter is a new line). 📍 adds a button to join you in your current chat room.
 - **💖 Friends:** who's online and which room they're in. Search by name, number or room; click someone to beep them.
-- **📣 Group:** one beep to every friend you tick (**All** / **None**), sent one at a time.
-- **👥 Group chats:** up to 40 people, all with SlimeBeep (🫧 marks friends who have it; **Find SlimeBeep friends** asks). Start one from 💬 Chats. The owner 👑 and admins ⭐ add and remove people, promote, and rename; turn on **Anyone can invite** to let every member add their friends. Messages stay inside SlimeBeep, the game never shows them, and they reach friends of friends because admins (and whoever invited someone) pass them on.
+- **🌊 WaveBeep:** one beep to every friend you tick (**All** / **None**), sent one at a time.
+- **👥 Group chats:** up to 40 people, all with SlimeBeep (🫧 marks friends who have it; **Find SlimeBeep friends** asks). Start one from the **👥 Groups** tab, where all your group chats live. The owner 👑 and admins ⭐ add and remove people, promote, and rename; turn on **Anyone can invite** to let every member add their friends. Messages stay inside SlimeBeep, the game never shows them, and they reach friends of friends because admins (and whoever invited someone) pass them on.
 - **🖼 Profile picture:** pick one in ⚙ (or Settings > Extensions). It's shrunk to a small square and only SlimeBeep friends get it, as image data, never a web link.
 - **🌙 Night mode:** the moon in the header (or ⚙) switches to navy with a night blue slime.
 - **Settings > Extensions:** SlimeBeep is listed there too, with the same options.

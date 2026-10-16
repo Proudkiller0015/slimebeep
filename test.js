@@ -211,14 +211,14 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	check(await p.$$eval('#sb-body .sb-row', (e) => e.length) === 1, 'search finds by room name too');
 	await shot('friends');
 
-	await p.click('[data-tab=group]');
+	await p.click('[data-tab=wave]');
 	await wait(200);
 	await p.click('#sb-body label:nth-of-type(2) input');
 	await p.click('#sb-body label:nth-of-type(4) input');
 	await p.type('#sb-gmsg', 'Party in 10!');
 	await p.click('#sb-gear');
 	await p.$eval('#sb-o-gap', (e) => { e.value = '1'; e.dispatchEvent(new Event('change')); });
-	await p.click('[data-tab=group]');
+	await p.click('[data-tab=wave]');
 	await wait(100);
 	check(await p.$eval('#sb-gmsg', (e) => e.value) === 'Party in 10!', 'the group draft survives a trip to options');
 	await shot('group');
@@ -251,7 +251,7 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	await p.evaluate(() => fire('AccountBeep', { MemberNumber: 77, MemberName: 'Stranger', BeepType: 'SlimeBeep', Message: JSON.stringify({ sb: 1, gid: 'squad0001', m: 'msg000008', a: 77, t: 'FORGED: not even a friend' }) }));
 	await wait(300);
 	await p.click('#sb-back').catch(() => {});
-	await p.click('[data-tab=chats]');
+	await p.click('[data-tab=groups]');
 	await wait(200);
 	await p.click('[data-open="g:squad0001"]');
 	await wait(200);
@@ -368,13 +368,17 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	check(JSON.stringify(await p.$eval('#sb-toggle', (e) => [e.style.left, e.style.top])) === JSON.stringify(at), 'the spot survives a reload');
 	await p.click('#sb-toggle');
 	await wait(200);
-	await p.click('[data-tab=group]');
+	await p.click('[data-tab=wave]');
 	await wait(100);
 	check(JSON.stringify(await p.$$eval('#sb-body label input:checked:not(#sb-groom)', (e) => e.map((x) => x.value))) === '["11","13"]', 'and so do the picks');
 	await p.click('[data-tab=chats]');
 	await wait(200);
 	const kept = await p.$$eval('#sb-body .sb-row .sb-name', (e) => e.map((x) => x.textContent));
-	check(['Ann', 'Bea', 'Cat', 'Dee', 'Slime Squad', 'Night Owls'].every((n) => kept.some((t) => t.includes(n))), `chats and group chats survive a relog, the EBC one too (${kept})`);
+	check(['Ann', 'Bea', 'Cat', 'Dee'].every((n) => kept.some((t) => t.includes(n))) && !kept.some((t) => /Squad|Owls/.test(t)), `chats survive a relog, the EBC one too, and group chats are not among them (${kept})`);
+	await p.click('[data-tab=groups]');
+	await wait(150);
+	const keptGroups = await p.$$eval('#sb-body .sb-row .sb-name', (e) => e.map((x) => x.textContent));
+	check(['Slime Squad', 'Night Owls'].every((n) => keptGroups.some((t) => t.includes(n))), `group chats survive a relog in 👥 Groups (${keptGroups})`);
 	await p.reload();
 	await p.evaluate(stub);
 	await p.addScriptTag({ content: src });

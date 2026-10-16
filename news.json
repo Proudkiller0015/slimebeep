@@ -46,5 +46,11 @@
     "date": "16 Oct 2026",
     "title": "📢 SlimeBeep 2.5.2",
     "text": "Other extensions' hidden signals (like KIKILINK) are no longer shown as beeps, and short beeps like <3 or hi always come through."
+  },
+  {
+    "id": "2.6.0",
+    "date": "16 Oct 2026",
+    "title": "📢 SlimeBeep 2.6",
+    "text": "New tabs: 👥 Groups for your group chats, and 🌊 WaveBeep (the old Group tab) to send one beep to many friends."
   }
 ]
