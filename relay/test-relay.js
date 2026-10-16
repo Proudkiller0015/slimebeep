@@ -5,9 +5,18 @@ const ORIGIN = 'https://www.bondageprojects.elementfx.com';
 let failed = 0;
 const check = (ok, what) => {
 	console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`);
-	if (!ok) failed++;
+	if (!ok) {
+		failed++;
+	}
 };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+/** The messages in a relay reply: one for 'msg', all of a 'history', none otherwise. */
+const messagesOf = (x) => {
+	if (x.t === 'msg') {
+		return [x.m];
+	}
+	return x.t === 'history' ? x.msgs : [];
+};
 const b64url = (buf) => Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
 async function keys() {
@@ -36,7 +45,9 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 			}
 		}, 20);
 	});
-	if (c.closed) return c;
+	if (c.closed) {
+		return c;
+	}
 	const hello = c.got.find((x) => x.t === 'hello');
 	const member = extra.as || who.member;
 	const sig = await crypto.subtle.sign(
@@ -57,7 +68,7 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 	await wait(250);
 	c.send = (x) => ws.send(JSON.stringify(x));
 	c.last = (t) => [...c.got].reverse().find((x) => x.t === t);
-	c.texts = () => c.got.flatMap((x) => (x.t === 'msg' ? [x.m] : x.t === 'history' ? x.msgs : [])).map((m) => m.text);
+	c.texts = () => c.got.flatMap(messagesOf).map((m) => m.text);
 	return c;
 }
 
@@ -70,8 +81,11 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 
 	const bad = await connect(gid, ann, {}, 'https://evil.example');
 	// (A relay started with --var ALLOW_ANY_ORIGIN:1 for the add-on's own test lets every page in.)
-	if (process.env.ANY_ORIGIN) console.log('skip another website cannot connect (test relay)');
-	else check(bad.closed && !bad.got.length, 'another website cannot connect');
+	if (process.env.ANY_ORIGIN) {
+		console.log('skip another website cannot connect (test relay)');
+	} else {
+		check(bad.closed && !bad.got.length, 'another website cannot connect');
+	}
 
 	const a = await connect(gid, ann, { fields: { create: { name: 'Slime Squad', open: false } } });
 	check(a.last('welcome') && a.last('welcome').roster.owner === 11, 'Ann makes a group and is its owner');
@@ -121,10 +135,12 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 	);
 
 	// Offline: Cat goes, three messages, Cat comes back asking for what came after the last one she saw.
-	const lastSeen = Math.max(...c2.got.flatMap((x) => (x.t === 'msg' ? [x.m.id] : x.t === 'history' ? x.msgs.map((m) => m.id) : [0])));
+	const lastSeen = Math.max(0, ...c2.got.flatMap(messagesOf).map((m) => m.id));
 	c2.ws.close();
 	await wait(200);
-	for (const t of ['one', 'two', 'three']) a.send({ t: 'say', text: t });
+	for (const t of ['one', 'two', 'three']) {
+		a.send({ t: 'say', text: t });
+	}
 	await wait(300);
 	const c3 = await connect(gid, cat, { fields: { after: lastSeen } });
 	const caught = c3.last('history').msgs.map((m) => m.text);
@@ -154,7 +170,9 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 	check(z2.closed && /not a member/.test(JSON.stringify(z2.got)), "and they can't come back without a new invite");
 
 	// Limits.
-	for (let i = 0; i < 25; i++) a.send({ t: 'say', text: `spam ${i}` });
+	for (let i = 0; i < 25; i++) {
+		a.send({ t: 'say', text: `spam ${i}` });
+	}
 	await wait(500);
 	check(
 		a.got.some((x) => x.t === 'error' && x.why === 'slow down'),
@@ -234,12 +252,13 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 		c1.send({ t: 'put', kf: kf(ann), text: 'x'.repeat(5000) });
 		await wait(300);
 		check(c1.last('error') && c1.last('error').fatal, 'an oversized message is refused');
-		for (const c of [c1, e1, fake, a2])
+		for (const c of [c1, e1, fake, a2]) {
 			try {
 				c.ws.close();
 			} catch (e) {
 				/* closed */
 			}
+		}
 	}
 
 	console.log(failed ? `\n${failed} FAILED` : '\nall passed');

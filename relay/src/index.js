@@ -82,6 +82,7 @@ const isNum = (n) => Number.isInteger(n) && n > 0 && n < 1e9;
 const clean = (x, max) =>
 	typeof x === 'string'
 		? x
+				// eslint-disable-next-line no-control-regex -- removing control characters is the point
 				.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '')
 				.trim()
 				.slice(0, max)
@@ -105,19 +106,31 @@ export default {
 	/** Checks the origin and hands the WebSocket to the group (?g=) or mailbox (?m=) object. */
 	async fetch(req, env) {
 		const url = new URL(req.url);
-		if (url.pathname === '/') return new Response('SlimeBeep group chat relay', { headers: { 'content-type': 'text/plain' } });
-		if (url.pathname !== '/ws') return new Response('Not found', { status: 404 });
-		if (req.headers.get('Upgrade') !== 'websocket') return new Response('Expected a WebSocket', { status: 426 });
+		if (url.pathname === '/') {
+			return new Response('SlimeBeep group chat relay', { headers: { 'content-type': 'text/plain' } });
+		}
+		if (url.pathname !== '/ws') {
+			return new Response('Not found', { status: 404 });
+		}
+		if (req.headers.get('Upgrade') !== 'websocket') {
+			return new Response('Expected a WebSocket', { status: 426 });
+		}
 		const origin = req.headers.get('Origin') || '';
 		// ALLOW_ANY_ORIGIN is set only by the local test server.
-		if (env.ALLOW_ANY_ORIGIN !== '1' && !ORIGINS.some((re) => re.test(origin))) return new Response('Forbidden', { status: 403 });
+		if (env.ALLOW_ANY_ORIGIN !== '1' && !ORIGINS.some((re) => re.test(origin))) {
+			return new Response('Forbidden', { status: 403 });
+		}
 		const box = Number(url.searchParams.get('m'));
 		if (url.searchParams.has('m')) {
-			if (!isNum(box)) return new Response('Bad mailbox', { status: 400 });
+			if (!isNum(box)) {
+				return new Response('Bad mailbox', { status: 400 });
+			}
 			return env.MAILBOX.get(env.MAILBOX.idFromName(`m:${box}`)).fetch(req);
 		}
 		const gid = url.searchParams.get('g') || '';
-		if (!ID_RE.test(gid)) return new Response('Bad group', { status: 400 });
+		if (!ID_RE.test(gid)) {
+			return new Response('Bad group', { status: 400 });
+		}
 		return env.GROUP.get(env.GROUP.idFromName(gid)).fetch(req);
 	},
 };
@@ -146,7 +159,9 @@ export class Group extends DurableObject {
 	/** Accepts a WebSocket and sends it a sign-in nonce. */
 	async fetch(req) {
 		const gid = new URL(req.url).searchParams.get('g');
-		if (this.ctx.getWebSockets().length >= LIMITS.sockets) return new Response('Busy', { status: 503 });
+		if (this.ctx.getWebSockets().length >= LIMITS.sockets) {
+			return new Response('Busy', { status: 503 });
+		}
 		const [client, server] = Object.values(new WebSocketPair());
 		this.ctx.acceptWebSocket(server);
 		const nonce = b64url(crypto.getRandomValues(new Uint8Array(18)));
@@ -160,28 +175,38 @@ export class Group extends DurableObject {
 	 * 'admin', 'owner', 'rename', 'open', 'profile', 'gpic', 'leave' and 'disband'. Rate limited per connection.
 	 */
 	async webSocketMessage(ws, raw) {
-		let att = ws.deserializeAttachment();
+		const att = ws.deserializeAttachment();
 		try {
-			if (typeof raw !== 'string' || raw.length > 16000) return this.fail(ws, 'too big');
+			if (typeof raw !== 'string' || raw.length > 16000) {
+				return this.fail(ws, 'too big');
+			}
 			const now = Date.now();
 			att.hits = (att.hits || []).filter((t) => now - t < 10000);
 			att.hits.push(now);
 			ws.serializeAttachment(att);
-			if (att.hits.length > LIMITS.burst) return this.send(ws, { t: 'error', why: 'slow down' });
+			if (att.hits.length > LIMITS.burst) {
+				return this.send(ws, { t: 'error', why: 'slow down' });
+			}
 			let p;
 			try {
 				p = JSON.parse(raw);
 			} catch (e) {
 				return this.fail(ws, 'not JSON');
 			}
-			if (!p || typeof p !== 'object' || Array.isArray(p) || typeof p.t !== 'string') return this.fail(ws, 'bad message');
+			if (!p || typeof p !== 'object' || Array.isArray(p) || typeof p.t !== 'string') {
+				return this.fail(ws, 'bad message');
+			}
 			if (!att.member) {
-				if (p.t !== 'auth') return this.fail(ws, 'sign in first');
+				if (p.t !== 'auth') {
+					return this.fail(ws, 'sign in first');
+				}
 				return await this.auth(ws, att, p);
 			}
 			const me = this.members[att.member];
 			// Removed since signing in.
-			if (!me || !this.meta) return this.fail(ws, 'not a member');
+			if (!me || !this.meta) {
+				return this.fail(ws, 'not a member');
+			}
 			switch (p.t) {
 				case 'say':
 					return await this.say(att.member, p);
@@ -229,15 +254,21 @@ export class Group extends DurableObject {
 		} catch (e) {
 			/* already closed */
 		}
-		if (a && a.member && this.meta) this.broadcast({ t: 'presence', online: this.online(ws) });
+		if (a && a.member && this.meta) {
+			this.broadcast({ t: 'presence', online: this.online(ws) });
+		}
 	}
 	/** Members with a live, signed-in connection right now (`except`: one that is closing). */
 	online(except = null) {
 		const on = new Set();
 		for (const ws of this.ctx.getWebSockets()) {
-			if (ws === except) continue;
+			if (ws === except) {
+				continue;
+			}
 			const a = ws.deserializeAttachment();
-			if (a && a.member && this.members[a.member]) on.add(a.member);
+			if (a && a.member && this.members[a.member]) {
+				on.add(a.member);
+			}
 		}
 		return [...on];
 	}
@@ -248,14 +279,19 @@ export class Group extends DurableObject {
 	 */
 	async auth(ws, att, p) {
 		const member = p.member;
-		if (!isNum(member) || !p.pub || !B64URL.test(p.pub.x || '') || !B64URL.test(p.pub.y || '') || !B64URL.test(p.sig || ''))
+		if (!isNum(member) || !p.pub || !B64URL.test(p.pub.x || '') || !B64URL.test(p.pub.y || '') || !B64URL.test(p.sig || '')) {
 			return this.fail(ws, 'bad sign-in');
+		}
 		const pub = { x: p.pub.x, y: p.pub.y };
 		const ok = await verify(pub, p.sig, `${att.nonce}|${att.gid}|${member}`);
-		if (!ok) return this.fail(ws, 'bad signature');
+		if (!ok) {
+			return this.fail(ws, 'bad signature');
+		}
 		const name = clean(p.name, LIMITS.name) || `#${member}`;
 		if (p.create) {
-			if (this.meta) return this.fail(ws, 'group exists');
+			if (this.meta) {
+				return this.fail(ws, 'group exists');
+			}
 			this.meta = {
 				name: clean(p.create.name, LIMITS.name) || 'Group chat',
 				owner: member,
@@ -270,18 +306,32 @@ export class Group extends DurableObject {
 			return this.fail(ws, 'no such group');
 		} else if (p.invite) {
 			const inv = this.invites[p.invite];
-			if (!SECRET_RE.test(p.invite) || !inv || inv.exp < Date.now()) return this.fail(ws, 'invite not valid');
-			if (inv.member && inv.member !== member) return this.fail(ws, 'invite is for someone else');
+			if (!SECRET_RE.test(p.invite) || !inv || inv.exp < Date.now()) {
+				return this.fail(ws, 'invite not valid');
+			}
+			if (inv.member && inv.member !== member) {
+				return this.fail(ws, 'invite is for someone else');
+			}
 			const known = this.members[member];
-			if (known && !samePub(known.pub, pub) && !inv.member) return this.fail(ws, 'that member number is taken');
-			if (!known && Object.keys(this.members).length >= LIMITS.members) return this.fail(ws, 'group is full');
+			if (known && !samePub(known.pub, pub) && !inv.member) {
+				return this.fail(ws, 'that member number is taken');
+			}
+			if (!known && Object.keys(this.members).length >= LIMITS.members) {
+				return this.fail(ws, 'group is full');
+			}
 			this.members[member] = { ...(known || { joined: Date.now() }), n: member, name, pub };
-			if (inv.member || ++inv.uses >= LIMITS.openUses) delete this.invites[p.invite];
+			if (inv.member || ++inv.uses >= LIMITS.openUses) {
+				delete this.invites[p.invite];
+			}
 			await this.save();
-			if (!known) await this.note(`${name} joined`);
+			if (!known) {
+				await this.note(`${name} joined`);
+			}
 		} else {
 			const known = this.members[member];
-			if (!known || !samePub(known.pub, pub)) return this.fail(ws, 'not a member');
+			if (!known || !samePub(known.pub, pub)) {
+				return this.fail(ws, 'not a member');
+			}
 			if (known.name !== name) {
 				known.name = name;
 				await this.save();
@@ -290,8 +340,14 @@ export class Group extends DurableObject {
 		att.member = member;
 		ws.serializeAttachment(att);
 		this.send(ws, { t: 'welcome', me: member, roster: this.roster() });
-		for (const m of Object.values(this.members)) if (m.pic) this.send(ws, { t: 'pic', n: m.n, data: m.pic });
-		if (this.meta.pic) this.send(ws, { t: 'gpic', data: this.meta.pic });
+		for (const m of Object.values(this.members)) {
+			if (m.pic) {
+				this.send(ws, { t: 'pic', n: m.n, data: m.pic });
+			}
+		}
+		if (this.meta.pic) {
+			this.send(ws, { t: 'gpic', data: this.meta.pic });
+		}
 		this.history(ws, p.after);
 		this.broadcast({ t: 'roster', roster: this.roster() });
 	}
@@ -299,11 +355,16 @@ export class Group extends DurableObject {
 	/** Posts a message (within LIMITS.perDay). */
 	async say(member, p) {
 		const text = clean(p.text, LIMITS.text);
-		if (!text) return;
+		if (!text) {
+			return;
+		}
 		const day = new Date().toISOString().slice(0, 10);
-		if (this.today.day !== day) this.today = { day, n: 0 };
-		if (++this.today.n > LIMITS.perDay)
+		if (this.today.day !== day) {
+			this.today = { day, n: 0 };
+		}
+		if (++this.today.n > LIMITS.perDay) {
 			return this.broadcast({ t: 'error', why: 'this group has sent enough messages for today; back tomorrow' });
+		}
 		const m = this.members[member];
 		await this.append({ from: member, name: m.name, text, ref: typeof p.ref === 'string' ? p.ref.slice(0, 24) : undefined });
 	}
@@ -318,7 +379,9 @@ export class Group extends DurableObject {
 		this.seq += 1;
 		const m = { id: this.seq, at: Date.now(), ...msg };
 		await this.ctx.storage.put(`msg:${String(this.seq).padStart(10, '0')}`, m);
-		if (this.seq > LIMITS.keep) await this.ctx.storage.delete(`msg:${String(this.seq - LIMITS.keep).padStart(10, '0')}`);
+		if (this.seq > LIMITS.keep) {
+			await this.ctx.storage.delete(`msg:${String(this.seq - LIMITS.keep).padStart(10, '0')}`);
+		}
 		this.broadcast({ t: 'msg', m });
 	}
 
@@ -332,16 +395,30 @@ export class Group extends DurableObject {
 	/** Makes an invite: for one member number (p.member) or open. Admins only unless the group is open. */
 	async invite(ws, member, p) {
 		const admin = this.meta.admins.includes(member);
-		if (!admin && !this.meta.open) return this.send(ws, { t: 'error', why: 'only admins can invite here' });
-		if (Object.keys(this.members).length >= LIMITS.members) return this.send(ws, { t: 'error', why: 'group is full' });
+		if (!admin && !this.meta.open) {
+			return this.send(ws, { t: 'error', why: 'only admins can invite here' });
+		}
+		if (Object.keys(this.members).length >= LIMITS.members) {
+			return this.send(ws, { t: 'error', why: 'group is full' });
+		}
 		const target = p.member == null ? null : p.member;
-		if (target !== null && !isNum(target)) return this.send(ws, { t: 'error', why: 'bad member number' });
+		if (target !== null && !isNum(target)) {
+			return this.send(ws, { t: 'error', why: 'bad member number' });
+		}
 		// Re-keying an existing member needs an admin.
-		if (target !== null && this.members[target] && !admin) return this.send(ws, { t: 'error', why: 'already a member' });
+		if (target !== null && this.members[target] && !admin) {
+			return this.send(ws, { t: 'error', why: 'already a member' });
+		}
 		// Expired invites are dropped; at most 50 are kept.
-		for (const [k, v] of Object.entries(this.invites)) if (v.exp < Date.now()) delete this.invites[k];
+		for (const [k, v] of Object.entries(this.invites)) {
+			if (v.exp < Date.now()) {
+				delete this.invites[k];
+			}
+		}
 		const keys = Object.keys(this.invites);
-		if (keys.length >= 50) delete this.invites[keys[0]];
+		if (keys.length >= 50) {
+			delete this.invites[keys[0]];
+		}
 		const code = secret();
 		this.invites[code] = { member: target, by: member, exp: Date.now() + LIMITS.inviteDays * 864e5, uses: 0 };
 		await this.save();
@@ -351,9 +428,13 @@ export class Group extends DurableObject {
 	/** Removes a member (admins; only the owner can remove admins). */
 	async kick(by, target) {
 		const g = this.meta;
-		if (!isNum(target) || !this.members[target] || target === g.owner || target === by) return;
+		if (!isNum(target) || !this.members[target] || target === g.owner || target === by) {
+			return;
+		}
 		const byOwner = by === g.owner;
-		if (!g.admins.includes(by) || (g.admins.includes(target) && !byOwner)) return;
+		if (!g.admins.includes(by) || (g.admins.includes(target) && !byOwner)) {
+			return;
+		}
 		const name = this.members[target].name;
 		delete this.members[target];
 		g.admins = g.admins.filter((n) => n !== target);
@@ -366,9 +447,15 @@ export class Group extends DurableObject {
 	/** Grants admin (any admin) or takes it (owner only). */
 	async setAdmin(by, target, on) {
 		const g = this.meta;
-		if (!isNum(target) || !this.members[target] || target === g.owner) return;
-		if (on && (!g.admins.includes(by) || g.admins.includes(target) || g.admins.length >= LIMITS.admins)) return;
-		if (!on && (by !== g.owner || !g.admins.includes(target))) return;
+		if (!isNum(target) || !this.members[target] || target === g.owner) {
+			return;
+		}
+		if (on && (!g.admins.includes(by) || g.admins.includes(target) || g.admins.length >= LIMITS.admins)) {
+			return;
+		}
+		if (!on && (by !== g.owner || !g.admins.includes(target))) {
+			return;
+		}
 		g.admins = on ? [...g.admins, target] : g.admins.filter((n) => n !== target);
 		await this.save();
 		await this.note(
@@ -382,9 +469,13 @@ export class Group extends DurableObject {
 	/** Hands the group to another member (owner only). */
 	async setOwner(by, target) {
 		const g = this.meta;
-		if (by !== g.owner || !isNum(target) || !this.members[target] || target === by) return;
+		if (by !== g.owner || !isNum(target) || !this.members[target] || target === by) {
+			return;
+		}
 		g.owner = target;
-		if (!g.admins.includes(target)) g.admins.push(target);
+		if (!g.admins.includes(target)) {
+			g.admins.push(target);
+		}
 		await this.save();
 		await this.note(`${this.members[by].name} handed the group to ${this.members[target].name}`);
 		this.broadcast({ t: 'roster', roster: this.roster() });
@@ -393,7 +484,9 @@ export class Group extends DurableObject {
 	/** Renames the group (admins). */
 	async rename(by, name) {
 		const n = clean(name, LIMITS.name);
-		if (!this.meta.admins.includes(by) || !n || n === this.meta.name) return;
+		if (!this.meta.admins.includes(by) || !n || n === this.meta.name) {
+			return;
+		}
 		this.meta.name = n;
 		await this.save();
 		await this.note(`${this.members[by].name} renamed the group to "${n}"`);
@@ -402,7 +495,9 @@ export class Group extends DurableObject {
 
 	/** Lets every member invite, or admins only (admins). */
 	async setOpen(by, on) {
-		if (!this.meta.admins.includes(by) || this.meta.open === on) return;
+		if (!this.meta.admins.includes(by) || this.meta.open === on) {
+			return;
+		}
 		this.meta.open = on;
 		await this.save();
 		await this.note(on ? `${this.members[by].name} let everyone invite` : `${this.members[by].name} made invites admin-only`);
@@ -412,9 +507,14 @@ export class Group extends DurableObject {
 	/** Updates a member's name and picture (null removes it). */
 	async profile(member, p) {
 		const m = this.members[member];
-		if (typeof p.name === 'string') m.name = clean(p.name, LIMITS.name) || m.name;
-		if (p.pic === null) delete m.pic;
-		else if (typeof p.pic === 'string' && p.pic.length <= LIMITS.pic && PIC_RE.test(p.pic)) m.pic = p.pic;
+		if (typeof p.name === 'string') {
+			m.name = clean(p.name, LIMITS.name) || m.name;
+		}
+		if (p.pic === null) {
+			delete m.pic;
+		} else if (typeof p.pic === 'string' && p.pic.length <= LIMITS.pic && PIC_RE.test(p.pic)) {
+			m.pic = p.pic;
+		}
 		await this.save();
 		this.broadcast({ t: 'pic', n: member, data: m.pic || null });
 		this.broadcast({ t: 'roster', roster: this.roster() });
@@ -422,14 +522,22 @@ export class Group extends DurableObject {
 
 	/** The group's own picture: admins set or remove it (null). Kept in meta, sent to everyone. */
 	async groupPic(by, pic) {
-		if (!this.meta.admins.includes(by)) return;
+		if (!this.meta.admins.includes(by)) {
+			return;
+		}
 		if (pic === null) {
-			if (!this.meta.pic) return;
+			if (!this.meta.pic) {
+				return;
+			}
 			delete this.meta.pic;
 		} else if (typeof pic === 'string' && pic.length <= LIMITS.pic && PIC_RE.test(pic)) {
-			if (pic === this.meta.pic) return;
+			if (pic === this.meta.pic) {
+				return;
+			}
 			this.meta.pic = pic;
-		} else return;
+		} else {
+			return;
+		}
 		await this.save();
 		await this.note(pic ? `${this.members[by].name} changed the group picture` : `${this.members[by].name} removed the group picture`);
 		this.broadcast({ t: 'gpic', data: this.meta.pic || null });
@@ -455,7 +563,9 @@ export class Group extends DurableObject {
 		if (g.owner === member) {
 			// Ownership passes to an admin, else the longest member.
 			g.owner = g.admins[0] || left.sort((a, b) => a.joined - b.joined)[0].n;
-			if (!g.admins.includes(g.owner)) g.admins.push(g.owner);
+			if (!g.admins.includes(g.owner)) {
+				g.admins.push(g.owner);
+			}
 		}
 		await this.save();
 		await this.note(`${name} left`);
@@ -465,7 +575,9 @@ export class Group extends DurableObject {
 
 	/** Deletes the group and closes every connection (owner only). */
 	async disband(by) {
-		if (!this.meta || by !== this.meta.owner) return;
+		if (!this.meta || by !== this.meta.owner) {
+			return;
+		}
 		for (const ws of this.ctx.getWebSockets()) {
 			this.send(ws, { t: 'gone', why: 'deleted' });
 			try {
@@ -510,12 +622,13 @@ export class Group extends DurableObject {
 		const s = JSON.stringify(x);
 		for (const ws of this.ctx.getWebSockets()) {
 			const a = ws.deserializeAttachment();
-			if (a && a.member && this.members[a.member])
+			if (a && a.member && this.members[a.member]) {
 				try {
 					ws.send(s);
 				} catch (e) {
 					/* gone */
 				}
+			}
 		}
 	}
 	/** Closes a member's connections with a 'gone' message. */
@@ -557,7 +670,9 @@ export class Mailbox extends DurableObject {
 	/** Accepts a WebSocket (at most 20 at once) and sends it a sign-in nonce. */
 	async fetch(req) {
 		const owner = Number(new URL(req.url).searchParams.get('m'));
-		if (this.ctx.getWebSockets().length >= 20) return new Response('Busy', { status: 503 });
+		if (this.ctx.getWebSockets().length >= 20) {
+			return new Response('Busy', { status: 503 });
+		}
 		const [client, server] = Object.values(new WebSocketPair());
 		this.ctx.acceptWebSocket(server);
 		const nonce = b64url(crypto.getRandomValues(new Uint8Array(18)));
@@ -573,36 +688,54 @@ export class Mailbox extends DurableObject {
 	async webSocketMessage(ws, raw) {
 		const att = ws.deserializeAttachment();
 		try {
-			if (typeof raw !== 'string' || raw.length > 4000) return this.fail(ws, 'too big');
+			if (typeof raw !== 'string' || raw.length > 4000) {
+				return this.fail(ws, 'too big');
+			}
 			const now = Date.now();
 			att.hits = (att.hits || []).filter((t) => now - t < 10000);
 			att.hits.push(now);
 			ws.serializeAttachment(att);
-			if (att.hits.length > LIMITS.burst) return this.send(ws, { t: 'error', why: 'slow down' });
+			if (att.hits.length > LIMITS.burst) {
+				return this.send(ws, { t: 'error', why: 'slow down' });
+			}
 			let p;
 			try {
 				p = JSON.parse(raw);
 			} catch (e) {
 				return this.fail(ws, 'not JSON');
 			}
-			if (!p || typeof p !== 'object' || Array.isArray(p) || typeof p.t !== 'string') return this.fail(ws, 'bad message');
+			if (!p || typeof p !== 'object' || Array.isArray(p) || typeof p.t !== 'string') {
+				return this.fail(ws, 'bad message');
+			}
 			if (!att.member) {
-				if (p.t !== 'auth') return this.fail(ws, 'sign in first');
+				if (p.t !== 'auth') {
+					return this.fail(ws, 'sign in first');
+				}
 				const member = p.member;
-				if (!isNum(member) || !p.pub || !B64URL.test(p.pub.x || '') || !B64URL.test(p.pub.y || '') || !B64URL.test(p.sig || ''))
+				if (!isNum(member) || !p.pub || !B64URL.test(p.pub.x || '') || !B64URL.test(p.pub.y || '') || !B64URL.test(p.sig || '')) {
 					return this.fail(ws, 'bad sign-in');
-				if (!(await verify({ x: p.pub.x, y: p.pub.y }, p.sig, `${att.nonce}|mbox:${att.owner}|${member}`)))
+				}
+				if (!(await verify({ x: p.pub.x, y: p.pub.y }, p.sig, `${att.nonce}|mbox:${att.owner}|${member}`))) {
 					return this.fail(ws, 'bad signature');
+				}
 				att.member = member;
 				att.kf = p.pub.x.slice(0, 16);
 				att.name = clean(p.name, LIMITS.name) || `#${member}`;
 				ws.serializeAttachment(att);
-				if (member === att.owner) return this.send(ws, { t: 'mail', list: await this.mine(att.kf) });
+				if (member === att.owner) {
+					return this.send(ws, { t: 'mail', list: await this.mine(att.kf) });
+				}
 				return this.send(ws, { t: 'welcome' });
 			}
-			if (p.t === 'put') return await this.put(ws, att, p);
-			if (p.t === 'ack') return await this.ack(att, p.ids);
-			if (p.t === 'check' && att.member === att.owner) return this.send(ws, { t: 'mail', list: await this.mine(att.kf) });
+			if (p.t === 'put') {
+				return await this.put(ws, att, p);
+			}
+			if (p.t === 'ack') {
+				return await this.ack(att, p.ids);
+			}
+			if (p.t === 'check' && att.member === att.owner) {
+				return this.send(ws, { t: 'mail', list: await this.mine(att.kf) });
+			}
 			return this.send(ws, { t: 'error', why: 'unknown' });
 		} catch (e) {
 			this.send(ws, { t: 'error', why: 'server error' });
@@ -614,7 +747,9 @@ export class Mailbox extends DurableObject {
 		const rows = [...(await this.ctx.storage.list({ prefix: 'm:' })).entries()];
 		const old = Date.now() - MAIL.days * 864e5;
 		const gone = rows.filter(([, m]) => !m || m.at < old).map(([k]) => k);
-		if (gone.length) await this.ctx.storage.delete(gone);
+		if (gone.length) {
+			await this.ctx.storage.delete(gone);
+		}
 		return rows
 			.filter(([, m]) => m && m.at >= old)
 			.map(([, m]) => m)
@@ -629,36 +764,50 @@ export class Mailbox extends DurableObject {
 
 	/** Leaves a beep (not in your own box), within MAIL limits; delivered at once if the owner is connected with that key. */
 	async put(ws, att, p) {
-		if (att.member === att.owner) return this.send(ws, { t: 'error', why: 'that is your own mailbox' });
+		if (att.member === att.owner) {
+			return this.send(ws, { t: 'error', why: 'that is your own mailbox' });
+		}
 		const text = clean(p.text, MAIL.text);
 		const ref = typeof p.ref === 'string' ? p.ref.slice(0, 24) : '';
-		if (!text || !KF_RE.test(p.kf || '')) return this.send(ws, { t: 'error', why: 'bad beep', ref });
+		if (!text || !KF_RE.test(p.kf || '')) {
+			return this.send(ws, { t: 'error', why: 'bad beep', ref });
+		}
 		const list = await this.all();
-		if (list.length >= MAIL.box) return this.send(ws, { t: 'error', why: 'their mailbox is full', ref });
+		if (list.length >= MAIL.box) {
+			return this.send(ws, { t: 'error', why: 'their mailbox is full', ref });
+		}
 		const day = Date.now() - 864e5;
-		if (list.filter((m) => m.from === att.member && m.at > day).length >= MAIL.perSender)
+		if (list.filter((m) => m.from === att.member && m.at > day).length >= MAIL.perSender) {
 			return this.send(ws, { t: 'error', why: 'enough beeps left for today', ref });
+		}
 		const m = { id: secret(), from: att.member, name: att.name, fromKf: att.kf, kf: p.kf, text, at: Date.now() };
 		await this.ctx.storage.put(`m:${m.id}`, m);
 		this.send(ws, { t: 'ok', ref, id: m.id });
 		for (const o of this.ctx.getWebSockets()) {
 			const a = o.deserializeAttachment();
-			if (a && a.member === a.owner && a.kf === m.kf)
+			if (a && a.member === a.owner && a.kf === m.kf) {
 				this.send(o, { t: 'mail', list: [{ id: m.id, from: m.from, name: m.name, fromKf: m.fromKf, text: m.text, at: m.at }] });
+			}
 		}
 	}
 
 	/** Deletes read beeps (owner only, and only beeps for their key). */
 	async ack(att, ids) {
-		if (att.member !== att.owner || !Array.isArray(ids)) return;
+		if (att.member !== att.owner || !Array.isArray(ids)) {
+			return;
+		}
 		const keys = ids
 			.slice(0, MAIL.ack)
 			.filter((id) => typeof id === 'string' && SECRET_RE.test(id))
 			.map((id) => `m:${id}`);
-		if (!keys.length) return;
+		if (!keys.length) {
+			return;
+		}
 		const rows = await this.ctx.storage.get(keys);
 		const mine = [...rows.entries()].filter(([, m]) => m && m.kf === att.kf).map(([k]) => k);
-		if (mine.length) await this.ctx.storage.delete(mine);
+		if (mine.length) {
+			await this.ctx.storage.delete(mine);
+		}
 	}
 
 	webSocketClose(ws) {

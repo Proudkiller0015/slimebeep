@@ -12,7 +12,9 @@
 
 	const VERSION = '3.0.1';
 	// Only one copy runs per page.
-	if (window.SlimeBeep) return;
+	if (window.SlimeBeep) {
+		return;
+	}
 	window.SlimeBeep = { version: VERSION };
 
 	/** The slime logo (toggle button, Extensions page), as a data URL. */
@@ -174,6 +176,7 @@
 	const clean = (x, max) =>
 		typeof x === 'string'
 			? x
+					// eslint-disable-next-line no-control-regex -- removing control characters is the point
 					.replace(/[\u0000-\u0008\u000b-\u001f\u007f\uf124]/g, '')
 					.trim()
 					.slice(0, max)
@@ -186,7 +189,9 @@
 	const isMember = (g, n) => !!g && g.members.some((m) => m.n === n);
 	const canInvite = (g, n) => isMember(g, n) && (g.open || isAdmin(g, n));
 	const memberName = (g, n) => {
-		if (n === Player.MemberNumber) return 'You';
+		if (n === Player.MemberNumber) {
+			return 'You';
+		}
 		const m = g && g.members.find((x) => x.n === n);
 		return (m && m.name) || nameOf(n);
 	};
@@ -196,21 +201,26 @@
 		for (const c of Object.values(conns)) {
 			c.dead = true;
 			try {
-				if (c.ws) c.ws.close();
+				if (c.ws) {
+					c.ws.close();
+				}
 			} catch (e) {
 				/* gone */
 			}
 		}
-		for (const k of Object.keys(conns)) delete conns[k];
+		for (const k of Object.keys(conns)) {
+			delete conns[k];
+		}
 		groups = {};
 		waiting = [];
 		try {
 			const w = JSON.parse(localStorage.getItem(waitKey()) || '[]');
-			if (Array.isArray(w))
+			if (Array.isArray(w)) {
 				waiting = w
 					.filter((x) => x && isId(x.id) && isNum(x.n) && typeof x.text === 'string')
 					.map((x) => ({ id: x.id, n: x.n, text: x.text.slice(0, 1000), at: Number(x.at) || Date.now() }))
 					.slice(0, 100);
+			}
 		} catch (e) {
 			/* none */
 		}
@@ -221,7 +231,9 @@
 		try {
 			const saved = JSON.parse(localStorage.getItem(gcKey()) || '{}');
 			for (const g of Object.values(saved.groups || {})) {
-				if (!g || !isId(g.id) || !Array.isArray(g.members)) continue;
+				if (!g || !isId(g.id) || !Array.isArray(g.members)) {
+					continue;
+				}
 				groups[g.id] = {
 					id: g.id,
 					name: clean(g.name, LIMITS.name) || 'Group chat',
@@ -236,11 +248,18 @@
 					pic: typeof g.pic === 'string' && g.pic.length <= PFP_MAX && PFP_RE.test(g.pic) ? g.pic : undefined,
 				};
 			}
-			for (const n of saved.peers || []) if (isNum(n)) peers.add(n);
-			for (const [k, v] of Object.entries(saved.peerKeys || {}))
-				if (isNum(Number(k)) && typeof v === 'string') peerKeys[Number(k)] = v.slice(0, 16);
-			for (const i of saved.invitations || [])
-				if (i && CODE_RE.test(i.code) && isNum(i.from))
+			for (const n of saved.peers || []) {
+				if (isNum(n)) {
+					peers.add(n);
+				}
+			}
+			for (const [k, v] of Object.entries(saved.peerKeys || {})) {
+				if (isNum(Number(k)) && typeof v === 'string') {
+					peerKeys[Number(k)] = v.slice(0, 16);
+				}
+			}
+			for (const i of saved.invitations || []) {
+				if (i && CODE_RE.test(i.code) && isNum(i.from)) {
 					invitations.push({
 						code: i.code,
 						name: clean(i.name, LIMITS.name),
@@ -248,9 +267,15 @@
 						fromName: clean(i.fromName, LIMITS.name),
 						at: i.at,
 					});
+				}
+			}
 			// Peers saved under the older storage key.
 			const old = JSON.parse(localStorage.getItem(`slimebeep.gc.${Player.MemberNumber}`) || '{}');
-			for (const n of old.peers || []) if (isNum(n)) peers.add(n);
+			for (const n of old.peers || []) {
+				if (isNum(n)) {
+					peers.add(n);
+				}
+			}
 		} catch (e) {
 			/* unreadable: start fresh */
 		}
@@ -306,7 +331,9 @@
 							.find((l) => /slimebeep/i.test(l)) || ''
 					: '';
 			errors.push(`${new Date().toISOString().slice(11, 19)} ${msg}${at ? ` (${at.trim().slice(0, 120)})` : ''}`);
-			if (errors.length > 10) errors.shift();
+			if (errors.length > 10) {
+				errors.shift();
+			}
 			console.warn('[SlimeBeep]', where, e);
 		} catch (x) {
 			/* ignore */
@@ -328,15 +355,19 @@
 		live.clear();
 		histOwner = Player.MemberNumber;
 		loadGC();
-		if (!opts.keep) return;
+		if (!opts.keep) {
+			return;
+		}
 		try {
 			const saved = JSON.parse(localStorage.getItem(histKey()) || '[]');
-			if (Array.isArray(saved))
-				for (const h of saved)
+			if (Array.isArray(saved)) {
+				for (const h of saved) {
 					if (h && h.k && !histKeys.has(h.k) && (h.group ? !!groups[h.group] : !isSignal(h.Message))) {
 						hist.push(h);
 						histKeys.add(h.k);
 					}
+				}
+			}
 		} catch (e) {
 			/* unreadable: start fresh */
 		}
@@ -344,7 +375,9 @@
 
 	/** Saves `hist` when opts.keep is on; if storage is full, drops the older half. */
 	function saveHistory() {
-		if (!opts.keep) return;
+		if (!opts.keep) {
+			return;
+		}
 		try {
 			localStorage.setItem(histKey(), JSON.stringify(hist.slice(-KEEP_MAX)));
 		} catch (e) {
@@ -362,15 +395,25 @@
 	 * @returns {object[]} the received beeps added this time (no reactions)
 	 */
 	function sync() {
-		if (!loggedIn()) return [];
-		if (histOwner !== Player.MemberNumber) loadHistory();
+		if (!loggedIn()) {
+			return [];
+		}
+		if (histOwner !== Player.MemberNumber) {
+			loadHistory();
+		}
 		const added = [];
 		for (const b of gameLog()) {
-			if (!b || typeof b !== 'object' || b.MemberNumber == null) continue;
+			if (!b || typeof b !== 'object' || b.MemberNumber == null) {
+				continue;
+			}
 			const k = keyOf(b);
-			if (live.has(k)) continue;
+			if (live.has(k)) {
+				continue;
+			}
 			live.set(k, b);
-			if (histKeys.has(k) || isSignal(b.Message)) continue;
+			if (histKeys.has(k) || isSignal(b.Message)) {
+				continue;
+			}
 			const h = {
 				k,
 				MemberNumber: b.MemberNumber,
@@ -386,7 +429,11 @@
 		}
 		if (added.length) {
 			hist.sort((a, b) => a.Time - b.Time);
-			if (hist.length > KEEP_MAX) for (const h of hist.splice(0, hist.length - KEEP_MAX)) histKeys.delete(h.k);
+			if (hist.length > KEEP_MAX) {
+				for (const h of hist.splice(0, hist.length - KEEP_MAX)) {
+					histKeys.delete(h.k);
+				}
+			}
 			saveHistory();
 		}
 		return added.filter((h) => !h.Sent && !isReaction(h));
@@ -398,7 +445,9 @@
 	 * @returns {{ text: string, meta: object|null }}
 	 */
 	function parseBeep(msg) {
-		if (typeof msg !== 'string') return { text: '', meta: null };
+		if (typeof msg !== 'string') {
+			return { text: '', meta: null };
+		}
 		let text = msg,
 			raw = null;
 		const i = msg.indexOf(MARK);
@@ -414,13 +463,16 @@
 			}
 		}
 		let meta = null;
-		if (raw)
+		if (raw) {
 			try {
 				const x = JSON.parse(raw);
-				if (x && typeof x === 'object' && !Array.isArray(x)) meta = x;
+				if (x && typeof x === 'object' && !Array.isArray(x)) {
+					meta = x;
+				}
 			} catch (e) {
 				/* not settings */
 			}
+		}
 		return { text: text.trimEnd(), meta };
 	}
 	/**
@@ -429,42 +481,60 @@
 	 * BeepType), a CamelCase word like "ReqRoom".
 	 */
 	function isSignal(msg, typed = false) {
-		if (typeof msg !== 'string') return false;
+		if (typeof msg !== 'string') {
+			return false;
+		}
 		const t = parseBeep(msg).text.trim();
-		if (!t) return false;
-		if (typed && /^[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+$/.test(t)) return true;
+		if (!t) {
+			return false;
+		}
+		if (typed && /^[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+$/.test(t)) {
+			return true;
+		}
 		// It has to parse into a non-empty object (or array after a tag).
 		const m = /^([^\s{[]{0,40})\s*([[{][\s\S]*[\]}])$/.exec(t);
-		if (!m) return false;
+		if (!m) {
+			return false;
+		}
 		try {
 			const x = JSON.parse(m[2]);
-			if (Array.isArray(x)) return m[1].length > 0 && x.length > 0;
+			if (Array.isArray(x)) {
+				return m[1].length > 0 && x.length > 0;
+			}
 			return !!x && typeof x === 'object' && Object.keys(x).length > 0;
 		} catch (e) {
 			return false;
 		}
 	}
 	/** What a `hist` entry shows as its text. */
-	const textOf = (beep) => {
-		if (beep.group) return beep.sys === 'left' ? `${beep.MemberName} left the group` : beep.text;
-		if (typeof beep.Message !== 'string') return beep.ChatRoomName ? `📍 ${beep.ChatRoomName}` : '🔔 Beep!';
-		return parseBeep(beep.Message).text || '🔔 Beep!';
+	const textOf = (entry) => {
+		if (entry.group) {
+			return entry.sys === 'left' ? `${entry.MemberName} left the group` : entry.text;
+		}
+		if (typeof entry.Message !== 'string') {
+			return entry.ChatRoomName ? `📍 ${entry.ChatRoomName}` : '🔔 Beep!';
+		}
+		return parseBeep(entry.Message).text || '🔔 Beep!';
 	};
 	/** Whether a beep is a reaction (the game's messageType 'Reaction'); those are not listed. */
-	const isReaction = (beep) => {
-		const meta = typeof beep.Message === 'string' ? parseBeep(beep.Message).meta : null;
+	const isReaction = (entry) => {
+		const meta = typeof entry.Message === 'string' ? parseBeep(entry.Message).meta : null;
 		return !!meta && meta.messageType === 'Reaction';
 	};
 	/** Whether a received entry is unread: the game's Read flag when the game has the beep, else `h.unread`. */
 	const unread = (h) => {
-		if (h.Sent || isReaction(h)) return false;
+		if (h.Sent || isReaction(h)) {
+			return false;
+		}
 		const b = live.get(h.k);
 		return b ? b.Read === false : !!h.unread;
 	};
 	/** Marks an entry read, in the game's log too. */
 	const markRead = (h) => {
 		const b = live.get(h.k);
-		if (b && b.Read === false) b.Read = true;
+		if (b && b.Read === false) {
+			b.Read = true;
+		}
 		if (h.unread) {
 			h.unread = false;
 			saveHistory();
@@ -473,9 +543,13 @@
 	/** A member's name: from the online friends, the friend list, or the last beep they sent. */
 	const nameOf = (n) => {
 		const f = friends.find((x) => x.MemberNumber === n);
-		if (f) return f.MemberName;
+		if (f) {
+			return f.MemberName;
+		}
 		const known = typeof Player !== 'undefined' && Player && Player.FriendNames && Player.FriendNames.get(n);
-		if (known) return known;
+		if (known) {
+			return known;
+		}
 		const b = [...log()].reverse().find((x) => x.MemberNumber === n && !x.Sent);
 		return b ? b.MemberName : `#${n}`;
 	};
@@ -500,7 +574,9 @@
 	/** A time as hh:mm today, or as a date. */
 	const timeOf = (t) => {
 		const d = new Date(t);
-		if (isNaN(d)) return '';
+		if (isNaN(d)) {
+			return '';
+		}
 		const today = new Date().toDateString() === d.toDateString();
 		return today
 			? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -518,13 +594,17 @@
 	let pfps = null;
 	/** `pfps`, loaded from localStorage on first use. */
 	function loadPfps() {
-		if (pfps) return pfps;
+		if (pfps) {
+			return pfps;
+		}
 		pfps = {};
 		try {
 			const saved = JSON.parse(localStorage.getItem('slimebeep.pfps') || '{}');
-			for (const [k, x] of Object.entries(saved))
-				if (isNum(Number(k)) && x && isId(x.v) && typeof x.data === 'string' && x.data.length <= PFP_MAX && PFP_RE.test(x.data))
+			for (const [k, x] of Object.entries(saved)) {
+				if (isNum(Number(k)) && x && isId(x.v) && typeof x.data === 'string' && x.data.length <= PFP_MAX && PFP_RE.test(x.data)) {
 					pfps[Number(k)] = { v: x.v, data: x.data };
+				}
+			}
 		} catch (e) {
 			/* unreadable: none */
 		}
@@ -533,7 +613,9 @@
 	/** Saves `pfps`, keeping the last 300. */
 	function savePfps() {
 		const keys = Object.keys(pfps);
-		for (const k of keys.slice(0, Math.max(0, keys.length - 300))) delete pfps[k];
+		for (const k of keys.slice(0, Math.max(0, keys.length - 300))) {
+			delete pfps[k];
+		}
 		try {
 			localStorage.setItem('slimebeep.pfps', JSON.stringify(pfps));
 		} catch (e) {
@@ -550,7 +632,9 @@
 	/** A member's avatar HTML: their picture or their initials. */
 	const avatar = (n, name) => {
 		const pic = pfpOf(n);
-		if (pic) return `<img class="sb-av sb-pic" src="${esc(pic.data)}" alt="">`;
+		if (pic) {
+			return `<img class="sb-av sb-pic" src="${esc(pic.data)}" alt="">`;
+		}
 		return `<span class="sb-av" style="background:hsl(${hue(n)} 85% 80%)">${esc(
 			String(name || '?')
 				.trim()
@@ -833,15 +917,21 @@
 		let drag = null;
 		/** Ends a drag (saving the position when `save`); returns whether it was a move rather than a click. */
 		const endDrag = (save) => {
-			if (!drag) return;
+			if (!drag) {
+				return;
+			}
 			const moved = drag.moved;
 			drag = null;
 			toggle.classList.remove('dragging');
-			if (moved && save) saveOpts();
+			if (moved && save) {
+				saveOpts();
+			}
 			return moved;
 		};
 		toggle.addEventListener('pointerdown', (e) => {
-			if (e.button !== 0) return;
+			if (e.button !== 0) {
+				return;
+			}
 			const r = toggle.getBoundingClientRect();
 			drag = { dx: e.clientX - r.left, dy: e.clientY - r.top, x0: e.clientX, y0: e.clientY, moved: false };
 			try {
@@ -851,18 +941,28 @@
 			}
 		});
 		toggle.addEventListener('pointermove', (e) => {
-			if (!drag) return;
+			if (!drag) {
+				return;
+			}
 			// The release was lost (another window took it): stop instead of following the pointer.
-			if (!(e.buttons & 1)) return endDrag(true);
-			if (!drag.moved && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 8) return;
+			if (!(e.buttons & 1)) {
+				return endDrag(true);
+			}
+			if (!drag.moved && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 8) {
+				return;
+			}
 			drag.moved = true;
 			toggle.classList.add('dragging');
 			opts.pos = { x: (e.clientX - drag.dx) / innerWidth, y: (e.clientY - drag.dy) / innerHeight };
 			place();
 		});
 		toggle.addEventListener('pointerup', (e) => {
-			if (!drag || e.button !== 0) return;
-			if (endDrag(true)) return;
+			if (!drag || e.button !== 0) {
+				return;
+			}
+			if (endDrag(true)) {
+				return;
+			}
 			setOpen(panel.style.display !== 'flex');
 		});
 		toggle.addEventListener('pointercancel', () => endDrag(true));
@@ -896,7 +996,9 @@
 			'click',
 			(e) => {
 				const img = e.target.closest && e.target.closest('img.sb-pic');
-				if (!img || img.closest('#sb-me')) return;
+				if (!img || img.closest('#sb-me')) {
+					return;
+				}
 				e.preventDefault();
 				e.stopPropagation();
 				zoomPic(img.src);
@@ -904,7 +1006,9 @@
 			true,
 		);
 		$('sb-me').addEventListener('click', () => {
-			if (!loggedIn()) return;
+			if (!loggedIn()) {
+				return;
+			}
 			tab = 'options';
 			thread = null;
 			render();
@@ -926,7 +1030,9 @@
 			true,
 		);
 
-		if (loggedIn()) listen();
+		if (loggedIn()) {
+			listen();
+		}
 		place();
 		tickTimer = setInterval(tick, 1000);
 		news();
@@ -941,7 +1047,9 @@
 	let tickTimer = null;
 	/** Asks before quitting (⏻), in a box inside the panel. */
 	function askQuit() {
-		if (stopped || $('sb-ask')) return;
+		if (stopped || $('sb-ask')) {
+			return;
+		}
 		const box = document.createElement('div');
 		box.id = 'sb-ask';
 		box.innerHTML = `<div class="sb-crop-card">
@@ -965,7 +1073,9 @@
 			if (act === 'quit') {
 				close();
 				quit();
-			} else if (act === 'keep' || e.target === box) close();
+			} else if (act === 'keep' || e.target === box) {
+				close();
+			}
 		});
 		document.addEventListener('keydown', onKey, true);
 		$('sb-panel').appendChild(box);
@@ -975,7 +1085,9 @@
 	 * connections. Saved data is kept.
 	 */
 	function quit() {
-		if (stopped) return;
+		if (stopped) {
+			return;
+		}
 		stopped = true;
 		try {
 			clearInterval(tickTimer);
@@ -990,7 +1102,9 @@
 		try {
 			const sock = listening;
 			if (sock) {
-				if (typeof sock.offAny === 'function') sock.offAny(anyListener);
+				if (typeof sock.offAny === 'function') {
+					sock.offAny(anyListener);
+				}
 				if (typeof sock.off === 'function') {
 					sock.off('AccountBeep', beepListener);
 					sock.off('AccountQueryResult', queryListener);
@@ -1003,19 +1117,31 @@
 		for (const c of Object.values(conns)) {
 			c.dead = true;
 			try {
-				if (c.ws) c.ws.close();
+				if (c.ws) {
+					c.ws.close();
+				}
 			} catch (e) {
 				/* gone */
 			}
 		}
-		for (const b of document.querySelectorAll('.sb-bcjoin')) b.remove();
+		for (const b of document.querySelectorAll('.sb-bcjoin')) {
+			b.remove();
+		}
 		for (const id of ['sb-toggle', 'sb-panel', 'sb-toast', 'sb-cards', 'sb-crop', 'sb-zoom', 'sb-ask', 'sb-emoji', 'sb-style']) {
 			const el = $(id);
-			if (el) el.remove();
+			if (el) {
+				el.remove();
+			}
 		}
 		const root = document.documentElement;
-		for (const k of [...root.classList]) if (/^sb-/.test(k)) root.classList.remove(k);
-		for (const set of Object.values(apiListeners)) set.clear();
+		for (const k of [...root.classList]) {
+			if (/^sb-/.test(k)) {
+				root.classList.remove(k);
+			}
+		}
+		for (const set of Object.values(apiListeners)) {
+			set.clear();
+		}
 		delete window.SlimeBeep;
 		console.info('[SlimeBeep] quit until the next reload');
 	}
@@ -1025,13 +1151,19 @@
 	function onServer(event, data) {
 		try {
 			if (event === 'AccountQueryResult') {
-				if (!data || data.Query !== 'OnlineFriends' || !Array.isArray(data.Result)) return;
+				if (!data || data.Query !== 'OnlineFriends' || !Array.isArray(data.Result)) {
+					return;
+				}
 				friends = data.Result.filter((f) => f && f.MemberNumber !== Player.MemberNumber);
 				friendsKnown = true;
 				sendWaiting();
-				if (isOpen() && tab !== 'chats') render();
+				if (isOpen() && tab !== 'chats') {
+					render();
+				}
 			} else if (event === 'AccountBeep') {
-				if (!data || typeof data !== 'object') return;
+				if (!data || typeof data !== 'object') {
+					return;
+				}
 				// Copied before the game or another add-on changes it.
 				const d = {
 					MemberNumber: data.MemberNumber,
@@ -1048,9 +1180,14 @@
 					type: d.BeepType || '',
 					text: typeof d.Message === 'string' ? d.Message.slice(0, 80) : null,
 				});
-				if (seenBeeps.length > 20) seenBeeps.shift();
-				if (d.BeepType === PROTO) onHidden(d);
-				else catchBeep(d);
+				if (seenBeeps.length > 20) {
+					seenBeeps.shift();
+				}
+				if (d.BeepType === PROTO) {
+					onHidden(d);
+				} else {
+					catchBeep(d);
+				}
 			}
 		} catch (e) {
 			warn(e);
@@ -1066,23 +1203,32 @@
 	 * The catch-all goes first (prependAny) so a beep is read before another add-on can remove the
 	 * game's listener for it or change it; it survives other code removing per-event listeners.
 	 */
+	/** Whether our listener is still attached to `sock` (true when the socket can't tell). */
+	function stillListening(sock, any) {
+		if (any) {
+			return typeof sock.listenersAny === 'function' ? sock.listenersAny().includes(anyListener) : true;
+		}
+		return typeof sock.listeners === 'function' ? sock.listeners('AccountBeep').includes(beepListener) : true;
+	}
 	function listen() {
-		if (!loggedIn() || !ServerSocket || typeof ServerSocket.on !== 'function') return;
+		if (!loggedIn() || !ServerSocket || typeof ServerSocket.on !== 'function') {
+			return;
+		}
 		const sock = ServerSocket;
-		const any = typeof sock.prependAny === 'function' ? 'prependAny' : typeof sock.onAny === 'function' ? 'onAny' : null;
-		if (listening === sock) {
-			const has = any
-				? typeof sock.listenersAny === 'function'
-					? sock.listenersAny().includes(anyListener)
-					: true
-				: typeof sock.listeners === 'function'
-					? sock.listeners('AccountBeep').includes(beepListener)
-					: true;
-			if (has) return;
+		let any = null;
+		if (typeof sock.prependAny === 'function') {
+			any = 'prependAny';
+		} else if (typeof sock.onAny === 'function') {
+			any = 'onAny';
+		}
+		if (listening === sock && stillListening(sock, any)) {
+			return;
 		}
 		listening = sock;
 		if (any) {
-			if (typeof sock.offAny === 'function') sock.offAny(anyListener);
+			if (typeof sock.offAny === 'function') {
+				sock.offAny(anyListener);
+			}
 			sock[any](anyListener);
 		} else {
 			if (typeof sock.off === 'function') {
@@ -1105,6 +1251,13 @@
 			}
 		}
 	}
+	/** A member's role in a group: 'owner', 'admin' or 'member'. */
+	function roleOf(g, n) {
+		if (n === g.owner) {
+			return 'owner';
+		}
+		return g.admins.includes(n) ? 'admin' : 'member';
+	}
 	/** A group as the API hands it out (see API.md). */
 	function groupView(g) {
 		const me = loggedIn() ? Player.MemberNumber : 0;
@@ -1120,7 +1273,7 @@
 				memberNumber: m.n,
 				name: m.n === me ? myName() : m.name,
 				online: online.has(m.n),
-				role: m.n === g.owner ? 'owner' : g.admins.includes(m.n) ? 'admin' : 'member',
+				role: roleOf(g, m.n),
 			})),
 			picture: g.pic || null,
 		};
@@ -1142,23 +1295,33 @@
 		hasSlimeBeep: (memberNumber) => peers.has(memberNumber),
 		/** Opens SlimeBeep on a group chat. */
 		openGroup: (id) => {
-			if (!groups[id]) return false;
+			if (!groups[id]) {
+				return false;
+			}
 			tab = 'groups';
 			thread = `g:${id}`;
-			if (!isOpen()) setOpen(true);
-			else render();
+			if (!isOpen()) {
+				setOpen(true);
+			} else {
+				render();
+			}
 			return true;
 		},
 		/** Invites someone to a group: a SlimeBeep friend gets an invite card, anyone else a code for them alone. Promise of { ok, sent } / { ok, code } / { ok: false, why }. */
 		inviteToGroup: (id, memberNumber) => inviteToGroup(id, memberNumber),
 		/** Opens SlimeBeep on "Invite <them> to…", listing the groups you can invite to. */
 		openInvite: (memberNumber) => {
-			if (!isNum(memberNumber)) return false;
+			if (!isNum(memberNumber)) {
+				return false;
+			}
 			inviteFor = { n: memberNumber, results: {} };
 			thread = null;
 			tab = 'invitefor';
-			if (!isOpen()) setOpen(true);
-			else render();
+			if (!isOpen()) {
+				setOpen(true);
+			} else {
+				render();
+			}
 			return true;
 		},
 		/** For theme add-ons: SlimeBeep takes the running theme add-on's colours (true) or its own (false). Off unless switched on. */
@@ -1170,10 +1333,15 @@
 		matchingTheme: () => ({ on: !!opts.themed, source: (themeSource() || {}).name || null }),
 		/** Opens SlimeBeep on a chat with this member number. */
 		openChat: (memberNumber) => {
-			if (!isNum(memberNumber)) return false;
+			if (!isNum(memberNumber)) {
+				return false;
+			}
 			thread = memberNumber;
-			if (!isOpen()) setOpen(true);
-			else render();
+			if (!isOpen()) {
+				setOpen(true);
+			} else {
+				render();
+			}
 			return true;
 		},
 		/**
@@ -1182,7 +1350,9 @@
 		 * online members changed; slimeBeepFriend: { memberNumber } of a friend just found to have SlimeBeep.
 		 */
 		on: (type, fn) => {
-			if (!apiListeners[type] || typeof fn !== 'function') return () => {};
+			if (!apiListeners[type] || typeof fn !== 'function') {
+				return () => {};
+			}
 			apiListeners[type].add(fn);
 			return () => apiListeners[type].delete(fn);
 		},
@@ -1198,13 +1368,13 @@
 	});
 
 	/** Member number -> times of their recent hidden beeps (see allow). */
-	const recent = new Map();
+	const hiddenBeepTimes = new Map();
 	/** Whether a hidden beep from `n` is accepted: at most LIMITS.perMinute a minute. */
 	function allow(n) {
 		const now = Date.now();
-		const list = (recent.get(n) || []).filter((t) => now - t < 60000);
+		const list = (hiddenBeepTimes.get(n) || []).filter((t) => now - t < 60000);
 		list.push(now);
-		recent.set(n, list);
+		hiddenBeepTimes.set(n, list);
 		return list.length <= LIMITS.perMinute;
 	}
 	/** Member number -> when we last answered their ping. */
@@ -1232,15 +1402,18 @@
 		}
 		if (p.pfreq === 1) {
 			const pic = myPfp();
-			if (!pic || Date.now() - (sentPic.get(from) || 0) < 60000) return;
+			if (!pic || Date.now() - (sentPic.get(from) || 0) < 60000) {
+				return;
+			}
 			sentPic.set(from, Date.now());
 			const parts = Math.ceil(pic.data.length / PFP_CHUNK);
 			// 250 ms apart.
-			for (let i = 0; i < parts; i++)
+			for (let i = 0; i < parts; i++) {
 				setTimeout(
 					() => sendHidden(from, { sb: 1, pf: { v: pic.v, i, n: parts, d: pic.data.slice(i * PFP_CHUNK, (i + 1) * PFP_CHUNK) } }),
 					i * 250,
 				);
+			}
 		}
 		const pf = p.pf;
 		if (
@@ -1257,7 +1430,9 @@
 			pf.d.length <= PFP_CHUNK
 		) {
 			let got = pieces.get(from);
-			if (!got || got.v !== pf.v || got.n !== pf.n) got = { v: pf.v, n: pf.n, parts: [] };
+			if (!got || got.v !== pf.v || got.n !== pf.n) {
+				got = { v: pf.v, n: pf.n, parts: [] };
+			}
 			got.parts[pf.i] = pf.d;
 			pieces.set(from, got);
 			if (got.parts.filter((x) => typeof x === 'string').length === got.n) {
@@ -1266,7 +1441,9 @@
 				if (data.length <= PFP_MAX && PFP_RE.test(data)) {
 					loadPfps()[from] = { v: got.v, data };
 					savePfps();
-					if (isOpen()) render(true);
+					if (isOpen()) {
+						render(true);
+					}
 				}
 			}
 		}
@@ -1290,7 +1467,9 @@
 	 * @param {string} title  the cropper's heading
 	 */
 	function setPicture(file, onSave = null, title = '') {
-		if (!file || !/^image\//.test(file.type)) return notify('That is not a picture');
+		if (!file || !/^image\//.test(file.type)) {
+			return notify('That is not a picture');
+		}
 		const url = URL.createObjectURL(file);
 		const img = new Image();
 		img.onload = () => {
@@ -1301,12 +1480,13 @@
 				c.height = Math.max(1, Math.round(img.naturalHeight * k));
 				c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
 				const src = c.toDataURL('image/jpeg', 0.9);
-				if (!onSave)
+				if (!onSave) {
 					try {
 						localStorage.setItem(srcKey(), src);
 					} catch (e) {
 						/* this visit only */
 					}
+				}
 				openCropper(src, onSave, title);
 			} catch (e) {
 				notify('That picture could not be read');
@@ -1333,7 +1513,9 @@
 	 * your picture, or passes it to `onSave`.
 	 */
 	function openCropper(src, onSave = null, title = '') {
-		if ($('sb-crop')) $('sb-crop').remove();
+		if ($('sb-crop')) {
+			$('sb-crop').remove();
+		}
 		const SIZE = 200;
 		const img = new Image();
 		img.onload = () => {
@@ -1353,7 +1535,9 @@
 				<input type="range" min="1" max="4" step="0.01" value="1" aria-label="Zoom">
 				<div class="sb-crop-btns"><button class="sb-pill" data-act="cancel">Cancel</button><button class="sb-go" data-act="save">Save</button></div>
 			</div>`;
-			if (!isOpen()) setOpen(true);
+			if (!isOpen()) {
+				setOpen(true);
+			}
 			$('sb-panel').appendChild(box);
 			// Closed by Cancel, ✕, a click outside the card, Escape, or the panel closing.
 			const onKey = (e) => {
@@ -1400,7 +1584,9 @@
 				cv.setPointerCapture(e.pointerId);
 			});
 			cv.addEventListener('pointermove', (e) => {
-				if (!drag) return;
+				if (!drag) {
+					return;
+				}
 				x = drag.x + e.clientX - drag.px;
 				y = drag.y + e.clientY - drag.py;
 				clampXY();
@@ -1420,8 +1606,12 @@
 			slider.addEventListener('input', () => setZoom(Number(slider.value)));
 			box.addEventListener('click', (e) => {
 				const act = e.target.dataset && e.target.dataset.act;
-				if (e.target === box || act === 'cancel') return box.remove();
-				if (act !== 'save') return;
+				if (e.target === box || act === 'cancel') {
+					return box.remove();
+				}
+				if (act !== 'save') {
+					return;
+				}
 				let data = '';
 				for (const size of [128, 96, 64]) {
 					const out = document.createElement('canvas');
@@ -1431,19 +1621,31 @@
 					draw(octx, size);
 					for (const q of [0.9, 0.8, 0.65, 0.5]) {
 						data = out.toDataURL('image/webp', q);
-						if (!data.startsWith('data:image/webp')) data = out.toDataURL('image/jpeg', q);
-						if (data.length <= PFP_MAX) break;
+						if (!data.startsWith('data:image/webp')) {
+							data = out.toDataURL('image/jpeg', q);
+						}
+						if (data.length <= PFP_MAX) {
+							break;
+						}
 					}
-					if (data.length <= PFP_MAX) break;
+					if (data.length <= PFP_MAX) {
+						break;
+					}
 				}
-				if (data.length > PFP_MAX || !PFP_RE.test(data)) return notify('That picture is too big, try another');
+				if (data.length > PFP_MAX || !PFP_RE.test(data)) {
+					return notify('That picture is too big, try another');
+				}
 				box.remove();
-				if (onSave) return onSave(data);
+				if (onSave) {
+					return onSave(data);
+				}
 				setOpt('pfp', { v: newId(), data });
 				pushPicture();
 				showMe();
 				notify('✓ New profile picture');
-				if (isOpen()) render(true);
+				if (isOpen()) {
+					render(true);
+				}
 			});
 			// For the tests.
 			openCropper.state = () => ({ zoom, x, y });
@@ -1461,9 +1663,15 @@
 	/** Draws your picture in a circle on the game's canvas (Extensions page). */
 	function drawMyPic(left, top, size) {
 		const pic = myPfp();
-		if (!pic || typeof MainCanvas === 'undefined' || !MainCanvas) return;
-		if (picImg.src !== pic.data) picImg.src = pic.data;
-		if (!picImg.complete || !picImg.naturalWidth) return;
+		if (!pic || typeof MainCanvas === 'undefined' || !MainCanvas) {
+			return;
+		}
+		if (picImg.src !== pic.data) {
+			picImg.src = pic.data;
+		}
+		if (!picImg.complete || !picImg.naturalWidth) {
+			return;
+		}
 		MainCanvas.save();
 		MainCanvas.beginPath();
 		MainCanvas.arc(left + size / 2, top + size / 2, size / 2, 0, Math.PI * 2);
@@ -1473,8 +1681,12 @@
 	}
 	/** A picture shown big, until clicked or Escape. */
 	function zoomPic(src) {
-		if (!PFP_RE.test(src)) return;
-		if ($('sb-zoom')) $('sb-zoom').remove();
+		if (!PFP_RE.test(src)) {
+			return;
+		}
+		if ($('sb-zoom')) {
+			$('sb-zoom').remove();
+		}
 		const box = document.createElement('div');
 		box.id = 'sb-zoom';
 		const img = document.createElement('img');
@@ -1493,15 +1705,23 @@
 		};
 		box.addEventListener('click', close);
 		document.addEventListener('keydown', onKey, true);
-		if (!isOpen()) setOpen(true);
+		if (!isOpen()) {
+			setOpen(true);
+		}
 		$('sb-panel').appendChild(box);
 	}
 	/** Your own picture (or initials) in the panel header; clicking it opens the options. */
 	function showMe() {
 		const me = $('sb-me');
-		if (!me) return;
+		if (!me) {
+			return;
+		}
 		me.innerHTML = loggedIn() ? avatar(Player.MemberNumber, myName()) : '';
-		me.title = loggedIn() ? (myPfp() ? 'Your profile picture' : 'Choose a profile picture') : '';
+		if (!loggedIn()) {
+			me.title = '';
+		} else {
+			me.title = myPfp() ? 'Your profile picture' : 'Choose a profile picture';
+		}
 	}
 
 	/**
@@ -1510,45 +1730,65 @@
 	 * Ignored from non-friends; the sender's member number comes from the game server.
 	 */
 	function onHidden(d) {
-		if (!loggedIn() || !isNum(d.MemberNumber) || typeof d.Message !== 'string' || d.Message.length > 1000) return;
+		if (!loggedIn() || !isNum(d.MemberNumber) || typeof d.Message !== 'string' || d.Message.length > 1000) {
+			return;
+		}
 		const from = d.MemberNumber;
-		if (from === Player.MemberNumber || !isFriend(from) || !allow(from)) return;
-		if (histOwner !== Player.MemberNumber) loadHistory();
+		if (from === Player.MemberNumber || !isFriend(from) || !allow(from)) {
+			return;
+		}
+		if (histOwner !== Player.MemberNumber) {
+			loadHistory();
+		}
 		let p;
 		try {
 			p = JSON.parse(d.Message);
 		} catch (e) {
 			return;
 		}
-		if (!p || typeof p !== 'object' || Array.isArray(p) || p.sb !== 1) return;
+		if (!p || typeof p !== 'object' || Array.isArray(p) || p.sb !== 1) {
+			return;
+		}
 
 		// Any hidden beep shows the sender has SlimeBeep.
-		if (!peers.has(from)) foundPeer(from);
+		if (!peers.has(from)) {
+			foundPeer(from);
+		}
 		if (typeof p.kf === 'string' && /^[A-Za-z0-9_-]{16}$/.test(p.kf) && peerKeys[from] !== p.kf) {
 			peerKeys[from] = p.kf;
 			saveGC();
 		}
 		pictureNews(from, p);
-		if (p.ping === 1) answerPing(from);
-		if (p.ginv && typeof p.ginv === 'object') takeInvite(from, d.MemberName, p.ginv);
+		if (p.ping === 1) {
+			answerPing(from);
+		}
+		if (p.ginv && typeof p.ginv === 'object') {
+			takeInvite(from, d.MemberName, p.ginv);
+		}
 	}
 	/** Records a friend as having SlimeBeep and redraws, so the 🫧 by their name shows. */
 	function foundPeer(n) {
 		peers.add(n);
 		saveGC();
 		emit('slimeBeepFriend', { memberNumber: n });
-		if (isOpen()) render(true);
+		if (isOpen()) {
+			render(true);
+		}
 	}
 	/** Answers a friend's "do you have SlimeBeep?" with a pong, at most once a minute per friend. */
 	function answerPing(n) {
-		if (Date.now() - (ponged.get(n) || 0) < 60000) return;
+		if (Date.now() - (ponged.get(n) || 0) < 60000) {
+			return;
+		}
 		ponged.set(n, Date.now());
 		sendHidden(n, { sb: 1, pong: 1 });
 	}
 	/** Keeps a friend's group invite in `invitations` and shows a card; nothing is joined automatically. */
 	function takeInvite(from, senderName, ginv) {
 		const m = CODE_RE.exec(typeof ginv.code === 'string' ? ginv.code : '');
-		if (!m || groups[m[1]]) return;
+		if (!m || groups[m[1]]) {
+			return;
+		}
 		const name = clean(ginv.name, LIMITS.name) || 'Group chat';
 		const fromName = clean(senderName, LIMITS.name) || `#${from}`;
 		invitations = [
@@ -1556,7 +1796,9 @@
 			{ code: m[0], name, from, fromName, at: Date.now() },
 		].slice(-20);
 		saveGC();
-		if (opts.sound && !isMuted(`n:${from}`)) chime();
+		if (opts.sound && !isMuted(`n:${from}`)) {
+			chime();
+		}
 		card({
 			icon: avatar(from, fromName),
 			title: `👥 ${name}`,
@@ -1564,11 +1806,16 @@
 			onClick: () => {
 				tab = 'groups';
 				thread = null;
-				if (!isOpen()) setOpen(true);
-				else render();
+				if (!isOpen()) {
+					setOpen(true);
+				} else {
+					render();
+				}
 			},
 		});
-		if (isOpen() && tab === 'groups' && thread === null) render(true);
+		if (isOpen() && tab === 'groups' && thread === null) {
+			render(true);
+		}
 	}
 
 	/**
@@ -1594,7 +1841,9 @@
 	const httpsUrl = () => location.href.replace(/^http:/, 'https:');
 	/** On an http page: tells the player, once per visit, that group chats and mailboxes need the https address. */
 	function needHttps() {
-		if (needHttps.told) return;
+		if (needHttps.told) {
+			return;
+		}
 		needHttps.told = true;
 		card({
 			icon: `<img src="${ICON}" style="width:34px;height:34px;border-radius:50%;flex:none" alt="">`,
@@ -1620,12 +1869,18 @@
 			let ws = null,
 				done = false;
 			const fin = (err) => {
-				if (done) return;
+				if (done) {
+					return;
+				}
 				done = true;
 				clearTimeout(timer);
-				if (!err) return resolve(ws);
+				if (!err) {
+					return resolve(ws);
+				}
 				try {
-					if (ws) ws.close();
+					if (ws) {
+						ws.close();
+					}
 				} catch (e) {
 					/* gone */
 				}
@@ -1644,7 +1899,9 @@
 				} catch (x) {
 					return;
 				}
-				if (!p || typeof p !== 'object') return;
+				if (!p || typeof p !== 'object') {
+					return;
+				}
 				if (p.t === 'hello' && typeof p.nonce === 'string') {
 					try {
 						const k = await getKey();
@@ -1657,14 +1914,19 @@
 					}
 					return;
 				}
-				if (p.t === 'error' && p.fatal) return fin(clean(p.why, 80) || 'refused');
-				if (p.t === 'welcome' || p.t === 'mail') fin(null);
-				if (onMsg)
+				if (p.t === 'error' && p.fatal) {
+					return fin(clean(p.why, 80) || 'refused');
+				}
+				if (p.t === 'welcome' || p.t === 'mail') {
+					fin(null);
+				}
+				if (onMsg) {
 					try {
 						onMsg(p, ws);
 					} catch (x) {
 						warn(x, 'mail');
 					}
+				}
 			};
 			ws.onclose = () => fin('closed');
 		});
@@ -1676,37 +1938,53 @@
 	 * A beep is retried after 10 minutes, or straight away with `now`.
 	 */
 	async function mailWaiting(now = false) {
-		if (mailing || stopped || !loggedIn() || !waiting.length || !secure()) return;
+		if (mailing || stopped || !loggedIn() || !waiting.length || !secure()) {
+			return;
+		}
 		const due = waiting.filter((w) => peers.has(w.n) && peerKeys[w.n] && (now || Date.now() - (w.tried || 0) > 600000));
-		if (!due.length) return;
+		if (!due.length) {
+			return;
+		}
 		mailing = true;
 		try {
 			for (const n of [...new Set(due.map((w) => w.n))]) {
 				const mine = due.filter((w) => w.n === n).slice(0, 15);
-				for (const w of mine) w.tried = Date.now();
+				for (const w of mine) {
+					w.tried = Date.now();
+				}
 				const answers = new Map();
 				let ws;
 				try {
 					ws = await mailOpen(n, (p) => {
-						if ((p.t === 'ok' || p.t === 'error') && typeof p.ref === 'string') answers.set(p.ref, p.t === 'ok');
+						if ((p.t === 'ok' || p.t === 'error') && typeof p.ref === 'string') {
+							answers.set(p.ref, p.t === 'ok');
+						}
 					});
 				} catch (e) {
 					continue;
 				}
-				for (const w of mine) ws.send(JSON.stringify({ t: 'put', kf: peerKeys[n], text: w.text, ref: w.id }));
+				for (const w of mine) {
+					ws.send(JSON.stringify({ t: 'put', kf: peerKeys[n], text: w.text, ref: w.id }));
+				}
 				const t0 = Date.now();
-				while (Date.now() - t0 < 8000 && mine.some((w) => !answers.has(w.id))) await new Promise((r) => setTimeout(r, 100));
+				while (Date.now() - t0 < 8000 && mine.some((w) => !answers.has(w.id))) {
+					await new Promise((r) => setTimeout(r, 100));
+				}
 				try {
 					ws.close();
 				} catch (e) {
 					/* gone */
 				}
 				const left = mine.filter((w) => answers.get(w.id) === true && waiting.includes(w));
-				if (!left.length) continue;
+				if (!left.length) {
+					continue;
+				}
 				waiting = waiting.filter((w) => !left.includes(w));
 				for (const w of left) {
 					const k = `mail:${w.id}`;
-					if (histKeys.has(k)) continue;
+					if (histKeys.has(k)) {
+						continue;
+					}
 					hist.push({ k, MemberNumber: n, MemberName: nameOf(n), Sent: true, Time: w.at, Message: w.text, mail: true });
 					histKeys.add(k);
 				}
@@ -1714,7 +1992,9 @@
 				saveHistory();
 				saveWaiting();
 				notify(`📬 Left in ${nameOf(n)}'s mailbox: they get it when they log in`);
-				if (isOpen()) render(true);
+				if (isOpen()) {
+					render(true);
+				}
 			}
 		} finally {
 			mailing = false;
@@ -1726,12 +2006,16 @@
 	let mailBusy = false;
 	/** Fetches your mailbox (at login, then every 5 minutes from relayTick). */
 	async function checkMail() {
-		if (mailBusy || stopped || !loggedIn() || !secure()) return;
+		if (mailBusy || stopped || !loggedIn() || !secure()) {
+			return;
+		}
 		mailBusy = true;
 		mailChecked = Date.now();
 		try {
 			const ws = await mailOpen(Player.MemberNumber, (p, sock) => {
-				if (p.t === 'mail') takeMail(p.list, sock);
+				if (p.t === 'mail') {
+					takeMail(p.list, sock);
+				}
 			});
 			setTimeout(() => {
 				try {
@@ -1748,20 +2032,30 @@
 	}
 	/** Adds mailbox beeps to `hist` and acks them. Beeps from non-friends or with a wrong sender key are dropped. */
 	function takeMail(list, sock) {
-		if (!Array.isArray(list) || !list.length) return;
+		if (!Array.isArray(list) || !list.length) {
+			return;
+		}
 		const ids = [],
 			fresh = [];
 		for (const m of list.slice(0, 100)) {
-			if (!m || typeof m.id !== 'string' || !/^[A-Z2-9]{10}$/.test(m.id)) continue;
+			if (!m || typeof m.id !== 'string' || !/^[A-Z2-9]{10}$/.test(m.id)) {
+				continue;
+			}
 			ids.push(m.id);
 			const from = m.from;
-			if (!isNum(from) || from === Player.MemberNumber || !isFriend(from)) continue;
+			if (!isNum(from) || from === Player.MemberNumber || !isFriend(from)) {
+				continue;
+			}
 			// Signed with another key than the one their own SlimeBeep sent us: not from them.
 			const known = peerKeys[from];
-			if (known && known !== m.fromKf) continue;
+			if (known && known !== m.fromKf) {
+				continue;
+			}
 			const text = typeof m.text === 'string' ? m.text.slice(0, 1000) : '';
 			const k = `mail:${m.id}`;
-			if (!text.trim() || histKeys.has(k)) continue;
+			if (!text.trim() || histKeys.has(k)) {
+				continue;
+			}
 			const h = {
 				k,
 				MemberNumber: from,
@@ -1781,15 +2075,20 @@
 			hist.sort((a, b) => a.Time - b.Time);
 			saveHistory();
 			ding(fresh);
-			for (const h of fresh.slice(-3)) announce(h);
-			if (isOpen() && tab !== 'options' && tab !== 'wave') render(true);
+			for (const h of fresh.slice(-3)) {
+				announce(h);
+			}
+			if (isOpen() && tab !== 'options' && tab !== 'wave') {
+				render(true);
+			}
 		}
-		if (ids.length)
+		if (ids.length) {
 			try {
 				sock.send(JSON.stringify({ t: 'ack', ids }));
 			} catch (e) {
 				/* again next time */
 			}
+		}
 	}
 
 	/**
@@ -1798,9 +2097,13 @@
 	 */
 	async function getKey() {
 		const me = Player.MemberNumber;
-		if (myKey && myKey.owner === me) return myKey;
+		if (myKey && myKey.owner === me) {
+			return myKey;
+		}
 		const k = `slimebeep.key.${me}`;
-		if (!secure()) throw new Error('no WebCrypto on this page (http)');
+		if (!secure()) {
+			throw new Error('no WebCrypto on this page (http)');
+		}
 		try {
 			const saved = JSON.parse(localStorage.getItem(k) || 'null');
 			if (saved && saved.d && saved.x && saved.y) {
@@ -1831,9 +2134,13 @@
 	 * (see `conns`), such as `create` or `invite` for the sign-in.
 	 */
 	function connectGroup(gid, extra = {}) {
-		if (stopped || !secure()) return { ws: null, ready: false, queue: [], waiters: [], dead: true };
+		if (stopped || !secure()) {
+			return { ws: null, ready: false, queue: [], waiters: [], dead: true };
+		}
 		const old = conns[gid];
-		if (old && !extra.create && !extra.invite && old.ws && old.ws.readyState <= 1) return old;
+		if (old && !extra.create && !extra.invite && old.ws && old.ws.readyState <= 1) {
+			return old;
+		}
 		if (old && old.ws) {
 			old.dead = true;
 			try {
@@ -1861,9 +2168,13 @@
 		};
 		c.ws.onclose = () => {
 			c.ready = false;
-			if (c.dead || conns[gid] !== c) return;
+			if (c.dead || conns[gid] !== c) {
+				return;
+			}
 			if (!groups[gid]) {
-				if (c.onFail) c.onFail('could not reach the group');
+				if (c.onFail) {
+					c.onFail('could not reach the group');
+				}
 				delete conns[gid];
 				return;
 			}
@@ -1871,7 +2182,9 @@
 			c.retry = Math.min((c.retry || 0) + 1, 8);
 			const ms = Math.min(300000, 1000 * 2 ** c.retry) * (0.75 + Math.random() / 2);
 			setTimeout(() => {
-				if (conns[gid] === c && groups[gid] && loggedIn()) connectGroup(gid);
+				if (conns[gid] === c && groups[gid] && loggedIn()) {
+					connectGroup(gid);
+				}
 			}, ms);
 		};
 		return c;
@@ -1879,13 +2192,18 @@
 	/** Sends to a group's relay connection, or queues it until signed in. */
 	function relaySend(gid, x) {
 		const c = conns[gid] || connectGroup(gid);
-		if (c.ready && c.ws && c.ws.readyState === 1) c.ws.send(JSON.stringify(x));
-		else c.queue.push(x);
+		if (c.ready && c.ws && c.ws.readyState === 1) {
+			c.ws.send(JSON.stringify(x));
+		} else {
+			c.queue.push(x);
+		}
 	}
 
 	/** Handles one message from a group's relay connection (sign-in, roster, messages, pictures, invites, errors). */
 	async function onRelay(gid, c, p) {
-		if (!p || typeof p !== 'object' || conns[gid] !== c) return;
+		if (!p || typeof p !== 'object' || conns[gid] !== c) {
+			return;
+		}
 		const me = Player.MemberNumber;
 		if (p.t === 'hello' && typeof p.nonce === 'string') {
 			const k = await getKey();
@@ -1919,43 +2237,67 @@
 			}
 			const done = c.onWelcome;
 			c.create = c.invite = c.onWelcome = c.onFail = null;
-			for (const x of c.queue.splice(0)) c.ws.send(JSON.stringify(x));
-			if (done) done(gid);
+			for (const x of c.queue.splice(0)) {
+				c.ws.send(JSON.stringify(x));
+			}
+			if (done) {
+				done(gid);
+			}
 			return;
 		}
-		if (p.t === 'roster') return takeRoster(gid, p.roster);
+		if (p.t === 'roster') {
+			return takeRoster(gid, p.roster);
+		}
 		if (p.t === 'presence') {
 			if (groups[gid] && Array.isArray(p.online)) {
 				groups[gid].online = p.online.filter(isNum).slice(0, LIMITS.members);
 				emit('presence', groupView(groups[gid]));
-				if (isOpen()) render(true);
+				if (isOpen()) {
+					render(true);
+				}
 			}
 			return;
 		}
-		if (p.t === 'msg') return takeMsgs(gid, [p.m], true);
-		if (p.t === 'history') return takeMsgs(gid, p.msgs, false);
+		if (p.t === 'msg') {
+			return takeMsgs(gid, [p.m], true);
+		}
+		if (p.t === 'history') {
+			return takeMsgs(gid, p.msgs, false);
+		}
 		if (p.t === 'pic') {
 			if (isNum(p.n) && (p.data === null || (typeof p.data === 'string' && p.data.length <= PFP_MAX && PFP_RE.test(p.data)))) {
-				if (p.data) relayPics[p.n] = p.data;
-				else delete relayPics[p.n];
-				if (isOpen()) render(true);
+				if (p.data) {
+					relayPics[p.n] = p.data;
+				} else {
+					delete relayPics[p.n];
+				}
+				if (isOpen()) {
+					render(true);
+				}
 			}
 			return;
 		}
 		if (p.t === 'gpic') {
 			const g = groups[gid];
 			if (g && (p.data === null || (typeof p.data === 'string' && p.data.length <= PFP_MAX && PFP_RE.test(p.data)))) {
-				if (p.data) g.pic = p.data;
-				else delete g.pic;
+				if (p.data) {
+					g.pic = p.data;
+				} else {
+					delete g.pic;
+				}
 				saveGC();
 				emit('group', groupView(g));
-				if (isOpen()) render(true);
+				if (isOpen()) {
+					render(true);
+				}
 			}
 			return;
 		}
 		if (p.t === 'invite') {
 			const cb = c.waiters.shift();
-			if (cb) cb(typeof p.code === 'string' && /^[A-Z2-9]{10}$/.test(p.code) ? `SB-${gid}-${p.code}` : null);
+			if (cb) {
+				cb(typeof p.code === 'string' && /^[A-Z2-9]{10}$/.test(p.code) ? `SB-${gid}-${p.code}` : null);
+			}
 			return;
 		}
 		const why = clean(p.why, 120);
@@ -1965,33 +2307,41 @@
 				c.onFail(why);
 				c.onFail = null;
 			}
-			if (groups[gid] && (p.t === 'gone' || /not a member|no such group/.test(why)))
-				dropGroup(
-					gid,
-					why === 'left'
-						? null
-						: why === 'deleted'
-							? `${groups[gid].name} was deleted by its owner`
-							: `You're no longer in ${groups[gid].name}`,
-				);
+			if (groups[gid] && (p.t === 'gone' || /not a member|no such group/.test(why))) {
+				let note = `You're no longer in ${groups[gid].name}`;
+				if (why === 'left') {
+					note = null;
+				} else if (why === 'deleted') {
+					note = `${groups[gid].name} was deleted by its owner`;
+				}
+				dropGroup(gid, note);
+			}
 			return;
 		}
 		if (p.t === 'error') {
-			if (/invite|full|already a member|member number/.test(why) && c.waiters.length) c.waiters.shift()(null, why);
+			if (/invite|full|already a member|member number/.test(why) && c.waiters.length) {
+				c.waiters.shift()(null, why);
+			}
 			notify(`⚠ ${why}`);
 		}
 	}
 
 	/** Stores a group's roster from the relay (cleaned); ignored if you are not in it. */
 	function takeRoster(gid, r) {
-		if (!r || typeof r !== 'object' || !Array.isArray(r.members)) return;
+		if (!r || typeof r !== 'object' || !Array.isArray(r.members)) {
+			return;
+		}
 		const old = groups[gid];
 		const members = r.members
 			.slice(0, LIMITS.members)
 			.filter((m) => m && isNum(m.n))
 			.map((m) => ({ n: m.n, name: clean(m.name, LIMITS.name) || `#${m.n}`, kf: typeof m.kf === 'string' ? m.kf.slice(0, 16) : '' }));
-		if (!members.some((m) => m.n === Player.MemberNumber)) return;
-		if (!old && Object.keys(groups).length >= LIMITS.groups) return;
+		if (!members.some((m) => m.n === Player.MemberNumber)) {
+			return;
+		}
+		if (!old && Object.keys(groups).length >= LIMITS.groups) {
+			return;
+		}
 		groups[gid] = {
 			id: gid,
 			name: clean(r.name, LIMITS.name) || 'Group chat',
@@ -1999,33 +2349,43 @@
 			admins: Array.isArray(r.admins) ? r.admins.filter(isNum).slice(0, LIMITS.admins) : [],
 			open: r.open === true,
 			members,
-			online: Array.isArray(r.online) ? r.online.filter(isNum).slice(0, LIMITS.members) : old ? old.online || [] : [],
+			online: Array.isArray(r.online) ? r.online.filter(isNum).slice(0, LIMITS.members) : (old && old.online) || [],
 			last: old ? old.last || 0 : 0,
 			picv: old ? old.picv : undefined,
 			pic: old ? old.pic : undefined,
 		};
 		saveGC();
 		emit('group', groupView(groups[gid]));
-		if (isOpen()) render(true);
+		if (isOpen()) {
+			render(true);
+		}
 	}
 
 	/**
-	 * Adds group messages to `hist`. `live`: they just arrived (a card each); otherwise they are history
+	 * Adds group messages to `hist`. `isLive`: they just arrived (a card each); otherwise they are history
 	 * from the sign-in (one card for all).
 	 */
-	function takeMsgs(gid, msgs, live) {
+	function takeMsgs(gid, msgs, isLive) {
 		const g = groups[gid];
-		if (!g || !Array.isArray(msgs)) return;
+		if (!g || !Array.isArray(msgs)) {
+			return;
+		}
 		const me = Player.MemberNumber;
 		const fresh = [];
 		for (const m of msgs.slice(-200)) {
-			if (!m || !Number.isInteger(m.id) || m.id <= 0) continue;
+			if (!m || !Number.isInteger(m.id) || m.id <= 0) {
+				continue;
+			}
 			const k = `g:${gid}:${m.id}`;
-			if (histKeys.has(k)) continue;
+			if (histKeys.has(k)) {
+				continue;
+			}
 			const sys = m.sys === true;
-			const from = sys ? 0 : isNum(m.from) ? m.from : 0;
+			const from = !sys && isNum(m.from) ? m.from : 0;
 			const text = clean(m.text, LIMITS.text + 100);
-			if (!text) continue;
+			if (!text) {
+				continue;
+			}
 			const h = {
 				k,
 				group: gid,
@@ -2040,29 +2400,42 @@
 			hist.push(h);
 			histKeys.add(k);
 			fresh.push(h);
-			if (m.id > (g.last || 0)) g.last = m.id;
+			if (m.id > (g.last || 0)) {
+				g.last = m.id;
+			}
 		}
-		if (!fresh.length) return;
+		if (!fresh.length) {
+			return;
+		}
 		hist.sort((a, b) => a.Time - b.Time);
 		saveHistory();
 		saveGC();
 		const unseen = fresh.filter((h) => h.unread);
 		if (unseen.length && !(isOpen() && thread === `g:${gid}` && !document.hidden)) {
 			ding(unseen);
-			if (live || unseen.length === 1) for (const h of unseen.slice(-3)) announce(h);
-			else
+			if (isLive || unseen.length === 1) {
+				for (const h of unseen.slice(-3)) {
+					announce(h);
+				}
+			} else {
 				card({
 					icon: '<span class="sb-av sb-gav">👥</span>',
 					title: `👥 ${g.name}`,
 					text: `${unseen.length} new messages while you were away`,
 					onClick: () => {
 						thread = `g:${gid}`;
-						if (!isOpen()) setOpen(true);
-						else render();
+						if (!isOpen()) {
+							setOpen(true);
+						} else {
+							render();
+						}
 					},
 				});
+			}
 		}
-		if (isOpen() && tab !== 'options' && tab !== 'wave') render(true);
+		if (isOpen() && tab !== 'options' && tab !== 'wave') {
+			render(true);
+		}
 	}
 
 	/** Forgets a group (left, removed or deleted): connection, state and messages; `note` shows as a card. */
@@ -2073,7 +2446,9 @@
 		if (c) {
 			c.dead = true;
 			try {
-				if (c.ws) c.ws.close();
+				if (c.ws) {
+					c.ws.close();
+				}
 			} catch (e) {
 				/* gone */
 			}
@@ -2081,13 +2456,21 @@
 		}
 		hist = hist.filter((h) => h.group !== gid);
 		histKeys.clear();
-		for (const h of hist) histKeys.add(h.k);
+		for (const h of hist) {
+			histKeys.add(h.k);
+		}
 		saveGC();
 		saveHistory();
-		if (note && g) card({ icon: '<span class="sb-av sb-gav">👥</span>', title: `👥 ${g.name}`, text: note });
-		if (g) emit('groupGone', { id: gid });
+		if (note && g) {
+			card({ icon: '<span class="sb-av sb-gav">👥</span>', title: `👥 ${g.name}`, text: note });
+		}
+		if (g) {
+			emit('groupGone', { id: gid });
+		}
 		if (isOpen()) {
-			if (thread === `g:${gid}`) thread = null;
+			if (thread === `g:${gid}`) {
+				thread = null;
+			}
 			render(true);
 		}
 	}
@@ -2099,13 +2482,19 @@
 	 * @param {function(string)} done  gets the new group id once it exists
 	 */
 	function createGroup(name, picked, open, done) {
-		if (!secure()) return needHttps();
+		if (!secure()) {
+			return needHttps();
+		}
 		const id = newId();
 		connectGroup(id, {
 			create: { name: clean(name, LIMITS.name) || 'Group chat', open: !!open },
 			onWelcome: () => {
-				for (const n of picked) inviteFriend(id, n);
-				if (done) done(id);
+				for (const n of picked) {
+					inviteFriend(id, n);
+				}
+				if (done) {
+					done(id);
+				}
 			},
 			onFail: (why) => notify(`⚠ Couldn't make the group${why ? `: ${why}` : ''}`),
 		});
@@ -2124,18 +2513,33 @@
 	 */
 	function inviteToGroup(id, n) {
 		const g = groups[id];
-		if (!g) return Promise.resolve({ ok: false, why: 'no such group' });
-		if (!isNum(n) || !loggedIn() || n === Player.MemberNumber) return Promise.resolve({ ok: false, why: 'bad member number' });
-		if (isMember(g, n)) return Promise.resolve({ ok: false, why: 'already a member' });
-		if (!canInvite(g, Player.MemberNumber)) return Promise.resolve({ ok: false, why: 'only admins can invite here' });
-		if (g.members.length >= LIMITS.members) return Promise.resolve({ ok: false, why: 'group is full' });
+		if (!g) {
+			return Promise.resolve({ ok: false, why: 'no such group' });
+		}
+		if (!isNum(n) || !loggedIn() || n === Player.MemberNumber) {
+			return Promise.resolve({ ok: false, why: 'bad member number' });
+		}
+		if (isMember(g, n)) {
+			return Promise.resolve({ ok: false, why: 'already a member' });
+		}
+		if (!canInvite(g, Player.MemberNumber)) {
+			return Promise.resolve({ ok: false, why: 'only admins can invite here' });
+		}
+		if (g.members.length >= LIMITS.members) {
+			return Promise.resolve({ ok: false, why: 'group is full' });
+		}
 		return new Promise((resolve) => {
 			const timer = setTimeout(() => resolve({ ok: false, why: 'no answer from the group chat server' }), 10000);
 			requestInvite(id, n, (code, why) => {
 				clearTimeout(timer);
-				if (!code) return resolve({ ok: false, why: why || 'refused' });
-				if (isFriend(n)) resolve({ ok: true, sent: deliverInvite(n, code, g.name), code });
-				else resolve({ ok: true, code });
+				if (!code) {
+					return resolve({ ok: false, why: why || 'refused' });
+				}
+				if (isFriend(n)) {
+					resolve({ ok: true, sent: deliverInvite(n, code, g.name), code });
+				} else {
+					resolve({ ok: true, code });
+				}
 			});
 		});
 	}
@@ -2143,7 +2547,9 @@
 	/** Invites a friend to a group (a code for them, then deliverInvite). */
 	function inviteFriend(id, n) {
 		requestInvite(id, n, (code) => {
-			if (code) deliverInvite(n, code, groups[id] ? groups[id].name : 'Group chat');
+			if (code) {
+				deliverInvite(n, code, groups[id] ? groups[id].name : 'Group chat');
+			}
 		});
 	}
 	/** Most invite beeps to friends without SlimeBeep per minute. */
@@ -2165,7 +2571,9 @@
 			return 'invite';
 		}
 		const now = Date.now();
-		while (plainSent.length && now - plainSent[0] > 60000) plainSent.shift();
+		while (plainSent.length && now - plainSent[0] > 60000) {
+			plainSent.shift();
+		}
 		if (plainSent.length >= PLAIN_MAX) {
 			notify(`⏳ ${nameOf(n)} has no SlimeBeep: invite beeps like that go ${PLAIN_MAX} a minute, try again shortly`);
 			return 'later';
@@ -2182,7 +2590,9 @@
 	function capPlain(boxes, full) {
 		const plain = boxes.filter((b) => b.checked && !peers.has(Number(b.value))).length;
 		for (const b of boxes) {
-			if (b.checked) continue;
+			if (b.checked) {
+				continue;
+			}
 			const capped = !peers.has(Number(b.value)) && plain >= PLAIN_MAX;
 			b.disabled = full || capped;
 			b.title = capped ? `${PLAIN_MAX} friends without SlimeBeep at a time (they get a beep each)` : '';
@@ -2192,14 +2602,19 @@
 	const openJoined = (gid) => {
 		tab = 'groups';
 		thread = `g:${gid}`;
-		if (!isOpen()) setOpen(true);
-		else render();
+		if (!isOpen()) {
+			setOpen(true);
+		} else {
+			render();
+		}
 	};
 	/** Adds a Join button after group codes in the game's chat log; each message is scanned once (data-sb-seen). */
 	function joinButtonsInChat() {
-		const log = document.getElementById('TextAreaChatLog');
-		if (!log) return;
-		for (const el of log.querySelectorAll('.ChatMessage:not([data-sb-seen])')) {
+		const chatLog = document.getElementById('TextAreaChatLog');
+		if (!chatLog) {
+			return;
+		}
+		for (const el of chatLog.querySelectorAll('.ChatMessage:not([data-sb-seen])')) {
 			el.dataset.sbSeen = '1';
 			const codes = [...new Set(String(el.textContent || '').match(CODE_IN) || [])].slice(0, 3);
 			for (const code of codes) {
@@ -2219,14 +2634,22 @@
 	/** Joins a group with an invite code (SB-…); `done(gid)` runs once in, or at once if already a member. */
 	function joinCode(raw, done) {
 		const m = CODE_RE.exec(String(raw || '').trim());
-		if (!m) return notify('That is not a SlimeBeep group code');
-		if (!secure()) return needHttps();
+		if (!m) {
+			return notify('That is not a SlimeBeep group code');
+		}
+		if (!secure()) {
+			return needHttps();
+		}
 		const [, gid, code] = m;
 		if (groups[gid]) {
-			if (done) done(gid);
+			if (done) {
+				done(gid);
+			}
 			return;
 		}
-		if (Object.keys(groups).length >= LIMITS.groups) return notify('You are in too many groups');
+		if (Object.keys(groups).length >= LIMITS.groups) {
+			return notify('You are in too many groups');
+		}
 		notify('👥 Joining…');
 		connectGroup(gid, {
 			invite: code,
@@ -2234,7 +2657,9 @@
 				invitations = invitations.filter((i) => !i.code.startsWith(`SB-${gid}-`));
 				saveGC();
 				notify(`👥 Joined ${groups[gid] ? groups[gid].name : 'the group'}`);
-				if (done) done(gid);
+				if (done) {
+					done(gid);
+				}
 			},
 			onFail: (why) => notify(`⚠ Couldn't join${why ? `: ${why}` : ''}`),
 		});
@@ -2252,14 +2677,22 @@
 	/** The 🚪 box: leave the group, or (owner) delete it. */
 	function askGroup(id) {
 		const g = groups[id];
-		if (!g || $('sb-ask')) return;
+		if (!g || $('sb-ask')) {
+			return;
+		}
 		const owner = g.owner === Player.MemberNumber;
 		const others = g.members.filter((m) => m.n !== Player.MemberNumber).length;
+		let leaveHint = "You're the only one in it, so leaving deletes it.";
+		if (others) {
+			leaveHint = owner
+				? 'If you leave, the group stays and passes to an admin (or whoever has been in it longest).'
+				: 'You can come back only with a new invite.';
+		}
 		const box = document.createElement('div');
 		box.id = 'sb-ask';
 		box.innerHTML = `<div class="sb-crop-card">
 			<b>${esc(g.name)}</b>
-			<span class="sb-hint" style="text-align:center">${others ? (owner ? 'If you leave, the group stays and passes to an admin (or whoever has been in it longest).' : 'You can come back only with a new invite.') : "You're the only one in it, so leaving deletes it."}</span>
+			<span class="sb-hint" style="text-align:center">${leaveHint}</span>
 			${owner && others ? `<div class="sb-warn">Delete removes the group and all its messages <u>for everyone</u>. It can't be undone.</div>` : ''}
 			<div class="sb-crop-btns" style="flex-wrap:wrap;justify-content:center"><button class="sb-pill" data-act="keep">Cancel</button><button class="sb-go" data-act="leave">🚪 Leave</button>${owner && others ? '<button class="sb-go sb-danger" data-act="delete">🗑 Delete group</button>' : ''}</div>
 		</div>`;
@@ -2275,8 +2708,12 @@
 		};
 		box.addEventListener('click', (e) => {
 			const act = e.target.dataset && e.target.dataset.act;
-			if (act === 'keep' || e.target === box) return close();
-			if (act !== 'leave' && act !== 'delete') return;
+			if (act === 'keep' || e.target === box) {
+				return close();
+			}
+			if (act !== 'leave' && act !== 'delete') {
+				return;
+			}
 			close();
 			if (act === 'delete') {
 				deleteGroup(id);
@@ -2304,23 +2741,36 @@
 	let lastRelayCheck = 0;
 	/** Every 5 s: connects to each group, checks the mailbox, sends waiting mail and keep-alives (every 4 min). */
 	function relayTick() {
-		if (!loggedIn() || Date.now() - lastRelayCheck < 5000) return;
+		if (!loggedIn() || Date.now() - lastRelayCheck < 5000) {
+			return;
+		}
 		lastRelayCheck = Date.now();
-		if (!secure()) return;
+		if (!secure()) {
+			return;
+		}
 		getKey().catch((e) => warn(e, 'key'));
-		for (const id of Object.keys(groups)) if (!conns[id]) connectGroup(id);
-		if (Date.now() - mailChecked > 300000) checkMail();
+		for (const id of Object.keys(groups)) {
+			if (!conns[id]) {
+				connectGroup(id);
+			}
+		}
+		if (Date.now() - mailChecked > 300000) {
+			checkMail();
+		}
 		mailWaiting();
 		// '{"t":"ping"}' is answered by the relay's auto-response.
-		for (const c of Object.values(conns))
+		for (const c of Object.values(conns)) {
 			if (c.ready && c.ws && c.ws.readyState === 1 && Date.now() - (c.pinged || 0) > 240000) {
 				c.pinged = Date.now();
 				c.ws.send('{"t":"ping"}');
 			}
+		}
 	}
 	/** ✓ if a group member's key matches the one their own SlimeBeep sent you, ⚠ if not, '' if unknown. */
 	function keyMark(m) {
-		if (m.n === Player.MemberNumber || !peerKeys[m.n] || !m.kf) return '';
+		if (m.n === Player.MemberNumber || !peerKeys[m.n] || !m.kf) {
+			return '';
+		}
 		return peerKeys[m.n] === m.kf
 			? ' <span title="Checked: the same key their own SlimeBeep sent you">✓</span>'
 			: ' <span title="Not the key their own SlimeBeep sent you: this may not really be them">⚠</span>';
@@ -2330,15 +2780,21 @@
 	const outbox = [];
 	/** Queues a hidden beep to a friend; every one also carries your picture version (`pv`) and key start (`kf`). */
 	function sendHidden(n, payload) {
-		if (stopped) return;
+		if (stopped) {
+			return;
+		}
 		const pic = myPfp();
 		const kf = myKey && myKey.owner === Player.MemberNumber ? myKey.kf : undefined;
 		outbox.push([n, JSON.stringify({ ...payload, pv: pic ? pic.v : 0, ...(kf ? { kf } : {}) })]);
-		if (outbox.length === 1) drain();
+		if (outbox.length === 1) {
+			drain();
+		}
 	}
 	/** Sends the next hidden beep in `outbox`. */
 	function drain() {
-		if (!outbox.length) return;
+		if (!outbox.length) {
+			return;
+		}
 		const [n, msg] = outbox[0];
 		try {
 			ServerSend('AccountBeep', { MemberNumber: n, BeepType: PROTO, IsSecret: true, Message: msg });
@@ -2354,7 +2810,9 @@
 	/** Asks online friends not yet known to have SlimeBeep whether they do (hidden, answered by their SlimeBeep). */
 	function findPeers() {
 		const ask = friends.filter((f) => !peers.has(f.MemberNumber)).slice(0, 40);
-		for (const f of ask) sendHidden(f.MemberNumber, { sb: 1, ping: 1 });
+		for (const f of ask) {
+			sendHidden(f.MemberNumber, { sb: 1, ping: 1 });
+		}
 		return ask.length;
 	}
 	/**
@@ -2362,12 +2820,20 @@
 	 * it, or its BeepType kept it out), it is added to `hist` here. Leash beeps and add-on data are skipped.
 	 */
 	function catchBeep(d) {
-		if (!d || typeof d.MemberNumber !== 'number' || typeof d.MemberName !== 'string') return;
+		if (!d || typeof d.MemberNumber !== 'number' || typeof d.MemberName !== 'string') {
+			return;
+		}
 		const type = typeof d.BeepType === 'string' ? d.BeepType : '';
-		if (/leash/i.test(type)) return;
+		if (/leash/i.test(type)) {
+			return;
+		}
 		const msg = typeof d.Message === 'string' ? d.Message : undefined;
-		if (isSignal(msg, !!type)) return;
-		if (type && !parseBeep(msg).text) return;
+		if (isSignal(msg, !!type)) {
+			return;
+		}
+		if (type && !parseBeep(msg).text) {
+			return;
+		}
 		const at = Date.now();
 		setTimeout(() => {
 			try {
@@ -2382,10 +2848,16 @@
 				console.debug(
 					`[SlimeBeep] beep from ${d.MemberName} (${d.MemberNumber}), type "${type}": ${listed ? "in the game's beep list" : "not in the game's beep list, kept by SlimeBeep"}`,
 				);
-				if (listed || !loggedIn()) return;
-				if (histOwner !== Player.MemberNumber) loadHistory();
+				if (listed || !loggedIn()) {
+					return;
+				}
+				if (histOwner !== Player.MemberNumber) {
+					loadHistory();
+				}
 				const k = `raw:${d.MemberNumber}|${at}`;
-				if (histKeys.has(k)) return;
+				if (histKeys.has(k)) {
+					return;
+				}
 				const h = {
 					k,
 					MemberNumber: d.MemberNumber,
@@ -2399,10 +2871,14 @@
 				hist.push(h);
 				histKeys.add(k);
 				saveHistory();
-				if (isReaction(h)) return;
+				if (isReaction(h)) {
+					return;
+				}
 				ding([h]);
 				announce(h);
-				if (isOpen() && tab !== 'options' && tab !== 'wave') render(true);
+				if (isOpen() && tab !== 'options' && tab !== 'wave') {
+					render(true);
+				}
 			} catch (e) {
 				warn(e);
 			}
@@ -2410,10 +2886,14 @@
 	}
 	/** Asks the server for the online friends (answered through onServer). */
 	const askFriends = () => {
-		if (!loggedIn()) return;
+		if (!loggedIn()) {
+			return;
+		}
 		listen();
 		try {
-			if (typeof ServerSend === 'function') ServerSend('AccountQuery', { Query: 'OnlineFriends' });
+			if (typeof ServerSend === 'function') {
+				ServerSend('AccountQuery', { Query: 'OnlineFriends' });
+			}
 		} catch (e) {
 			warn(e, 'friends');
 		}
@@ -2423,7 +2903,13 @@
 	const isOpen = () => $('sb-panel').style.display === 'flex';
 	/** Opens or closes the panel. */
 	function setOpen(on) {
-		if (!on) for (const id of ['sb-crop', 'sb-zoom', 'sb-ask', 'sb-emoji']) if ($(id)) $(id).remove();
+		if (!on) {
+			for (const id of ['sb-crop', 'sb-zoom', 'sb-ask', 'sb-emoji']) {
+				if ($(id)) {
+					$(id).remove();
+				}
+			}
+		}
 		$('sb-panel').style.display = on ? 'flex' : 'none';
 		if (on) {
 			askFriends();
@@ -2444,15 +2930,23 @@
 		t.style.left = `${left}px`;
 		t.style.top = `${top}px`;
 		placeCards();
-		if (!isOpen()) return;
+		if (!isOpen()) {
+			return;
+		}
 		const w = panel.offsetWidth,
 			h = Math.min(480, innerHeight - 16);
 		panel.style.height = `${h}px`;
 		// Above the toggle if it fits, else below, else clamped to the window.
 		panel.style.left = `${Math.max(8, Math.min(innerWidth - w - 8, left + size - w))}px`;
-		const above = top - h - 10,
-			below = top + size + 10;
-		panel.style.top = `${above >= 8 ? above : below + h <= innerHeight - 8 ? below : Math.max(8, innerHeight - h - 8)}px`;
+		const above = top - h - 10;
+		const below = top + size + 10;
+		let panelTop = Math.max(8, innerHeight - h - 8);
+		if (above >= 8) {
+			panelTop = above;
+		} else if (below + h <= innerHeight - 8) {
+			panelTop = below;
+		}
+		panel.style.top = `${panelTop}px`;
 		placeCards();
 	}
 
@@ -2465,11 +2959,19 @@
 				tick.asked = Date.now();
 				askFriends();
 			}
-			if (!tick.n || ++tick.n % 5 === 0) applyThemed();
-			if (loggedIn()) joinButtonsInChat();
+			if (!tick.n || ++tick.n % 5 === 0) {
+				applyThemed();
+			}
+			if (loggedIn()) {
+				joinButtonsInChat();
+			}
 			tick.n = tick.n || 1;
-			if (loggedIn()) listen();
-			if (loggedIn() && histOwner === Player.MemberNumber) relayTick();
+			if (loggedIn()) {
+				listen();
+			}
+			if (loggedIn() && histOwner === Player.MemberNumber) {
+				relayTick();
+			}
 			const first = histOwner === null || (loggedIn() && histOwner !== Player.MemberNumber);
 			const fresh = sync();
 			const n = log().filter(unread).length;
@@ -2478,12 +2980,18 @@
 			badge.style.display = n ? 'block' : 'none';
 			// Beeps already in the log at login get no card or sound.
 			if (first || !fresh.length) {
-				if (fresh.length && isOpen()) render(true);
+				if (fresh.length && isOpen()) {
+					render(true);
+				}
 				return;
 			}
 			ding(fresh);
-			for (const h of fresh.slice(-4)) announce(h);
-			if (isOpen() && tab !== 'options' && tab !== 'wave') render(true);
+			for (const h of fresh.slice(-4)) {
+				announce(h);
+			}
+			if (isOpen() && tab !== 'options' && tab !== 'wave') {
+				render(true);
+			}
 		} catch (e) {
 			if (!tick.warned) {
 				tick.warned = true;
@@ -2494,16 +3002,23 @@
 
 	/** Shows a new message: a card (unless that chat is open) and, with opts.desktop, a system notification. */
 	function announce(h) {
-		if (isOpen() && thread === h.MemberNumber && !document.hidden) return;
+		if (isOpen() && thread === h.MemberNumber && !document.hidden) {
+			return;
+		}
 		const text = textOf(h);
 		const room = h.ChatRoomName && typeof h.Message === 'string' ? `📍 in ${h.ChatRoomName}` : '';
 		const g = h.group && groups[h.group];
-		if (h.group && isOpen() && thread === `g:${h.group}` && !document.hidden) return;
+		if (h.group && isOpen() && thread === `g:${h.group}` && !document.hidden) {
+			return;
+		}
 		const open = () => {
 			thread = g ? `g:${g.id}` : h.MemberNumber;
 			renderThread.pin = undefined;
-			if (!isOpen()) setOpen(true);
-			else render();
+			if (!isOpen()) {
+				setOpen(true);
+			} else {
+				render();
+			}
 		};
 		if (opts.popups) {
 			card(
@@ -2532,7 +3047,9 @@
 
 	/** Adds a card to the stack (at most 4); it closes after `ms`, or stays with 0. */
 	function card({ icon, title, text, sub = '', onClick, ms = 7000, cls = '' }) {
-		if (stopped) return;
+		if (stopped) {
+			return;
+		}
 		const box = $('sb-cards');
 		const c = document.createElement('div');
 		c.className = `sb-card ${cls}`;
@@ -2550,26 +3067,41 @@
 		});
 		c.addEventListener('click', () => {
 			close();
-			if (onClick) onClick();
+			if (onClick) {
+				onClick();
+			}
 		});
 		box.prepend(c);
-		while (box.children.length > 4) box.lastChild.remove();
+		while (box.children.length > 4) {
+			box.lastChild.remove();
+		}
 		placeCards();
-		if (ms) setTimeout(close, ms);
+		if (ms) {
+			setTimeout(close, ms);
+		}
 	}
 
 	/** Positions the card stack next to the toggle, or the panel when open. */
 	function placeCards() {
 		const box = $('sb-cards');
-		if (!box || !box.children.length) return;
+		if (!box || !box.children.length) {
+			return;
+		}
 		const open = isOpen();
 		const r = (open ? $('sb-panel') : $('sb-toggle')).getBoundingClientRect();
 		const w = box.offsetWidth,
 			h = box.offsetHeight;
 		let left = open ? r.left - w - 10 : r.right - w;
-		if (open && left < 8) left = r.right + 10;
+		if (open && left < 8) {
+			left = r.right + 10;
+		}
 		box.style.left = `${Math.max(8, Math.min(innerWidth - w - 8, left))}px`;
-		const top = open ? r.bottom - h : r.top - h - 10 >= 8 ? r.top - h - 10 : r.bottom + 10;
+		let top = r.bottom + 10;
+		if (open) {
+			top = r.bottom - h;
+		} else if (r.top - h - 10 >= 8) {
+			top = r.top - h - 10;
+		}
 		box.style.top = `${Math.max(8, Math.min(innerHeight - h - 8, top))}px`;
 	}
 
@@ -2582,20 +3114,31 @@
 	 * and retries up to 5 times until the note is really in the log.
 	 */
 	function updateNote() {
-		if (opts.lastVersion === VERSION || !loggedIn() || typeof ChatRoomSendLocal !== 'function' || updateNote.pending) return;
-		const log = document.getElementById('TextAreaChatLog');
-		const inRoom = !!log && (typeof ServerPlayerIsInChatRoom === 'function' ? ServerPlayerIsInChatRoom() : !!myRoom());
+		if (opts.lastVersion === VERSION || !loggedIn() || typeof ChatRoomSendLocal !== 'function' || updateNote.pending) {
+			return;
+		}
+		const chatLog = document.getElementById('TextAreaChatLog');
+		const inRoom = !!chatLog && (typeof ServerPlayerIsInChatRoom === 'function' ? ServerPlayerIsInChatRoom() : !!myRoom());
 		if (!inRoom) {
 			updateNote.since = 0;
 			return;
 		}
-		if (!updateNote.since) updateNote.since = Date.now();
-		if (Date.now() - updateNote.since < 3000 || (!newsLoaded && Date.now() - started < 15000)) return;
-		if (Date.now() - (updateNote.last || 0) < 10000) return;
+		if (!updateNote.since) {
+			updateNote.since = Date.now();
+		}
+		if (Date.now() - updateNote.since < 3000 || (!newsLoaded && Date.now() - started < 15000)) {
+			return;
+		}
+		if (Date.now() - (updateNote.last || 0) < 10000) {
+			return;
+		}
 		const item = newsItems.find((i) => i.id === VERSION);
 		const first = !opts.lastVersion;
 		const head = first ? `SlimeBeep v${esc(VERSION)} is ready!` : `SlimeBeep updated to v${esc(VERSION)}`;
-		const body = item ? esc(item.text) : first ? 'Click the pink slime to beep your friends.' : '';
+		let body = first ? 'Click the pink slime to beep your friends.' : '';
+		if (item) {
+			body = esc(item.text);
+		}
 		updateNote.pending = true;
 		updateNote.last = Date.now();
 		ChatRoomSendLocal(
@@ -2615,12 +3158,18 @@
 	}
 	/** Once per load: a card listing what won't work if game globals in NEEDS are missing (once per version and set). */
 	function gameCheck() {
-		if (gameCheck.done || !loggedIn()) return;
+		if (gameCheck.done || !loggedIn()) {
+			return;
+		}
 		gameCheck.done = true;
 		const gone = missing();
-		if (!gone.length) return;
+		if (!gone.length) {
+			return;
+		}
 		const sig = `${VERSION}:${gone.map(([k]) => k).join(',')}`;
-		if (opts.gameWarned === sig) return;
+		if (opts.gameWarned === sig) {
+			return;
+		}
 		setOpt('gameWarned', sig);
 		const what = [...new Set(gone.map(([, , w]) => w))].join(', ');
 		card({
@@ -2643,8 +3192,12 @@
 			.then((items) => {
 				const valid = Array.isArray(items) ? items.filter((i) => i && i.id && i.text) : [];
 				newsItems = valid;
-				if (!valid.length) return;
-				if (!Array.isArray(opts.seenNews)) opts.seenNews = valid.slice(0, -1).map((i) => i.id);
+				if (!valid.length) {
+					return;
+				}
+				if (!Array.isArray(opts.seenNews)) {
+					opts.seenNews = valid.slice(0, -1).map((i) => i.id);
+				}
 				for (const i of valid.filter((x) => !opts.seenNews.includes(x.id)).slice(-3)) {
 					card({
 						icon: `<img src="${ICON}" style="width:34px;height:34px;border-radius:50%;flex:none" alt="">`,
@@ -2672,14 +3225,18 @@
 	const isMuted = (key) => Array.isArray(opts.muted) && opts.muted.includes(key);
 	/** Chimes for new messages unless all of them are from muted chats. */
 	const ding = (list) => {
-		if (opts.sound && list.some((h) => !isMuted(muteKey(h)))) chime();
+		if (opts.sound && list.some((h) => !isMuted(muteKey(h)))) {
+			chime();
+		}
 	};
 	/** Mutes or unmutes a chat. */
 	function toggleMute(key, name) {
 		const on = !isMuted(key);
 		setOpt('muted', [...(Array.isArray(opts.muted) ? opts.muted : []).filter((k) => k !== key), ...(on ? [key] : [])].slice(-500));
 		notify(on ? `🔕 No sound for ${name}` : `🔔 Sound back on for ${name}`);
-		if (isOpen()) render(true);
+		if (isOpen()) {
+			render(true);
+		}
 	}
 	/** The 🔔/🔕 button for a chat header. */
 	const muteButton = (key) =>
@@ -2712,11 +3269,17 @@
 	function chats() {
 		const by = new Map();
 		for (const b of log()) {
-			if (b.group || isReaction(b)) continue;
+			if (b.group || isReaction(b)) {
+				continue;
+			}
 			const c = by.get(b.MemberNumber) || { n: b.MemberNumber, name: null, last: null, unread: 0 };
-			if (!b.Sent) c.name = b.MemberName;
+			if (!b.Sent) {
+				c.name = b.MemberName;
+			}
 			c.last = b;
-			if (unread(b)) c.unread++;
+			if (unread(b)) {
+				c.unread++;
+			}
 			by.set(b.MemberNumber, c);
 		}
 		return [...by.values()]
@@ -2725,31 +3288,36 @@
 	}
 
 	/** Where an online friend is, for the lists. */
-	const where = (f) =>
-		!f
-			? 'Offline'
-			: f.ChatRoomName
-				? f.Private
-					? `🔒 ${f.ChatRoomName}`
-					: `📍 ${f.ChatRoomName}`
-				: f.Private
-					? '🔒 Private room'
-					: '🏠 Not in a room';
+	const where = (f) => {
+		if (!f) {
+			return 'Offline';
+		}
+		if (f.ChatRoomName) {
+			return `${f.Private ? '🔒' : '📍'} ${f.ChatRoomName}`;
+		}
+		return f.Private ? '🔒 Private room' : '🏠 Not in a room';
+	};
 
 	/** Redraws the panel for the current `tab` and `thread`; `keepScroll` keeps an open chat's scroll position. */
 	function render(keepScroll) {
-		if (stopped) return;
+		if (stopped) {
+			return;
+		}
 		const view = $('sb-view');
 		// The emoji picker closes when no chat box is left after the redraw.
 		setTimeout(() => {
-			if (!$('sb-text')) closeEmoji();
+			if (!$('sb-text')) {
+				closeEmoji();
+			}
 		}, 0);
 		showMe();
 		if (!loggedIn()) {
 			view.innerHTML = '<div class="sb-empty">💤 Log in and SlimeBeep wakes up.</div>';
 			return;
 		}
-		if (thread !== null) return renderThread(keepScroll);
+		if (thread !== null) {
+			return renderThread(keepScroll);
+		}
 		const unreadChats = log().filter((h) => !h.group && unread(h)).length;
 		const unreadGroups = log().filter((h) => h.group && unread(h)).length;
 		const on = (t) => (tab === t || (t === 'groups' && tab === 'newgc') ? 'on' : '');
@@ -2762,28 +3330,37 @@
 		</div>`;
 		const body = $('sb-body');
 		const scroll = keepScroll && body ? body.scrollTop : 0;
-		if (tab === 'options') view.innerHTML = tabs + `<div class="sb-body" id="sb-body">${optionsHtml()}</div>`;
-		else if (tab === 'newgc') view.innerHTML = tabs + `<div class="sb-body sb-group" id="sb-body">${newGroupHtml()}</div>`;
-		else if (tab === 'wave') view.innerHTML = tabs + `<div class="sb-body sb-group" id="sb-body">${groupHtml()}</div>`;
-		else if (tab === 'bug') view.innerHTML = tabs + `<div class="sb-body sb-group" id="sb-body">${bugHtml()}</div>`;
-		else if (tab === 'invitefor') view.innerHTML = tabs + `<div class="sb-body sb-group" id="sb-body">${inviteForHtml()}</div>`;
-		else {
+		if (tab === 'options') {
+			view.innerHTML = `${tabs}<div class="sb-body" id="sb-body">${optionsHtml()}</div>`;
+		} else if (tab === 'newgc') {
+			view.innerHTML = `${tabs}<div class="sb-body sb-group" id="sb-body">${newGroupHtml()}</div>`;
+		} else if (tab === 'wave') {
+			view.innerHTML = `${tabs}<div class="sb-body sb-group" id="sb-body">${groupHtml()}</div>`;
+		} else if (tab === 'bug') {
+			view.innerHTML = `${tabs}<div class="sb-body sb-group" id="sb-body">${bugHtml()}</div>`;
+		} else if (tab === 'invitefor') {
+			view.innerHTML = `${tabs}<div class="sb-body sb-group" id="sb-body">${inviteForHtml()}</div>`;
+		} else {
 			const q = search.toLowerCase();
-			const rows = tab === 'chats' ? chatRows(q) : tab === 'groups' ? groupRows(q) : friendRows(q);
-			const what = { chats: 'chats', groups: 'group chats', friends: 'friends' }[tab] || 'chats';
-			const empty =
-				tab === 'chats'
-					? '🫧 No beeps yet. Pick someone in 💖 to say hi!'
-					: tab === 'groups'
-						? q
-							? 'No group by that name.'
-							: '👥 No group chats yet. Make one with your SlimeBeep friends!'
-						: q
-							? 'Nobody by that name.'
-							: '🌙 None of your friends are online.';
-			view.innerHTML =
-				tabs +
-				`<div class="sb-body" id="sb-body">
+			const list = {
+				chats: {
+					rows: chatRows,
+					what: 'chats',
+					empty: '🫧 No beeps yet. Pick someone in 💖 to say hi!',
+					none: '🫧 No beeps yet. Pick someone in 💖 to say hi!',
+				},
+				groups: {
+					rows: groupRows,
+					what: 'group chats',
+					empty: '👥 No group chats yet. Make one with your SlimeBeep friends!',
+					none: 'No group by that name.',
+				},
+				friends: { rows: friendRows, what: 'friends', empty: '🌙 None of your friends are online.', none: 'Nobody by that name.' },
+			}[tab] || { rows: friendRows, what: 'chats', empty: '🌙 None of your friends are online.', none: 'Nobody by that name.' };
+			const rows = list.rows(q);
+			const what = list.what;
+			const empty = q ? list.none : list.empty;
+			view.innerHTML = `${tabs}<div class="sb-body" id="sb-body">
 				${tab === 'groups' ? groupsTop() : ''}
 				<input class="sb-search" id="sb-search" placeholder="🔍 Search ${what}…" value="${esc(search)}">
 				${rows || `<div class="sb-empty">${empty}</div>`}
@@ -2797,31 +3374,48 @@
 				again.setSelectionRange(search.length, search.length);
 			});
 		}
-		if (keepScroll) $('sb-body').scrollTop = scroll;
-		for (const b of view.querySelectorAll('[data-tab]'))
+		if (keepScroll) {
+			$('sb-body').scrollTop = scroll;
+		}
+		for (const b of view.querySelectorAll('[data-tab]')) {
 			b.addEventListener('click', () => {
 				tab = b.dataset.tab;
 				search = '';
 				render();
 			});
-		for (const r of view.querySelectorAll('[data-open]'))
+		}
+		for (const r of view.querySelectorAll('[data-open]')) {
 			r.addEventListener('click', () => {
 				const v = r.dataset.open;
 				thread = v.startsWith('g:') ? v : Number(v);
 				renderThread.pin = undefined;
 				render();
 			});
-		if ($('sb-newgc'))
+		}
+		if ($('sb-newgc')) {
 			$('sb-newgc').addEventListener('click', () => {
 				tab = 'newgc';
 				render();
 			});
-		if (tab === 'groups' && $('sb-join')) wireGroupsTop();
-		if (tab === 'newgc') wireNewGroup();
-		if (tab === 'wave') wireGroup();
-		if (tab === 'bug') wireBug();
-		if (tab === 'invitefor') wireInviteFor();
-		if (tab === 'options') wireOptions();
+		}
+		if (tab === 'groups' && $('sb-join')) {
+			wireGroupsTop();
+		}
+		if (tab === 'newgc') {
+			wireNewGroup();
+		}
+		if (tab === 'wave') {
+			wireGroup();
+		}
+		if (tab === 'bug') {
+			wireBug();
+		}
+		if (tab === 'invitefor') {
+			wireInviteFor();
+		}
+		if (tab === 'options') {
+			wireOptions();
+		}
 	}
 
 	/** Rows of the 💬 Chats tab, filtered by search `q`. */
@@ -2849,7 +3443,9 @@
 	function groupRows(q) {
 		const rows = [];
 		for (const g of Object.values(groups)) {
-			if (q && !g.name.toLowerCase().includes(q)) continue;
+			if (q && !g.name.toLowerCase().includes(q)) {
+				continue;
+			}
 			const msgs = hist.filter((h) => h.group === g.id);
 			const last = msgs[msgs.length - 1];
 			const n = msgs.filter(unread).length;
@@ -2889,7 +3485,9 @@
 			notify(n ? `🔍 Asking ${n} friend${n === 1 ? '' : 's'}…` : 'Everyone online is checked');
 			setTimeout(
 				() => {
-					if (isOpen()) render(true);
+					if (isOpen()) {
+						render(true);
+					}
 				},
 				2500 + n * 250,
 			);
@@ -2916,22 +3514,25 @@
 	/** Wires groupsTop's buttons. */
 	function wireGroupsTop() {
 		const list = invitations.filter((i) => !groups[CODE_RE.exec(i.code)[1]]);
-		for (const b of $('sb-view').querySelectorAll('[data-join]'))
+		for (const b of $('sb-view').querySelectorAll('[data-join]')) {
 			b.addEventListener('click', () => {
 				const i = list[Number(b.dataset.join)];
-				if (i)
+				if (i) {
 					joinCode(i.code, (gid) => {
 						thread = `g:${gid}`;
 						render();
 					});
+				}
 			});
-		for (const b of $('sb-view').querySelectorAll('[data-dismiss]'))
+		}
+		for (const b of $('sb-view').querySelectorAll('[data-dismiss]')) {
 			b.addEventListener('click', () => {
 				const i = list[Number(b.dataset.dismiss)];
 				invitations = invitations.filter((x) => x !== i);
 				saveGC();
 				render(true);
 			});
+		}
 		$('sb-join').addEventListener('click', () =>
 			joinCode($('sb-join-code').value, (gid) => {
 				thread = `g:${gid}`;
@@ -2939,7 +3540,9 @@
 			}),
 		);
 		$('sb-join-code').addEventListener('keydown', (e) => {
-			if (e.key === 'Enter') $('sb-join').click();
+			if (e.key === 'Enter') {
+				$('sb-join').click();
+			}
 		});
 	}
 
@@ -2962,7 +3565,9 @@
 			$('sb-gc-count').textContent = n ? `${n} to invite` : 'Just you for now';
 			capPlain(boxes(), n >= LIMITS.members - 1);
 		};
-		for (const b of boxes()) b.addEventListener('change', update);
+		for (const b of boxes()) {
+			b.addEventListener('change', update);
+		}
 		$('sb-gc-back').addEventListener('click', () => {
 			tab = 'groups';
 			render();
@@ -2982,7 +3587,9 @@
 				render();
 			});
 			setTimeout(() => {
-				if ($('sb-gc-make')) $('sb-gc-make').disabled = false;
+				if ($('sb-gc-make')) {
+					$('sb-gc-make').disabled = false;
+				}
 			}, 8000);
 		});
 		update();
@@ -2992,7 +3599,9 @@
 	function showCode() {
 		const out = $('sb-gm-out');
 		const k = renderMembers.code;
-		if (!out || !k || !renderMembers.open || k.id !== renderMembers.open) return;
+		if (!out || !k || !renderMembers.open || k.id !== renderMembers.open) {
+			return;
+		}
 		out.innerHTML = `<div class="sb-row" style="cursor:default;display:block"><code style="font-size:13px;user-select:all">${esc(k.code)}</code>
 			<div class="sb-hint">${k.forWho ? `Only #${k.forWho} can use it, once.` : 'Anyone with it can join, for 7 days (20 people at most).'} They paste it in 👥 Groups.</div>
 			<button class="sb-pill" id="sb-gm-copy" style="margin-top:4px">📋 Copy</button></div>`;
@@ -3015,7 +3624,11 @@
 		const view = $('sb-view');
 		// Typed text and focus survive the redraw.
 		const typing = {};
-		for (const k of ['sb-gm-name', 'sb-gm-for']) if ($(k) && $(k).dataset.touched) typing[k] = $(k).value;
+		for (const k of ['sb-gm-name', 'sb-gm-for']) {
+			if ($(k) && $(k).dataset.touched) {
+				typing[k] = $(k).value;
+			}
+		}
 		const focused = document.activeElement && document.activeElement.id;
 		const on = (n) => n === me || (g.online || []).includes(n);
 		const rows = g.members
@@ -3028,15 +3641,21 @@
 			)
 			.map((m) => {
 				const n = m.n;
-				const role = n === g.owner ? '👑 Owner' : isAdmin(g, n) ? '⭐ Admin' : 'Member';
+				const role = { owner: '👑 Owner', admin: '⭐ Admin', member: 'Member' }[roleOf(g, n)];
 				const acts = [];
 				if (n !== me && n !== g.owner) {
-					if (admin && !isAdmin(g, n) && g.admins.length < LIMITS.admins)
+					if (admin && !isAdmin(g, n) && g.admins.length < LIMITS.admins) {
 						acts.push(`<button class="sb-pill" data-act="up" data-n="${n}" title="Make admin">⭐</button>`);
-					if (owner && isAdmin(g, n)) acts.push(`<button class="sb-pill" data-act="down" data-n="${n}" title="Take admin">✩</button>`);
-					if ((admin && !isAdmin(g, n)) || owner)
+					}
+					if (owner && isAdmin(g, n)) {
+						acts.push(`<button class="sb-pill" data-act="down" data-n="${n}" title="Take admin">✩</button>`);
+					}
+					if ((admin && !isAdmin(g, n)) || owner) {
 						acts.push(`<button class="sb-pill" data-act="kick" data-n="${n}" title="Remove">✕</button>`);
-					if (owner) acts.push(`<button class="sb-pill" data-act="own" data-n="${n}" title="Make owner">👑</button>`);
+					}
+					if (owner) {
+						acts.push(`<button class="sb-pill" data-act="own" data-n="${n}" title="Make owner">👑</button>`);
+					}
 				}
 				return `<div class="sb-row" style="cursor:default">${avatar(n, memberName(g, n))}
 					<div class="sb-main"><div class="sb-name">${on(n) ? '<span class="sb-on" title="Online"></span>' : '<span class="sb-off" title="Offline"></span>'}${esc(memberName(g, n))}${keyMark(m)}${peers.has(n) ? ' 🫧' : ''}</div><div class="sb-sub">${role} · #${n}${on(n) ? '' : ' · offline'}</div></div>
@@ -3070,7 +3689,9 @@
 			</div>`;
 		for (const k of ['sb-gm-name', 'sb-gm-for']) {
 			const el = $(k);
-			if (!el) continue;
+			if (!el) {
+				continue;
+			}
 			if (k in typing) {
 				el.value = typing[k];
 				el.dataset.touched = '1';
@@ -3078,7 +3699,9 @@
 			el.addEventListener('input', () => {
 				el.dataset.touched = '1';
 			});
-			if (focused === k) el.focus();
+			if (focused === k) {
+				el.focus();
+			}
 		}
 		$('sb-back').addEventListener('click', () => {
 			renderMembers.open = null;
@@ -3087,35 +3710,54 @@
 		const act = (x) => {
 			relaySend(id, x);
 		};
-		for (const b of view.querySelectorAll('[data-act]'))
+		for (const b of view.querySelectorAll('[data-act]')) {
 			b.addEventListener('click', () => {
 				const n = Number(b.dataset.n);
-				if (b.dataset.act === 'up') act({ t: 'admin', member: n, on: true });
-				if (b.dataset.act === 'down') act({ t: 'admin', member: n, on: false });
-				if (b.dataset.act === 'kick') act({ t: 'kick', member: n });
-				if (b.dataset.act === 'own') act({ t: 'owner', member: n });
+				if (b.dataset.act === 'up') {
+					act({ t: 'admin', member: n, on: true });
+				}
+				if (b.dataset.act === 'down') {
+					act({ t: 'admin', member: n, on: false });
+				}
+				if (b.dataset.act === 'kick') {
+					act({ t: 'kick', member: n });
+				}
+				if (b.dataset.act === 'own') {
+					act({ t: 'owner', member: n });
+				}
 			});
-		if ($('sb-gm-rename'))
+		}
+		if ($('sb-gm-rename')) {
 			$('sb-gm-rename').addEventListener('click', () => {
 				const name = clean($('sb-gm-name').value, LIMITS.name);
-				if (name && name !== g.name) act({ t: 'rename', name });
+				if (name && name !== g.name) {
+					act({ t: 'rename', name });
+				}
 			});
-		if ($('sb-gm-open')) $('sb-gm-open').addEventListener('change', (e) => act({ t: 'open', on: e.target.checked }));
-		if ($('sb-gm-pic'))
+		}
+		if ($('sb-gm-open')) {
+			$('sb-gm-open').addEventListener('change', (e) => act({ t: 'open', on: e.target.checked }));
+		}
+		if ($('sb-gm-pic')) {
 			$('sb-gm-pic').addEventListener('click', () =>
 				pickPicture((data) => {
 					act({ t: 'gpic', pic: data });
 					notify('✓ Group picture sent');
 				}, 'Fit the group picture in the circle'),
 			);
-		if ($('sb-gm-picoff')) $('sb-gm-picoff').addEventListener('click', () => act({ t: 'gpic', pic: null }));
+		}
+		if ($('sb-gm-picoff')) {
+			$('sb-gm-picoff').addEventListener('click', () => act({ t: 'gpic', pic: null }));
+		}
 		if (invite) {
 			wireFind();
 			$('sb-gm-code').addEventListener('click', () => {
 				const want = $('sb-gm-for') ? Number($('sb-gm-for').value.replace(/\D/g, '')) : 0;
 				const forWho = isNum(want) ? want : null;
 				requestInvite(id, forWho, (code) => {
-					if (!code) return;
+					if (!code) {
+						return;
+					}
 					// Kept across redraws.
 					renderMembers.code = { id, code, forWho };
 					showCode();
@@ -3129,15 +3771,21 @@
 				$('sb-gm-add').disabled = !n;
 				capPlain(boxes(), n >= room);
 			};
-			for (const b of boxes()) b.addEventListener('change', update);
+			for (const b of boxes()) {
+				b.addEventListener('change', update);
+			}
 			$('sb-gm-add').addEventListener('click', () => {
 				const picked = boxes()
 					.filter((b) => b.checked)
 					.map((b) => Number(b.value))
 					.slice(0, room);
-				for (const n of picked) inviteFriend(id, n);
+				for (const n of picked) {
+					inviteFriend(id, n);
+				}
 				notify(`📨 ${picked.length} invite${picked.length === 1 ? '' : 's'} sent`);
-				for (const b of boxes()) b.checked = false;
+				for (const b of boxes()) {
+					b.checked = false;
+				}
 				update();
 			});
 		}
@@ -3152,10 +3800,14 @@
 			thread = null;
 			return render();
 		}
-		if (renderMembers.open === id) return renderMembers(id);
+		if (renderMembers.open === id) {
+			return renderMembers(id);
+		}
 		const view = $('sb-view');
 		const msgs = hist.filter((h) => h.group === id).sort((a, b) => a.Time - b.Time);
-		for (const h of msgs) markRead(h);
+		for (const h of msgs) {
+			markRead(h);
+		}
 		const old = $('sb-msgs');
 		const atBottom = !old || old.scrollHeight - old.scrollTop - old.clientHeight < 40;
 		const draft = $('sb-text') ? $('sb-text').value : '';
@@ -3184,7 +3836,9 @@
 				<button id="sb-send" title="Send (Enter)">➤</button>
 			</div>`;
 		const box = $('sb-msgs');
-		if (!keepScroll || atBottom) box.scrollTop = box.scrollHeight;
+		if (!keepScroll || atBottom) {
+			box.scrollTop = box.scrollHeight;
+		}
 		const ta = $('sb-text');
 		ta.value = draft;
 		$('sb-back').addEventListener('click', () => {
@@ -3205,7 +3859,9 @@
 				return;
 			}
 			const text = clean(typed, LIMITS.text);
-			if (!text) return;
+			if (!text) {
+				return;
+			}
 			closeEmoji();
 			sendGroup(id, text);
 			ta.value = '';
@@ -3217,7 +3873,9 @@
 				send();
 			}
 		});
-		if (mayFocus) ta.focus();
+		if (mayFocus) {
+			ta.focus();
+		}
 	}
 
 	/** Rows of the 💖 tab: online friends, then offline ones greyed out, filtered by `q`. */
@@ -3228,7 +3886,7 @@
 			.sort((a, b) => a.MemberName.localeCompare(b.MemberName))
 			.map(
 				(f) => `<div class="sb-row" data-open="${f.MemberNumber}">${avatar(f.MemberNumber, f.MemberName)}
-				<div class="sb-main"><div class="sb-name"><span class="sb-on"></span>${esc(f.MemberName)}${f.Type === 'Lover' ? ' 💞' : f.Type === 'Submissive' ? ' 🎀' : ''}${peers.has(f.MemberNumber) ? ' <span title="Has SlimeBeep">🫧</span>' : ''}</div>
+				<div class="sb-main"><div class="sb-name"><span class="sb-on"></span>${esc(f.MemberName)}${{ Lover: ' 💞', Submissive: ' 🎀' }[f.Type] || ''}${peers.has(f.MemberNumber) ? ' <span title="Has SlimeBeep">🫧</span>' : ''}</div>
 				<div class="sb-sub">${esc(where(f))}${f.ChatRoomMemberCount ? ` · ${f.ChatRoomMemberCount}/${f.ChatRoomLimit || '?'}` : ''}</div></div>
 				<div class="sb-side">#${f.MemberNumber}</div></div>`,
 			);
@@ -3250,12 +3908,16 @@
 	/** The 📍 room line under a beep (with Join), shown when the room differs from that side's previous beep. */
 	function roomLine(b, msgs, i) {
 		const room = typeof b.Message === 'string' && typeof b.ChatRoomName === 'string' ? b.ChatRoomName.trim() : '';
-		if (!room) return '';
+		if (!room) {
+			return '';
+		}
 		const prev = msgs
 			.slice(0, i)
 			.reverse()
 			.find((x) => x.Sent === b.Sent);
-		if (prev && (prev.ChatRoomName || '').trim() === room) return '';
+		if (prev && (prev.ChatRoomName || '').trim() === room) {
+			return '';
+		}
 		return `<span class="sb-room">📍 ${b.Sent ? 'invited to' : 'in'} ${esc(room)}${b.Sent ? '' : ` <button class="sb-pill sb-joinroom" data-room="${esc(room)}">Join</button>`}</span>`;
 	}
 
@@ -3265,17 +3927,28 @@
 	 * Joins a chat room like the game's chat search: leaves the current room if the game allows it now,
 	 * then sends ServerRoomJoin; the game handles the answer.
 	 */
-	async function joinRoom(name) {
-		name = String(name || '').trim();
-		if (!name || !loggedIn() || Date.now() - joiningRoom < 3000) return;
-		if (myRoom() === name) return notify(`You're already in ${name}`);
+	async function joinRoom(roomName) {
+		const name = String(roomName || '').trim();
+		if (!name || !loggedIn() || Date.now() - joiningRoom < 3000) {
+			return;
+		}
+		if (myRoom() === name) {
+			return notify(`You're already in ${name}`);
+		}
 		const inRoom = typeof ChatRoomData !== 'undefined' && ChatRoomData;
 		if (inRoom) {
-			if (typeof CurrentScreen !== 'undefined' && CurrentScreen !== 'ChatRoom') return notify('Go back to your room first, then join');
-			if (typeof ChatRoomCanLeave === 'function' && !ChatRoomCanLeave()) return notify("You can't leave this room right now");
-			if (typeof Player.IsSlow === 'function' && Player.IsSlow()) return notify("You're too slow to just walk out: leave the room first");
-			if (typeof ChatRoomLeave !== 'function' || typeof CommonSetScreen !== 'function')
+			if (typeof CurrentScreen !== 'undefined' && CurrentScreen !== 'ChatRoom') {
+				return notify('Go back to your room first, then join');
+			}
+			if (typeof ChatRoomCanLeave === 'function' && !ChatRoomCanLeave()) {
+				return notify("You can't leave this room right now");
+			}
+			if (typeof Player.IsSlow === 'function' && Player.IsSlow()) {
+				return notify("You're too slow to just walk out: leave the room first");
+			}
+			if (typeof ChatRoomLeave !== 'function' || typeof CommonSetScreen !== 'function') {
 				return notify('⚠ The game changed: join from the room list');
+			}
 		}
 		joiningRoom = Date.now();
 		try {
@@ -3288,7 +3961,9 @@
 				const r = await ServerRoomJoin(name);
 				// On failure, the error's name is the server's answer (RoomFull, RoomLocked, CannotFindRoom…).
 				if (r && r.error) {
-					if (typeof ChatSearchSendToast === 'function') ChatSearchSendToast(r.error.name);
+					if (typeof ChatSearchSendToast === 'function') {
+						ChatSearchSendToast(r.error.name);
+					}
 					notify(
 						`⚠ Couldn't join ${name}${
 							/^[A-Za-z]+$/.test(r.error.name || '')
@@ -3311,13 +3986,17 @@
 
 	/** Draws an open chat (one-to-one, or hands over to renderGroupThread). */
 	function renderThread(keepScroll) {
-		if (typeof thread === 'string') return renderGroupThread(keepScroll);
+		if (typeof thread === 'string') {
+			return renderGroupThread(keepScroll);
+		}
 		const mayFocus = wantsFocus();
 		const n = thread;
 		const view = $('sb-view');
 		const msgs = log().filter((b) => b.MemberNumber === n && !isReaction(b));
 		// Opening the chat marks it read (in the game's log too).
-		for (const b of msgs) markRead(b);
+		for (const b of msgs) {
+			markRead(b);
+		}
 		const f = friends.find((x) => x.MemberNumber === n);
 		const old = $('sb-msgs');
 		const atBottom = !old || old.scrollHeight - old.scrollTop - old.clientHeight < 40;
@@ -3326,23 +4005,32 @@
 		const pinOn = !!room && (renderThread.pin ?? opts.shareRoom);
 		const waitingHere = waiting.filter((w) => w.n === n);
 		const offline = isOffline(n);
+		const mailMark = (b) => {
+			if (!b.mail) {
+				return '';
+			}
+			const title = b.Sent
+				? 'Left in their SlimeBeep mailbox while they were offline'
+				: 'Left in your SlimeBeep mailbox while you were offline';
+			return `<span title="${title}">📬</span> `;
+		};
+		const uncheckedMark = (b) =>
+			b.unchecked ? '<span title="Their SlimeBeep has not told yours its key yet, so who sent this could not be checked">⚠</span> ' : '';
+		let bubbles = waitingHere.length ? '' : '<div class="sb-empty">🫧 Say hi!</div>';
+		if (msgs.length) {
+			bubbles = msgs
+				.map(
+					(b, i) =>
+						`<div class="sb-b ${b.Sent ? 'me' : 'them'}${isAction(textOf(b)) ? ' sb-act' : ''}">${rich(textOf(b))}` +
+						`${roomLine(b, msgs, i)}<em>${mailMark(b)}${uncheckedMark(b)}${timeOf(b.Time)}</em></div>`,
+				)
+				.join('');
+		}
 		view.innerHTML = `
 			<div class="sb-thead"><button id="sb-back" title="Back">‹</button>${avatar(n, nameOf(n))}
 				<div class="sb-main"><div class="sb-name">${esc(nameOf(n))} <small style="font-weight:normal;color:#c08aaa">#${n}</small></div>
 				<div class="sb-sub">${f ? '<span class="sb-on"></span>' : ''}${esc(where(f))}</div></div>${muteButton(`n:${n}`)}</div>
-			<div class="sb-msgs" id="sb-msgs">${
-				msgs.length
-					? msgs
-							.map(
-								(b, i) =>
-									`<div class="sb-b ${b.Sent ? 'me' : 'them'}${isAction(textOf(b)) ? ' sb-act' : ''}">${rich(textOf(b))}` +
-									`${roomLine(b, msgs, i)}<em>${b.mail ? `<span title="${b.Sent ? 'Left in their SlimeBeep mailbox while they were offline' : 'Left in your SlimeBeep mailbox while you were offline'}">📬</span> ` : ''}${b.unchecked ? '<span title="Their SlimeBeep has not told yours its key yet, so who sent this could not be checked">⚠</span> ' : ''}${timeOf(b.Time)}</em></div>`,
-							)
-							.join('')
-					: waitingHere.length
-						? ''
-						: '<div class="sb-empty">🫧 Say hi!</div>'
-			}${waitingHere.map((w) => `<div class="sb-b me sb-wait">${esc(w.text)}<em>⏳ sends when they're online · <a href="#" data-cancel="${esc(w.id)}">cancel</a></em></div>`).join('')}</div>
+			<div class="sb-msgs" id="sb-msgs">${bubbles}${waitingHere.map((w) => `<div class="sb-b me sb-wait">${esc(w.text)}<em>⏳ sends when they're online · <a href="#" data-cancel="${esc(w.id)}">cancel</a></em></div>`).join('')}</div>
 			<div class="sb-compose">
 				<button class="pin ${pinOn ? 'on' : ''}" id="sb-pin" ${room ? '' : 'disabled'} title="${room ? `Let them join me: adds a button to join you in "${esc(room)}"` : "You're not in a chat room"}">📍</button>
 				<button class="pin" id="sb-emo" title="Emoji">😊</button>
@@ -3350,7 +4038,9 @@
 				<button id="sb-send" title="Send (Enter)">➤</button>
 			</div>`;
 		const box = $('sb-msgs');
-		if (!keepScroll || atBottom) box.scrollTop = box.scrollHeight;
+		if (!keepScroll || atBottom) {
+			box.scrollTop = box.scrollHeight;
+		}
 		const ta = $('sb-text');
 		ta.value = draft;
 		$('sb-back').addEventListener('click', () => {
@@ -3363,18 +4053,20 @@
 			render(true);
 		});
 		$('sb-mute').addEventListener('click', () => toggleMute(`n:${n}`, nameOf(n)));
-		for (const b of view.querySelectorAll('.sb-joinroom'))
+		for (const b of view.querySelectorAll('.sb-joinroom')) {
 			b.addEventListener('click', (e) => {
 				e.preventDefault();
 				joinRoom(b.dataset.room);
 			});
-		for (const a of view.querySelectorAll('[data-cancel]'))
+		}
+		for (const a of view.querySelectorAll('[data-cancel]')) {
 			a.addEventListener('click', (e) => {
 				e.preventDefault();
 				waiting = waiting.filter((w) => w.id !== a.dataset.cancel);
 				saveWaiting();
 				render(true);
 			});
+		}
 		$('sb-emo').addEventListener('click', () => toggleEmoji());
 		const send = () => {
 			const typed = command(ta.value);
@@ -3383,7 +4075,9 @@
 				return;
 			}
 			const text = typed.trim();
-			if (!text) return;
+			if (!text) {
+				return;
+			}
 			closeEmoji();
 			if (isOffline(n)) {
 				queueBeep(n, text);
@@ -3407,14 +4101,18 @@
 				send();
 			}
 		});
-		if (mayFocus) ta.focus();
+		if (mayFocus) {
+			ta.focus();
+		}
 	}
 
 	/** Whether a friend is known to be offline. */
 	const isOffline = (n) => friendsKnown && isFriend(n) && !friends.some((f) => f.MemberNumber === n);
 	/** Adds a beep for an offline friend to `waiting` and tries their mailbox. */
 	function queueBeep(n, text) {
-		if (waiting.length >= 100) return notify('⚠ Too many beeps waiting already');
+		if (waiting.length >= 100) {
+			return notify('⚠ Too many beeps waiting already');
+		}
 		waiting.push({ id: newId(), n, text: text.slice(0, 1000), at: Date.now() });
 		saveWaiting();
 		notify(`⏳ ${nameOf(n)} is offline: it goes out when they're back`);
@@ -3424,22 +4122,32 @@
 	let sendingWaiting = false;
 	/** Sends the `waiting` beeps whose friend is now online, opts.gap seconds apart. */
 	async function sendWaiting() {
-		if (sendingWaiting || !waiting.length || !loggedIn()) return;
+		if (sendingWaiting || !waiting.length || !loggedIn()) {
+			return;
+		}
 		const ready = waiting.filter((w) => friends.some((f) => f.MemberNumber === w.n));
-		if (!ready.length) return;
+		if (!ready.length) {
+			return;
+		}
 		sendingWaiting = true;
 		try {
 			for (const [i, w] of ready.entries()) {
-				if (!waiting.includes(w)) continue; // cancelled meanwhile
+				if (!waiting.includes(w)) {
+					continue;
+				} // cancelled meanwhile
 				beep(w.n, w.text, false);
 				waiting = waiting.filter((x) => x !== w);
 				saveWaiting();
-				if (i < ready.length - 1) await new Promise((r) => setTimeout(r, opts.gap * 1000));
+				if (i < ready.length - 1) {
+					await new Promise((r) => setTimeout(r, opts.gap * 1000));
+				}
 			}
 			sync();
 			const names = [...new Set(ready.map((w) => nameOf(w.n)))];
 			notify(`📨 Waiting beep${ready.length === 1 ? '' : 's'} sent to ${names.join(', ')}`);
-			if (isOpen()) render(true);
+			if (isOpen()) {
+				render(true);
+			}
 		} finally {
 			sendingWaiting = false;
 		}
@@ -3461,11 +4169,15 @@
 	/** Closes the emoji picker. */
 	function closeEmoji() {
 		const el = $('sb-emoji');
-		if (el) el.remove();
+		if (el) {
+			el.remove();
+		}
 	}
 	/** Opens or closes the emoji picker. */
 	function toggleEmoji() {
-		if ($('sb-emoji')) return closeEmoji();
+		if ($('sb-emoji')) {
+			return closeEmoji();
+		}
 		const box = document.createElement('div');
 		box.id = 'sb-emoji';
 		emojiTab = null; // opens on 🕘 when there are any
@@ -3475,31 +4187,43 @@
 	/** Draws the picker; a click inserts the emoji at the cursor. */
 	function drawEmoji() {
 		const box = $('sb-emoji');
-		if (!box) return;
-		const recent = loadRecent();
-		const tabs = [...(recent.length ? ['🕘'] : []), ...Object.keys(EMOJI)];
-		if (!tabs.includes(emojiTab)) emojiTab = tabs[0];
-		const list = emojiTab === '🕘' ? recent : EMOJI[emojiTab].split(' ');
+		if (!box) {
+			return;
+		}
+		const recentEmoji = loadRecent();
+		const tabs = [...(recentEmoji.length ? ['🕘'] : []), ...Object.keys(EMOJI)];
+		if (!tabs.includes(emojiTab)) {
+			emojiTab = tabs[0];
+		}
+		const list = emojiTab === '🕘' ? recentEmoji : EMOJI[emojiTab].split(' ');
 		box.innerHTML = `<div class="sb-emo-tabs">${tabs.map((t) => `<button data-etab="${t}" class="${t === emojiTab ? 'on' : ''}">${t}</button>`).join('')}<button data-eclose="1" title="Close">✕</button></div>
 			<div class="sb-emo-grid">${list.map((e) => `<button data-emo="${esc(e)}">${esc(e)}</button>`).join('')}</div>`;
 		box.onclick = (ev) => {
 			const b = ev.target.closest('button');
-			if (!b) return;
-			if (b.dataset.eclose) return closeEmoji();
+			if (!b) {
+				return;
+			}
+			if (b.dataset.eclose) {
+				return closeEmoji();
+			}
 			if (b.dataset.etab) {
 				emojiTab = b.dataset.etab;
 				return drawEmoji();
 			}
 			const e = b.dataset.emo;
 			const ta = $('sb-text');
-			if (!e || !ta) return;
+			if (!e || !ta) {
+				return;
+			}
 			const at = ta.selectionStart ?? ta.value.length,
 				end = ta.selectionEnd ?? at;
-			if (ta.value.length + e.length > Number(ta.maxLength || 1000)) return;
+			if (ta.value.length + e.length > Number(ta.maxLength || 1000)) {
+				return;
+			}
 			ta.value = ta.value.slice(0, at) + e + ta.value.slice(end);
 			ta.selectionStart = ta.selectionEnd = at + e.length;
 			ta.focus();
-			setOpt('recentEmoji', [e, ...recent.filter((x) => x !== e)].slice(0, 24));
+			setOpt('recentEmoji', [e, ...recentEmoji.filter((x) => x !== e)].slice(0, 24));
 		};
 	}
 
@@ -3518,8 +4242,12 @@
 	 */
 	function command(raw) {
 		const text = String(raw || '').trim();
-		if (!text.startsWith('/')) return raw;
-		if (text.startsWith('//')) return text.slice(1);
+		if (!text.startsWith('/')) {
+			return raw;
+		}
+		if (text.startsWith('//')) {
+			return text.slice(1);
+		}
 		const m = /^\/(\w+)\s*([\s\S]*)$/.exec(text);
 		const name = m ? m[1].toLowerCase() : '',
 			rest = m ? m[2].trim() : '';
@@ -3554,7 +4282,9 @@
 	}
 	/** Shows the /help box in the panel. */
 	function showHelp() {
-		if ($('sb-ask')) return;
+		if ($('sb-ask')) {
+			return;
+		}
 		const box = document.createElement('div');
 		box.id = 'sb-ask';
 		box.innerHTML = `<div class="sb-crop-card" style="align-items:stretch">
@@ -3566,7 +4296,9 @@
 		const close = () => {
 			box.remove();
 			document.removeEventListener('keydown', onKey, true);
-			if ($('sb-text')) $('sb-text').focus();
+			if ($('sb-text')) {
+				$('sb-text').focus();
+			}
 		};
 		const onKey = (e) => {
 			if (e.key === 'Escape') {
@@ -3575,7 +4307,9 @@
 			}
 		};
 		box.addEventListener('click', (e) => {
-			if (e.target === box || (e.target.dataset && e.target.dataset.act === 'keep')) close();
+			if (e.target === box || (e.target.dataset && e.target.dataset.act === 'keep')) {
+				close();
+			}
 		});
 		document.addEventListener('keydown', onKey, true);
 		$('sb-panel').appendChild(box);
@@ -3590,14 +4324,20 @@
 	function wantsFocus() {
 		const a = document.activeElement,
 			panel = $('sb-panel');
-		if (a && a !== document.body && panel && panel.contains(a)) return true;
-		if (a && a !== document.body) return false; // focus is elsewhere, e.g. the game's chat
+		if (a && a !== document.body && panel && panel.contains(a)) {
+			return true;
+		}
+		if (a && a !== document.body) {
+			return false;
+		} // focus is elsewhere, e.g. the game's chat
 		return Date.now() - lastPanelTouch < 1500;
 	}
 
 	/** Shows a short toast by the toggle. */
 	function notify(text) {
-		if (stopped) return;
+		if (stopped) {
+			return;
+		}
 		const t = $('sb-toast'),
 			s = $('sb-toggle');
 		t.textContent = text;
@@ -3614,12 +4354,17 @@
 
 	/** Sends a beep with the game's own ServerSendBeepMessage (its format, limits and beep log); `includeRoom` adds your room. */
 	function beep(n, text, includeRoom) {
-		if (stopped) return;
+		if (stopped) {
+			return;
+		}
 		try {
-			if (typeof ServerSendBeepMessage === 'function') ServerSendBeepMessage(n, text, { includeRoom });
-			else if (typeof ServerSend === 'function')
+			if (typeof ServerSendBeepMessage === 'function') {
+				ServerSendBeepMessage(n, text, { includeRoom });
+			} else if (typeof ServerSend === 'function') {
 				ServerSend('AccountBeep', { MemberNumber: n, BeepType: '', IsSecret: !includeRoom, Message: text });
-			else throw new Error('the game has no beep sender any more');
+			} else {
+				throw new Error('the game has no beep sender any more');
+			}
 		} catch (e) {
 			warn(e, 'beep');
 			notify('⚠ That beep could not be sent');
@@ -3668,22 +4413,31 @@
 			$('sb-gcount').textContent = `${n} picked of ${friends.length} online`;
 			$('sb-gsend').disabled = sending || n === 0;
 		};
-		for (const b of boxes()) b.addEventListener('change', count);
+		for (const b of boxes()) {
+			b.addEventListener('change', count);
+		}
 		$('sb-all').addEventListener('click', () => {
-			for (const b of boxes()) b.checked = true;
+			for (const b of boxes()) {
+				b.checked = true;
+			}
 			count();
 		});
 		$('sb-none').addEventListener('click', () => {
-			for (const b of boxes()) b.checked = false;
+			for (const b of boxes()) {
+				b.checked = false;
+			}
 			count();
 		});
 		// 📍 My room: ticks only the friends in your room.
-		if ($('sb-myroom'))
+		if ($('sb-myroom')) {
 			$('sb-myroom').addEventListener('click', () => {
 				const here = new Set(friends.filter((f) => f.ChatRoomName && f.ChatRoomName === myRoom()).map((f) => f.MemberNumber));
-				for (const b of boxes()) b.checked = here.has(Number(b.value));
+				for (const b of boxes()) {
+					b.checked = here.has(Number(b.value));
+				}
 				count();
 			});
+		}
 		$('sb-gmsg').addEventListener('input', (e) => {
 			groupHtml.draft = e.target.value;
 		});
@@ -3695,10 +4449,16 @@
 			const targets = chosen();
 			const status = (t) => {
 				const s = $('sb-gstatus');
-				if (s) s.textContent = t;
+				if (s) {
+					s.textContent = t;
+				}
 			};
-			if (!msg) return status('Write a message first.');
-			if (!targets.length || sending) return;
+			if (!msg) {
+				return status('Write a message first.');
+			}
+			if (!targets.length || sending) {
+				return;
+			}
 			sending = true;
 			$('sb-gsend').disabled = true;
 			const includeRoom = $('sb-groom').checked && !!myRoom();
@@ -3707,14 +4467,20 @@
 				beep(n, msg, includeRoom);
 				done += 1;
 				status(`🌊 Sending… ${done} / ${targets.length} (${nameOf(n)})`);
-				if (done < targets.length) await new Promise((r) => setTimeout(r, opts.gap * 1000));
+				if (done < targets.length) {
+					await new Promise((r) => setTimeout(r, opts.gap * 1000));
+				}
 			}
 			sending = false;
 			groupHtml.draft = '';
-			if ($('sb-gmsg')) $('sb-gmsg').value = '';
+			if ($('sb-gmsg')) {
+				$('sb-gmsg').value = '';
+			}
 			status(`✨ Done: beeped ${done} friend${done === 1 ? '' : 's'}.`);
 			notify(`✓ Beep sent to ${done === 1 ? nameOf(targets[0]) : `${done} friends`}`);
-			if ($('sb-gsend')) count();
+			if ($('sb-gsend')) {
+				count();
+			}
 		});
 		count();
 	}
@@ -3724,8 +4490,12 @@
 	 * own checkbox and button helpers. Same options as the ⚙ tab.
 	 */
 	function registerSettings() {
-		if (typeof PreferenceRegisterExtensionSetting !== 'function') return;
-		if (typeof PreferenceExtensionsSettings === 'object' && PreferenceExtensionsSettings && PreferenceExtensionsSettings.SlimeBeep) return;
+		if (typeof PreferenceRegisterExtensionSetting !== 'function') {
+			return;
+		}
+		if (typeof PreferenceExtensionsSettings === 'object' && PreferenceExtensionsSettings && PreferenceExtensionsSettings.SlimeBeep) {
+			return;
+		}
 		const EXIT = [1815, 75, 90, 90];
 		const LEFT = 500,
 			TOP = 190,
@@ -3750,7 +4520,9 @@
 				() => opts.remember,
 				(on) => {
 					setOpt('remember', on);
-					if (!on) setOpt('picked', []);
+					if (!on) {
+						setOpt('picked', []);
+					}
 				},
 			],
 			['keep', 'Keep my beeps in this browser after I log out', () => opts.keep, (on) => setKeep(on)],
@@ -3781,7 +4553,9 @@
 				// Leaves the panel's ⚙ tab so both don't show the same options.
 				if (tab === 'options') {
 					tab = 'chats';
-					if (isOpen()) render();
+					if (isOpen()) {
+						render();
+					}
 				}
 			},
 			run: () => {
@@ -3807,33 +4581,51 @@
 					DrawButton(...CLEAR, `Clear kept beeps (${hist.length})`, 'White');
 					DrawButton(...PIC, myPfp() ? 'Change profile picture' : 'Choose profile picture', 'White');
 					drawMyPic(PIC[0] - 90, PIC[1], 64);
-					if (myPfp()) DrawButton(...NOPIC, 'Remove profile picture', 'White');
+					if (myPfp()) {
+						DrawButton(...NOPIC, 'Remove profile picture', 'White');
+					}
 					DrawButton(...EXIT, '', 'White', 'Icons/Exit.png');
 				} catch (e) {
 					// Never throw inside the game's draw loop.
 				} finally {
-					if (typeof MainCanvas !== 'undefined' && MainCanvas) MainCanvas.textAlign = 'center';
+					if (typeof MainCanvas !== 'undefined' && MainCanvas) {
+						MainCanvas.textAlign = 'center';
+					}
 				}
 			},
 			click: () => {
 				try {
 					if (mouse(EXIT)) {
-						if (typeof PreferenceSubscreenExtensionsClear === 'function') PreferenceSubscreenExtensionsClear();
+						if (typeof PreferenceSubscreenExtensionsClear === 'function') {
+							PreferenceSubscreenExtensionsClear();
+						}
 						return;
 					}
-					if (stopped) return;
+					if (stopped) {
+						return;
+					}
 					const { MINUS, PLUS, RESET, CLEAR, PIC, NOPIC } = layout();
 					shown().forEach(([, , get, set], i) => {
-						if (mouse([LEFT, TOP + i * ROW, 64, 64])) set(!get());
+						if (mouse([LEFT, TOP + i * ROW, 64, 64])) {
+							set(!get());
+						}
 					});
-					if (mouse(MINUS)) setOpt('gap', Math.max(1, opts.gap - 0.5));
-					if (mouse(PLUS)) setOpt('gap', Math.min(10, opts.gap + 0.5));
+					if (mouse(MINUS)) {
+						setOpt('gap', Math.max(1, opts.gap - 0.5));
+					}
+					if (mouse(PLUS)) {
+						setOpt('gap', Math.min(10, opts.gap + 0.5));
+					}
 					if (mouse(RESET)) {
 						setOpt('pos', null);
 						place();
 					}
-					if (mouse(CLEAR)) clearKept();
-					if (mouse(PIC)) pickPicture();
+					if (mouse(CLEAR)) {
+						clearKept();
+					}
+					if (mouse(PIC)) {
+						pickPicture();
+					}
 					if (myPfp() && mouse(NOPIC)) {
 						setOpt('pfp', null);
 						try {
@@ -3869,19 +4661,23 @@
 			}
 		}
 		const box = $('sb-o-desktop');
-		if (box) box.checked = opts.desktop;
+		if (box) {
+			box.checked = opts.desktop;
+		}
 	}
 
 	/** Turns saving of chat history on or off. */
 	function setKeep(on) {
 		setOpt('keep', !!on);
-		if (opts.keep) saveHistory();
-		else
+		if (opts.keep) {
+			saveHistory();
+		} else {
 			try {
 				localStorage.removeItem(histKey());
 			} catch (err) {
 				/* nothing kept anyway */
 			}
+		}
 	}
 
 	/** Deletes the saved history (this session's beeps stay, the game still has them). */
@@ -3893,9 +4689,13 @@
 		}
 		hist = hist.filter((h) => live.has(h.k));
 		histKeys.clear();
-		for (const h of hist) histKeys.add(h.k);
+		for (const h of hist) {
+			histKeys.add(h.k);
+		}
 		saveHistory();
-		if (isOpen()) render();
+		if (isOpen()) {
+			render();
+		}
 	}
 
 	/** Supported theme add-ons: [id, name, probe returning one of its CSS variables]. */
@@ -3907,7 +4707,9 @@
 	function themeSource() {
 		for (const [id, name, probe] of THEME_SOURCES) {
 			try {
-				if (String(probe() || '').trim()) return { id, name };
+				if (String(probe() || '').trim()) {
+					return { id, name };
+				}
 			} catch (e) {
 				/* not this one */
 			}
@@ -3919,7 +4721,9 @@
 		const src = opts.themed ? themeSource() : null;
 		const root = document.documentElement;
 		root.classList.toggle('sb-themed', !!src);
-		for (const [id] of THEME_SOURCES) root.classList.toggle(`sb-theme-${id}`, !!src && src.id === id);
+		for (const [id] of THEME_SOURCES) {
+			root.classList.toggle(`sb-theme-${id}`, !!src && src.id === id);
+		}
 		return src;
 	}
 	/** Turns theme matching on or off. */
@@ -3939,7 +4743,9 @@
 			moon.title = opts.night ? 'Day mode' : 'Night mode';
 		}
 		const box = $('sb-o-night');
-		if (box) box.checked = opts.night;
+		if (box) {
+			box.checked = opts.night;
+		}
 	}
 
 	/** Member number that 🐞 reports can be beeped to (SlimeQueenSamantha). */
@@ -4014,9 +4820,13 @@
 		};
 		const status = (t) => {
 			const x = $('sb-bug-status');
-			if (x) x.textContent = t;
+			if (x) {
+				x.textContent = t;
+			}
 		};
-		for (const id of ['sb-bug-what', 'sb-bug-how']) $(id).addEventListener('input', keep);
+		for (const id of ['sb-bug-what', 'sb-bug-how']) {
+			$(id).addEventListener('input', keep);
+		}
 		$('sb-bug-num').addEventListener('change', () => {
 			keep();
 			$('sb-bug-details').textContent = details($('sb-bug-num').checked);
@@ -4032,14 +4842,18 @@
 		};
 		$('sb-bug-github').addEventListener('click', () => {
 			const r = ready();
-			if (!r) return;
+			if (!r) {
+				return;
+			}
 			const title = `Bug: ${r.what.split('\n')[0].slice(0, 70)}`;
 			window.open(`${ISSUES}?title=${encodeURIComponent(title)}&body=${encodeURIComponent(r.full)}`, '_blank', 'noopener');
 			status('Opened on GitHub: check it and press "Create" there.');
 		});
 		$('sb-bug-copy').addEventListener('click', async () => {
 			const r = ready();
-			if (!r) return;
+			if (!r) {
+				return;
+			}
 			try {
 				await navigator.clipboard.writeText(r.full);
 				status('📋 Copied. Paste it wherever you talk to SlimeQueenSamantha.');
@@ -4049,8 +4863,12 @@
 		});
 		$('sb-bug-beep').addEventListener('click', () => {
 			const r = ready();
-			if (!r) return;
-			if (!loggedIn()) return status('Log in first.');
+			if (!r) {
+				return;
+			}
+			if (!loggedIn()) {
+				return status('Log in first.');
+			}
 			// A beep holds 1000 characters: the description first, then as many details as fit.
 			const text = `🐞 SlimeBeep bug report\n${r.what}${r.how ? `\nDoing: ${r.how}` : ''}\n— ${details($('sb-bug-num').checked)}`.slice(
 				0,
@@ -4067,9 +4885,15 @@
 	let inviteFor = null;
 	/** HTML of the "Invite <member> to…" page. */
 	function inviteForHtml() {
-		if (!inviteFor) return '';
+		if (!inviteFor) {
+			return '';
+		}
 		const n = inviteFor.n;
 		const name = nameOf(n);
+		let how = `They get a code to paste in 👥 Groups, made for #${n} only.`;
+		if (isFriend(n)) {
+			how = peers.has(n) ? `${esc(name)} has SlimeBeep: they get an invite card.` : `${esc(name)} gets a beep with the code.`;
+		}
 		const list = Object.values(groups).filter((g) => canInvite(g, Player.MemberNumber));
 		const rows = list
 			.map((g) => {
@@ -4082,7 +4906,7 @@
 			})
 			.join('');
 		return `<div class="sb-line"><button class="sb-pill" id="sb-if-back">‹ Back</button><b>👥 Invite ${esc(name)}</b></div>
-			<div class="sb-hint" style="margin:2px 0 6px">${isFriend(n) ? (peers.has(n) ? `${esc(name)} has SlimeBeep: they get an invite card.` : `${esc(name)} gets a beep with the code and where to get SlimeBeep.`) : `They get a code to paste in 👥 Groups, made for #${n} only.`}</div>
+			<div class="sb-hint" style="margin:2px 0 6px">${how}</div>
 			${rows || '<div class="sb-empty">👥 No group chats you can invite to yet.</div>'}`;
 	}
 	/** Wires the "Invite <member> to…" page. */
@@ -4092,16 +4916,18 @@
 			tab = 'groups';
 			render();
 		});
-		for (const b of $('sb-body').querySelectorAll('[data-invite]'))
+		for (const b of $('sb-body').querySelectorAll('[data-invite]')) {
 			b.addEventListener('click', async () => {
 				const id = b.dataset.invite;
 				b.disabled = true;
 				const r = await inviteToGroup(id, inviteFor.n);
-				inviteFor.results[id] = r.ok
-					? r.sent
-						? '📨 Invite sent!'
-						: `Code: <code style="user-select:all">${esc(r.code)}</code> — give it to them (copied).`
-					: `⚠ ${esc(r.why)}`;
+				if (!r.ok) {
+					inviteFor.results[id] = `⚠ ${esc(r.why)}`;
+				} else if (r.sent) {
+					inviteFor.results[id] = '📨 Invite sent!';
+				} else {
+					inviteFor.results[id] = `Code: <code style="user-select:all">${esc(r.code)}</code> — give it to them (copied).`;
+				}
 				if (r.ok && !r.sent) {
 					try {
 						await navigator.clipboard.writeText(r.code);
@@ -4109,8 +4935,11 @@
 						/* shown to copy by hand */
 					}
 				}
-				if (tab === 'invitefor') render(true);
+				if (tab === 'invitefor') {
+					render(true);
+				}
 			});
+		}
 	}
 
 	/** HTML of the ⚙ tab. */
@@ -4139,13 +4968,16 @@
 			e.preventDefault();
 			pickPicture();
 		});
-		if ($('sb-o-fit'))
+		if ($('sb-o-fit')) {
 			$('sb-o-fit').addEventListener('click', (e) => {
 				e.preventDefault();
 				const src = loadSrc();
-				if (src) openCropper(src);
+				if (src) {
+					openCropper(src);
+				}
 			});
-		if ($('sb-o-nopic'))
+		}
+		if ($('sb-o-nopic')) {
 			$('sb-o-nopic').addEventListener('click', (e) => {
 				e.preventDefault();
 				setOpt('pfp', null);
@@ -4158,6 +4990,7 @@
 				notify('Profile picture removed');
 				render();
 			});
+		}
 		$('sb-o-night').addEventListener('change', (e) => setNight(e.target.checked));
 		$('sb-o-sound').addEventListener('change', (e) => setOpt('sound', e.target.checked));
 		$('sb-o-popups').addEventListener('change', (e) => setOpt('popups', e.target.checked));
@@ -4170,7 +5003,9 @@
 		$('sb-o-share').addEventListener('change', (e) => setOpt('shareRoom', e.target.checked));
 		$('sb-o-remember').addEventListener('change', (e) => {
 			setOpt('remember', e.target.checked);
-			if (!opts.remember) setOpt('picked', []);
+			if (!opts.remember) {
+				setOpt('picked', []);
+			}
 		});
 		$('sb-o-gap').addEventListener('change', (e) => {
 			setOpt('gap', Math.max(1, Math.min(10, Number(e.target.value) || DEFAULTS.gap)));
@@ -4193,7 +5028,11 @@
 	const newer = (a, b) => {
 		const x = a.split('.').map(Number),
 			y = b.split('.').map(Number);
-		for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+		for (let i = 0; i < 3; i++) {
+			if ((x[i] || 0) !== (y[i] || 0)) {
+				return (x[i] || 0) > (y[i] || 0);
+			}
+		}
 		return false;
 	};
 	/** Builds SlimeBeep. */
@@ -4204,18 +5043,23 @@
 			warn(e, 'could not start');
 		}
 	}
-	if (window.SlimeBeepHopped || LOADED_FROM.startsWith('https://proudkiller0015.github.io/slimebeep/')) start();
-	else {
+	if (window.SlimeBeepHopped || LOADED_FROM.startsWith('https://proudkiller0015.github.io/slimebeep/')) {
+		start();
+	} else {
 		const ctl = typeof AbortController === 'function' ? new AbortController() : null;
 		const timer = setTimeout(() => {
-			if (ctl) ctl.abort();
+			if (ctl) {
+				ctl.abort();
+			}
 		}, 4000);
 		fetch(`${PAGES}?t=${Date.now()}`, { cache: 'no-store', signal: ctl ? ctl.signal : undefined })
 			.then((r) => (r.ok ? r.text() : ''))
 			.then((code) => {
 				clearTimeout(timer);
 				const m = /const VERSION = '(\d+\.\d+\.\d+)'/.exec(code);
-				if (!m || !newer(m[1], VERSION)) return start();
+				if (!m || !newer(m[1], VERSION)) {
+					return start();
+				}
 				// Run the newer copy instead of this one.
 				window.SlimeBeepHopped = true;
 				delete window.SlimeBeep;

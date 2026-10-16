@@ -1,12 +1,19 @@
 // Headless test: stubs the game's socket, beep log and beep sender, drives the real panel.
 //   node test.js [--shots]   (--shots saves a picture of each view next to this folder)
 const puppeteer = require('C:/Users/Sam_0/Documents/Project/bc-plushies/node_modules/puppeteer-core');
-const src = require('fs').readFileSync(__dirname + '/slimebeep.js', 'utf8');
+const src = require('fs').readFileSync(`${__dirname}/slimebeep.js`, 'utf8');
 const SHOTS = process.argv.includes('--shots');
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 // Other SlimeBeep users, played from here against the relay.
 const RELAY_URL = process.env.RELAY || 'ws://localhost:8787';
 const b64url = (buf) => Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+/** The messages in a relay reply: one for 'msg', all of a 'history', none otherwise. */
+const messagesOf = (x) => {
+	if (x.t === 'msg') {
+		return [x.m];
+	}
+	return x.t === 'history' ? x.msgs : [];
+};
 async function relayUser(member, name) {
 	const k = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
 	const jwk = await crypto.subtle.exportKey('jwk', k.publicKey);
@@ -38,14 +45,16 @@ async function relayJoin(gid, who, fields = {}) {
 	c.send = (x) => ws.send(JSON.stringify(x));
 	c.say = (text) => c.send({ t: 'say', text });
 	c.last = (t) => [...c.got].reverse().find((x) => x.t === t);
-	c.texts = () => c.got.flatMap((x) => (x.t === 'msg' ? [x.m] : x.t === 'history' ? x.msgs : [])).map((m) => m.text);
+	c.texts = () => c.got.flatMap(messagesOf).map((m) => m.text);
 	c.welcome = c.last('welcome');
 	return c;
 }
 const waitFor = async (fn, ms) => {
 	const end = Date.now() + ms;
 	while (Date.now() < end) {
-		if (await fn()) return true;
+		if (await fn()) {
+			return true;
+		}
 		await new Promise((r) => setTimeout(r, 150));
 	}
 	return false;
@@ -53,7 +62,9 @@ const waitFor = async (fn, ms) => {
 let failed = 0;
 const check = (ok, what) => {
 	console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`);
-	if (!ok) failed++;
+	if (!ok) {
+		failed++;
+	}
 };
 
 (async () => {
@@ -70,17 +81,20 @@ const check = (ok, what) => {
 	// What GitHub Pages answers for slimebeep.js (null: not found, so the copy under test just starts).
 	let pagesBody = null;
 	await p.setRequestInterception(true);
-	p.on('request', (r) =>
-		r.url().includes('github.io/slimebeep/slimebeep.js')
-			? r.respond(
-					pagesBody
-						? { status: 200, contentType: 'application/javascript', headers: { 'Access-Control-Allow-Origin': '*' }, body: pagesBody }
-						: { status: 404, headers: { 'Access-Control-Allow-Origin': '*' }, body: '' },
-				)
-			: r.url().includes('/news.json')
-				? r.respond({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: newsBody })
-				: r.continue(),
-	);
+	// GitHub Pages (slimebeep.js, news.json) is served from the test; everything else goes through.
+	const cors = { 'Access-Control-Allow-Origin': '*' };
+	p.on('request', (r) => {
+		if (r.url().includes('github.io/slimebeep/slimebeep.js')) {
+			if (!pagesBody) {
+				return r.respond({ status: 404, headers: cors, body: '' });
+			}
+			return r.respond({ status: 200, contentType: 'application/javascript', headers: cors, body: pagesBody });
+		}
+		if (r.url().includes('/news.json')) {
+			return r.respond({ status: 200, contentType: 'application/json', headers: cors, body: newsBody });
+		}
+		return r.continue();
+	});
 	await p.goto('https://example.com/');
 	const stub = () => {
 		// The game's own rule for every canvas (CSS/Styles.css), which SlimeBeep's canvases must survive.
@@ -110,11 +124,11 @@ const check = (ok, what) => {
 		};
 		const t = (min) => new Date(Date.now() - min * 60000);
 		window.FriendListBeepLog = [
-			{ MemberNumber: 11, MemberName: 'Ann', Sent: false, Read: true, Time: t(50), Message: 'hiii\n' + SEP + '{"messageType":"Message"}' },
+			{ MemberNumber: 11, MemberName: 'Ann', Sent: false, Read: true, Time: t(50), Message: `hiii\n${SEP}{"messageType":"Message"}` },
 			{ MemberNumber: 11, MemberName: 'Ann', Sent: true, Read: true, Time: t(45), Message: 'hey Ann <3' },
 			{ MemberNumber: 13, MemberName: 'Cat', Sent: false, Read: false, Time: t(5), Message: 'come to my room!', ChatRoomName: 'Cat Cafe' },
 			{ MemberNumber: 13, MemberName: 'Cat', Sent: false, Read: false, Time: t(4), Message: '<b>not bold</b>' },
-			{ MemberNumber: 12, MemberName: 'Bea', Sent: false, Read: false, Time: t(3), Message: '👍\n' + SEP + '{"messageType":"Reaction"}' },
+			{ MemberNumber: 12, MemberName: 'Bea', Sent: false, Read: false, Time: t(3), Message: `👍\n${SEP}{"messageType":"Reaction"}` },
 		];
 		window.beeps = [];
 		// Like socket.io: event listeners plus catch-all ones, which an add-on can clear.
@@ -148,8 +162,10 @@ const check = (ok, what) => {
 		};
 		window.hidden = [];
 		window.ServerSend = (ev, data) => {
-			if (ev === 'AccountBeep') hidden.push(data);
-			if (ev === 'AccountQuery')
+			if (ev === 'AccountBeep') {
+				hidden.push(data);
+			}
+			if (ev === 'AccountQuery') {
 				setTimeout(
 					() =>
 						fire('AccountQueryResult', {
@@ -169,6 +185,7 @@ const check = (ok, what) => {
 						}),
 					30,
 				);
+			}
 		};
 		window.ServerSendBeepMessage = (n, m, o) => {
 			beeps.push([n, m, o.includeRoom]);
@@ -204,7 +221,9 @@ const check = (ok, what) => {
 		};
 		window.PreferenceExtensionsSettings = {};
 		window.PreferenceRegisterExtensionSetting = (x) => {
-			if (PreferenceExtensionsSettings[x.Identifier]) throw new Error('twice');
+			if (PreferenceExtensionsSettings[x.Identifier]) {
+				throw new Error('twice');
+			}
 			PreferenceExtensionsSettings[x.Identifier] = x;
 		};
 		window.cleared = 0;
@@ -268,14 +287,17 @@ const check = (ok, what) => {
 						return true;
 					})
 					.catch(() => false)
-			)
+			) {
 				return;
+			}
 			await wait(100);
 		}
 		throw new Error(`no ${sel}`);
 	};
 	const shot = async (name) => {
-		if (SHOTS) await p.screenshot({ path: `${__dirname}/../sb-${name}.png` });
+		if (SHOTS) {
+			await p.screenshot({ path: `${__dirname}/../sb-${name}.png` });
+		}
 	};
 	await p.evaluate(stub);
 	await p.addScriptTag({ content: src });
@@ -312,12 +334,12 @@ const check = (ok, what) => {
 		await p.evaluate(() => {
 			const ys = [];
 			const real = DrawButton;
-			DrawButton = (l, tp, w, h, ...r) => {
+			window.DrawButton = (l, tp, w, h, ...r) => {
 				ys.push(tp + h);
 				return real(l, tp, w, h, ...r);
 			};
 			PreferenceExtensionsSettings.SlimeBeep.run();
-			DrawButton = real;
+			window.DrawButton = real;
 			return Math.max(...ys) <= 1000;
 		}),
 		'everything on the settings page fits the game screen',
@@ -351,7 +373,7 @@ const check = (ok, what) => {
 	await p.click('#sb-toggle');
 	await wait(200);
 	const chats = await p.$$eval('#sb-body .sb-row', (rows) =>
-		rows.map((r) => r.querySelector('.sb-name').textContent + '|' + r.querySelector('.sb-sub').textContent),
+		rows.map((r) => `${r.querySelector('.sb-name').textContent}|${r.querySelector('.sb-sub').textContent}`),
 	);
 	check(
 		chats.length === 2 && /Cat/.test(chats[0]) && /Ann/.test(chats[1]),
@@ -363,7 +385,7 @@ const check = (ok, what) => {
 
 	await p.click('#sb-body .sb-row');
 	await wait(200);
-	const bubbles = await p.$$eval('.sb-b', (e) => e.map((x) => x.className + ':' + x.firstChild.textContent));
+	const bubbles = await p.$$eval('.sb-b', (e) => e.map((x) => `${x.className}:${x.firstChild.textContent}`));
 	check(bubbles.length === 2 && bubbles[1].includes('<b>not bold</b>'), 'opening Cat shows her beeps, HTML shown as text');
 	check(await p.$eval('.sb-room', (e) => e.textContent).then((t) => /Cat Cafe/.test(t)), 'her room invite shows under the bubble');
 	await wait(1100);
@@ -375,7 +397,7 @@ const check = (ok, what) => {
 	check((await p.$$eval('.sb-b.me', (e) => e.length)) === 1, 'and it shows as my bubble');
 	check(
 		await p.$eval('#sb-toast', (e) => e.classList.contains('show') && e.textContent),
-		'and a toast says so: ' + (await p.$eval('#sb-toast', (e) => e.textContent)),
+		`and a toast says so: ${await p.$eval('#sb-toast', (e) => e.textContent)}`,
 	);
 	check((await p.evaluate(() => gameKeys())) === 0, 'typing never reached the game');
 	await shot('thread');
@@ -456,8 +478,9 @@ const check = (ok, what) => {
 			Message: 'KIKILINK/1 {"t":"pq","i":"x"}',
 		});
 		FriendListBeepLog.push({ MemberNumber: 13, MemberName: 'Cat', Sent: false, Read: false, Time: new Date(), Message: 'lol {hug}' });
-		for (const m of ['<3', 'hi', 'HiHi', '[3]', '{}', 'LoveYou'])
+		for (const m of ['<3', 'hi', 'HiHi', '[3]', '{}', 'LoveYou']) {
 			FriendListBeepLog.push({ MemberNumber: 13, MemberName: 'Cat', Sent: false, Read: false, Time: new Date(), Message: m });
+		}
 	});
 	await wait(2200);
 	await tap('#sb-back');
@@ -504,7 +527,7 @@ const check = (ok, what) => {
 	});
 	await wait(2200);
 	const rows = await p.$$eval('#sb-body .sb-row', (e) =>
-		e.map((x) => x.querySelector('.sb-name').textContent + ':' + x.querySelector('.sb-sub').textContent),
+		e.map((x) => `${x.querySelector('.sb-name').textContent}:${x.querySelector('.sb-sub').textContent}`),
 	);
 	check(
 		rows.some((r) => /Dee:beep$/.test(r)),
@@ -630,7 +653,7 @@ const check = (ok, what) => {
 	await wait(400);
 	check((await p.evaluate(() => hidden.length)) === 1, 'but only once a minute, so nobody can bounce beeps off you');
 	// ---- Group chats through the relay (cd relay && npm run dev:test), friends or not.
-	const relayUp = await fetch(RELAY_URL.replace(/^ws/, 'http') + '/')
+	const relayUp = await fetch(`${RELAY_URL.replace(/^ws/, 'http')}/`)
 		.then((r) => r.ok)
 		.catch(() => false);
 	if (!relayUp) {
@@ -702,9 +725,15 @@ const check = (ok, what) => {
 			const times = [];
 			let seen = beeps.length;
 			const watch = setInterval(() => {
-				for (; seen < beeps.length; seen++) if (/Group code/.test(beeps[seen][1])) times.push(Date.now());
+				for (; seen < beeps.length; seen++) {
+					if (/Group code/.test(beeps[seen][1])) {
+						times.push(Date.now());
+					}
+				}
 			}, 50);
-			for (const n of [14, 12, 14]) out.push((await SlimeBeep.api.inviteToGroup(g, n)).sent);
+			for (const n of [14, 12, 14]) {
+				out.push((await SlimeBeep.api.inviteToGroup(g, n)).sent);
+			}
 			await new Promise((r) => setTimeout(r, 7000));
 			clearInterval(watch);
 			return { out, gaps: times.slice(1).map((t, i) => t - times[i]) };
@@ -938,7 +967,9 @@ const check = (ok, what) => {
 			'clicking it opens the group in SlimeBeep',
 		);
 		await p.evaluate(() => {
-			for (const x of document.querySelectorAll('#TextAreaChatLog .sb-t')) x.remove();
+			for (const x of document.querySelectorAll('#TextAreaChatLog .sb-t')) {
+				x.remove();
+			}
 			document.getElementById('TextAreaChatLog').style.display = 'none';
 		});
 		await tap('#sb-back');
@@ -1004,15 +1035,17 @@ const check = (ok, what) => {
 				['--bcn-border', '#ddaa77'],
 				['--bcn-text', '#332211'],
 				['--bcn-muted', '#776655'],
-			])
+			]) {
 				document.body.style.setProperty(k, v);
+			}
 			await new Promise((res) => setTimeout(res, 6000));
 			out.nekoLabel = /Match my BCNeko colours/.test(settingsTexts());
 			out.nekoBg = getComputedStyle(document.getElementById('sb-panel')).backgroundColor;
 			out.off = SlimeBeep.api.matchTheme(false);
 			out.offBg = getComputedStyle(document.getElementById('sb-panel')).backgroundColor;
-			for (const k of ['--bcn-panel', '--bcn-soft', '--bcn-accent', '--bcn-border', '--bcn-text', '--bcn-muted'])
+			for (const k of ['--bcn-panel', '--bcn-soft', '--bcn-accent', '--bcn-border', '--bcn-text', '--bcn-muted']) {
 				document.body.style.removeProperty(k);
+			}
 			return out;
 		});
 		check(r.start.on === false && r.start.source === null, `off by default, and no theme add-on found (${JSON.stringify(r.start)})`);
@@ -1038,7 +1071,9 @@ const check = (ok, what) => {
 			document.getElementById('sb-quit').click();
 			document.querySelector('#sb-ask [data-act=quit]').click();
 			await new Promise((res) => setTimeout(res, 300));
-			if (!asked || !kept) return { left: ['no confirm'], asked, kept };
+			if (!asked || !kept) {
+				return { left: ['no confirm'], asked, kept };
+			}
 			const left = [...document.querySelectorAll('[id^="sb-"]')].map((e) => e.id);
 			fire('AccountBeep', { MemberNumber: 11, MemberName: 'Ann', BeepType: '', Message: 'still there?' });
 			await new Promise((res) => setTimeout(res, 300));
@@ -1080,7 +1115,9 @@ const check = (ok, what) => {
 		pagesBody = src;
 		const asked = [];
 		const note = (r) => {
-			if (/slimebeep\.js\?t=/.test(r.url())) asked.push(r.url());
+			if (/slimebeep\.js\?t=/.test(r.url())) {
+				asked.push(r.url());
+			}
 		};
 		p.on('request', note);
 		await p.reload();
@@ -1122,8 +1159,12 @@ const check = (ok, what) => {
 		'a friend with a new picture gets asked for it',
 	);
 	const chunks = [];
-	for (let i = 0; i < pic.length; i += 700) chunks.push(pic.slice(i, i + 700));
-	for (let i = 0; i < chunks.length; i++) await hide(11, 'Ann', { sb: 1, pf: { v: 'annpic0001', i, n: chunks.length, d: chunks[i] } });
+	for (let i = 0; i < pic.length; i += 700) {
+		chunks.push(pic.slice(i, i + 700));
+	}
+	for (let i = 0; i < chunks.length; i++) {
+		await hide(11, 'Ann', { sb: 1, pf: { v: 'annpic0001', i, n: chunks.length, d: chunks[i] } });
+	}
 	// Things that are not pictures, from Cat: an SVG (can carry script), a javascript: link, a web address.
 	for (const bad of [
 		'data:image/svg+xml;base64,PHN2Zz48c2NyaXB0PmFsZXJ0KDEpPC9zY3JpcHQ+PC9zdmc+',
@@ -1177,7 +1218,7 @@ const check = (ok, what) => {
 	await p.click('#sb-gear');
 	await wait(150);
 	const [chooser] = await Promise.all([p.waitForFileChooser(), p.click('#sb-o-pic')]);
-	await chooser.accept([__dirname + '/icon-256.png']);
+	await chooser.accept([`${__dirname}/icon-256.png`]);
 	await wait(800);
 	// The cropper: place it in the circle, then Save.
 	check(!!(await p.$('#sb-crop canvas')), 'choosing a picture opens the circle to place it in');
@@ -1282,7 +1323,7 @@ const check = (ok, what) => {
 		/SlimeBeep \d+\.\d+\.\d+/.test(det) && /Game: R132/.test(det) && /boom from a weird beep/.test(det) && /Reported by: #1/.test(det),
 		'the report adds version, game version, member number and the error SlimeBeep caught',
 	);
-	check(!/Ann|Cat|Bea|hiii|Squad/.test(det), "and nothing about anyone else's chats");
+	check(!/\bAnn\b|\bCat\b|\bBea\b|hiii|Squad/.test(det), "and nothing about anyone else's chats");
 	await p.click('#sb-bug-github');
 	const url = await p.evaluate(() => opened[0] || '');
 	check(
@@ -1350,7 +1391,7 @@ const check = (ok, what) => {
 			window.ChatRoomCanLeave = () => true;
 			window.ChatRoomLeave = () => {
 				left++;
-				ChatRoomData = null;
+				window.ChatRoomData = null;
 			};
 			window.CommonSetScreen = (a, b) => screens.push(`${a}/${b}`);
 			window.CurrentScreen = 'ChatRoom';
@@ -1381,7 +1422,7 @@ const check = (ok, what) => {
 			`Join leaves my room and asks to join theirs (${JSON.stringify(r)})`,
 		);
 		await p.evaluate(() => {
-			ChatRoomData = { Name: 'Velvet Lounge' };
+			window.ChatRoomData = { Name: 'Velvet Lounge' };
 			delete window.ChatRoomCanLeave;
 			delete window.ChatRoomLeave;
 			delete window.CommonSetScreen;
@@ -1619,14 +1660,18 @@ const check = (ok, what) => {
 		fake.ws.send(JSON.stringify({ t: 'put', kf: myKf, text: 'I am totally Cat', ref: 'm2' }));
 		await wait(500);
 		check(toMe.last('ok') && fake.last('ok'), 'both are left in my mailbox');
-		for (const c of [catBox, toMe, fake]) c.ws.close();
+		for (const c of [catBox, toMe, fake]) {
+			c.ws.close();
+		}
 		await p.addScriptTag({ content: src });
 		const came = await waitFor(
 			() => p.evaluate(() => [...document.querySelectorAll('.sb-card')].some((x) => /hello from your mailbox/.test(x.textContent))),
 			12000,
 		);
 		check(came, "after logging in, Cat's mailbox beep pops a card");
-		if (await p.evaluate(() => document.getElementById('sb-panel').style.display !== 'flex')) await p.click('#sb-toggle');
+		if (await p.evaluate(() => document.getElementById('sb-panel').style.display !== 'flex')) {
+			await p.click('#sb-toggle');
+		}
 		await p.evaluate(() => SlimeBeep.api.openChat(13));
 		await wait(300);
 		const thread = await p.$eval('#sb-msgs', (e) => e.textContent);
@@ -1806,7 +1851,9 @@ const check = (ok, what) => {
 		const real = ChatRoomSendLocal;
 		let n = 0;
 		window.ChatRoomSendLocal = (c) => {
-			if (n++ === 0) return;
+			if (n++ === 0) {
+				return;
+			}
 			real(c);
 		};
 	});
@@ -1842,7 +1889,9 @@ const check = (ok, what) => {
 		});
 		await p.addScriptTag({ content: src });
 		await wait(6500);
-		if (await p.evaluate(() => document.getElementById('sb-panel').style.display !== 'flex')) await p.click('#sb-toggle');
+		if (await p.evaluate(() => document.getElementById('sb-panel').style.display !== 'flex')) {
+			await p.click('#sb-toggle');
+		}
 		await wait(200);
 		await p.click('[data-tab=groups]');
 		await wait(200);
