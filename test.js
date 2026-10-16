@@ -1819,38 +1819,64 @@ const check = (ok, what) => {
 	);
 	await shot('reload');
 
-	// ---- A plain http:// page (no crypto.subtle): joining a group still signs in, with the key made on https
-	// and with a brand new one.
+	// ---- A plain http:// page (no crypto.subtle): group chats and mailboxes say to use the https address and
+	// never connect; beeps work as usual.
 	{
 		const ann = await relayUser(11, 'Ann');
-		const joinOn = async (keepKey) => {
-			const gid = `http${Date.now().toString(36)}`;
-			const host = await relayJoin(gid, ann, { create: { name: keepKey ? 'Plain HTTP' : 'Plain HTTP 2', open: true } });
-			host.send({ t: 'invite' });
-			await wait(400);
-			const code = `SB-${gid}-${host.last('invite').code}`;
-			await p.reload();
-			await p.evaluate(stub);
-			await p.evaluate((keep) => {
-				Object.defineProperty(Crypto.prototype, 'subtle', { get: () => undefined, configurable: true });
-				if (!keep) localStorage.removeItem(`slimebeep.key.${Player.MemberNumber}`);
-				makeLog();
-			}, keepKey);
-			await p.addScriptTag({ content: src });
-			await wait(1500);
-			if (await p.evaluate(() => document.getElementById('sb-panel').style.display !== 'flex')) await p.click('#sb-toggle');
-			await wait(200);
-			await p.click('[data-tab=groups]');
-			await wait(200);
-			await p.type('#sb-join-code', code);
-			await p.click('#sb-join');
-			const joined = await waitFor(() => p.evaluate((g) => !!SlimeBeep.api.group(g), gid), 8000);
-			const noSubtle = await p.evaluate(() => !crypto.subtle);
-			host.ws.close();
-			return joined && noSubtle;
-		};
-		check(await joinOn(true), 'on an http:// page (no crypto.subtle) joining a group works with the key made on https');
-		check(await joinOn(false), 'and with a key made right there');
+		const gid = `http${Date.now().toString(36)}`;
+		const host = await relayJoin(gid, ann, { create: { name: 'Plain HTTP', open: true } });
+		host.send({ t: 'invite' });
+		await wait(400);
+		const code = `SB-${gid}-${host.last('invite').code}`;
+		await p.reload();
+		await p.evaluate(stub);
+		await p.evaluate(() => {
+			Object.defineProperty(Crypto.prototype, 'subtle', { get: () => undefined, configurable: true });
+			window.relaySockets = 0;
+			const Real = window.WebSocket;
+			window.WebSocket = function (...a) {
+				window.relaySockets++;
+				return new Real(...a);
+			};
+			makeLog();
+		});
+		await p.addScriptTag({ content: src });
+		await wait(6500);
+		if (await p.evaluate(() => document.getElementById('sb-panel').style.display !== 'flex')) await p.click('#sb-toggle');
+		await wait(200);
+		await p.click('[data-tab=groups]');
+		await wait(200);
+		const note = await p.evaluate(() => {
+			const a = [...document.querySelectorAll('#sb-body a')].find((x) => /https/.test(x.textContent));
+			return a ? a.getAttribute('href') : null;
+		});
+		check(!!note && note.startsWith('https:'), `the Groups tab links to the https address (${note})`);
+		await p.type('#sb-join-code', code);
+		await p.click('#sb-join');
+		await wait(1500);
+		const r = await p.evaluate(
+			(g) => ({
+				joined: !!SlimeBeep.api.group(g),
+				card: [...document.querySelectorAll('.sb-card')].some((c) => /secure \(https\)/.test(c.textContent)),
+				sockets: window.relaySockets,
+			}),
+			gid,
+		);
+		check(
+			!r.joined && r.card && r.sockets === 0,
+			`joining says to open the https address and nothing connects to the relay (${JSON.stringify(r)})`,
+		);
+		await p.evaluate(() => {
+			beeps.length = 0;
+			fire('AccountQueryResult', { Query: 'OnlineFriends', Result: [{ MemberNumber: 11, MemberName: 'Ann', Type: 'Friend' }] });
+			SlimeBeep.api.openChat(11);
+		});
+		await wait(300);
+		await p.type('#sb-text', 'still beeping');
+		await p.keyboard.press('Enter');
+		await wait(500);
+		check(await p.evaluate(() => beeps.some((b) => b[0] === 11 && b[1] === 'still beeping')), 'beeps work as usual');
+		host.ws.close();
 	}
 	await b.close();
 	console.log(failed ? `\n${failed} FAILED` : '\nall passed');
