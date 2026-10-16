@@ -2,7 +2,7 @@
 
 # SlimeBeep
 
-Beep one message to all your online friends in [Bondage Club](https://www.bondageprojects.elementfx.com/) at once. Handy for party invites.
+A simple beep tool for [Bondage Club](https://www.bondageprojects.elementfx.com/): pick the online friends you want and send them all the same beep.
 
 ## Install
 
@@ -15,7 +15,7 @@ Beep one message to all your online friends in [Bondage Club](https://www.bondag
 - Click the pink slime button at the bottom right.
 - Write your message (up to 1000 characters).
 - **include my room** sends your current room with the beep so friends can join from it.
-- **Who?** lists your online friends; untick anyone you want to skip.
+- Tick the online friends you want to beep (or **All** / **None**).
 - Press **Send**. Beeps go out one every 1.5 seconds.
 
 Updates install automatically through your userscript manager.

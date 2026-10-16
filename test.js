@@ -18,9 +18,9 @@ const src = require('fs').readFileSync(__dirname + '/slimebeep.user.js', 'utf8')
 	await p.click('#ba-toggle');
 	await new Promise((r) => setTimeout(r, 200));
 	const count1 = await p.$eval('#ba-count', (e) => e.textContent);
-	await p.click('#ba-who');
-	await p.click('#ba-list label:nth-child(2) input'); // untick Bea
-	await p.type('#ba-msg', 'Birthday party at 8!');
+	await p.click('#ba-list label:nth-child(1) input'); // pick Ann
+	await p.click('#ba-list label:nth-child(3) input'); // and Cat
+	await p.type('#ba-msg', 'Hello friends!');
 	await p.click('#ba-send');
 	await new Promise((r) => setTimeout(r, 2000));
 	console.log(JSON.stringify({ count1, count2: await p.$eval('#ba-count', (e) => e.textContent), beeps: await p.evaluate(() => beeps),

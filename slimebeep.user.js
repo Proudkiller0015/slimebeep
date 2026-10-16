@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SlimeBeep
 // @namespace    https://github.com/Proudkiller0015/slimebeep
-// @version      1.1.0
-// @description  Beep one message to all your online friends in Bondage Club at once
+// @version      1.1.1
+// @description  A simple beep tool: send one beep to the online friends you pick in Bondage Club
 // @icon         https://raw.githubusercontent.com/Proudkiller0015/slimebeep/main/icon-64.png
 // @homepageURL  https://github.com/Proudkiller0015/slimebeep
 // @downloadURL  https://raw.githubusercontent.com/Proudkiller0015/slimebeep/main/slimebeep.user.js
@@ -37,7 +37,7 @@
 		#ba-box button { padding: 4px 10px; border-radius: 6px; border: 1px solid #c06; background: #c06; color: #fff; cursor: pointer; }
 		#ba-box button.ghost { background: #fff; color: #c06; }
 		#ba-box button:disabled { opacity: .5; cursor: default; }
-		#ba-list { max-height: 140px; overflow: auto; margin-top: 6px; border: 1px solid #ddd; border-radius: 6px; padding: 4px; display: none; }
+		#ba-list { max-height: 160px; overflow: auto; margin-top: 4px; border: 1px solid #ddd; border-radius: 6px; padding: 4px; }
 		#ba-list label { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 		#ba-status { margin-top: 6px; color: #555; min-height: 1em; }
 	`;
@@ -49,7 +49,7 @@
 
 		const toggle = document.createElement('button');
 		toggle.id = 'ba-toggle';
-		toggle.title = 'SlimeBeep: beep all online friends';
+		toggle.title = 'SlimeBeep: beep selected friends';
 		toggle.innerHTML = `<img src="${ICON}" alt="SlimeBeep">`;
 		document.body.appendChild(toggle);
 
@@ -57,10 +57,13 @@
 		box.id = 'ba-box';
 		box.innerHTML = `
 			<b>SlimeBeep</b>
-			<textarea id="ba-msg" maxlength="1000" placeholder="You're invited to my birthday party!"></textarea>
+			<textarea id="ba-msg" maxlength="1000" placeholder="Write your beep…"></textarea>
 			<div class="row">
 				<label><input type="checkbox" id="ba-room" checked> include my room</label>
-				<button class="ghost" id="ba-who">Who?</button>
+			</div>
+			<div class="row">
+				<span>Beep who?</span>
+				<span><button class="ghost" id="ba-all">All</button> <button class="ghost" id="ba-none">None</button></span>
 			</div>
 			<div id="ba-list"></div>
 			<div class="row">
@@ -75,10 +78,12 @@
 			box.style.display = open ? 'block' : 'none';
 			if (open) refresh();
 		});
-		box.querySelector('#ba-who').addEventListener('click', () => {
-			const list = box.querySelector('#ba-list');
-			list.style.display = list.style.display === 'block' ? 'none' : 'block';
-		});
+		const tickAll = (on) => {
+			for (const b of box.querySelectorAll('#ba-list input')) b.checked = on;
+			count();
+		};
+		box.querySelector('#ba-all').addEventListener('click', () => tickAll(true));
+		box.querySelector('#ba-none').addEventListener('click', () => tickAll(false));
 		box.querySelector('#ba-send').addEventListener('click', send);
 		// Typing in the box must not reach the game's own key handlers
 		box.addEventListener('keydown', (e) => e.stopPropagation());
@@ -99,13 +104,15 @@
 		ServerSocket.once('AccountQueryResult', (data) => {
 			if (!data || data.Query !== 'OnlineFriends' || !Array.isArray(data.Result)) return;
 			friends = data.Result.filter((f) => f && f.MemberNumber !== Player.MemberNumber);
+			// Ticks survive a refresh: reopening the box keeps who you picked.
+			const picked = new Set(chosen());
 			const list = $('ba-list');
-			list.innerHTML = '';
+			list.innerHTML = friends.length ? '' : '<i>No friends online right now.</i>';
 			for (const f of friends) {
 				const label = document.createElement('label');
 				const box = document.createElement('input');
 				box.type = 'checkbox';
-				box.checked = true;
+				box.checked = picked.has(f.MemberNumber);
 				box.value = String(f.MemberNumber);
 				label.append(box, ` ${f.MemberName} (${f.MemberNumber})`);
 				box.addEventListener('change', count);
@@ -122,7 +129,7 @@
 
 	function count() {
 		const n = chosen().length;
-		$('ba-count').textContent = `${n} of ${friends.length} online`;
+		$('ba-count').textContent = `${n} picked of ${friends.length} online`;
 		$('ba-send').disabled = sending || n === 0;
 	}
 
