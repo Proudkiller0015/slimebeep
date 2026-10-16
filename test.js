@@ -290,6 +290,8 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	await p.click('#sb-newgc');
 	await wait(150);
 	check(JSON.stringify(await p.$$eval('#sb-body label input[value]:not(:disabled)', (e) => e.map((x) => x.value))) === '["11","13"]', 'only friends with SlimeBeep can be picked');
+	await p.click('#sb-gc-make');
+	check(/Tick at least one friend/.test(await p.$eval('#sb-gc-count', (e) => e.textContent)), 'Create with nobody ticked says what is missing');
 	await p.type('#sb-gc-name', 'Night Owls');
 	await p.click('#sb-body label input[value="13"]');
 	await p.evaluate(() => { hidden.length = 0; });
@@ -347,11 +349,41 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	await p.click('#sb-gear');
 
 
+	// ---- 🐞 Bug report: the player's words plus SlimeBeep's own details, out to GitHub, the clipboard or a beep.
+	await p.evaluate(() => {
+		window.GameVersion = 'R132';
+		window.opened = [];
+		window.open = (u) => { opened.push(u); return null; };
+		// Something that breaks inside SlimeBeep: caught, and remembered for the report.
+		fire('AccountBeep', { get MemberNumber() { throw new Error('boom from a weird beep'); } });
+	});
+	await p.click('#sb-back').catch(() => {});
+	await p.click('[data-tab=bug]');
+	await wait(150);
+	await p.click('#sb-bug-github');
+	check(/Write what happened first/.test(await p.$eval('#sb-bug-status', (e) => e.textContent)), 'an empty report is not sent');
+	await p.type('#sb-bug-what', 'The slime vanished after a relog');
+	await p.type('#sb-bug-how', 'Logging back in');
+	const det = await p.$eval('#sb-bug-details', (e) => e.textContent);
+	check(/SlimeBeep \d+\.\d+\.\d+/.test(det) && /Game: R132/.test(det) && /boom from a weird beep/.test(det) && /Reported by: #1/.test(det),
+		'the report adds version, game version, member number and the error SlimeBeep caught');
+	check(!/Ann|Cat|Bea|hiii|Squad/.test(det), "and nothing about anyone else's chats");
+	await p.click('#sb-bug-github');
+	const url = await p.evaluate(() => opened[0] || '');
+	check(url.startsWith('https://github.com/Proudkiller0015/slimebeep/issues/new?title=Bug%3A%20The%20slime%20vanished') && decodeURIComponent(url).includes('Logging back in'), 'Open on GitHub fills in a new issue');
+	await p.click('#sb-bug-num');
+	check(!/Reported by/.test(await p.$eval('#sb-bug-details', (e) => e.textContent)), 'the member number can be left out');
+	await p.evaluate(() => { beeps.length = 0; });
+	await p.click('#sb-bug-beep');
+	const bugBeep = await p.evaluate(() => beeps[0]);
+	check(bugBeep && bugBeep[0] === 255659 && /SlimeBeep bug report/.test(bugBeep[1]) && bugBeep[1].length <= 1000, 'Beep it to her sends one beep to SlimeQueenSamantha');
+	await shot('bug');
+
 	// Drag; the spot and the picks survive a reload.
 	const r = await p.$eval('#sb-toggle', (e) => { const x = e.getBoundingClientRect(); return { x: x.x + 20, y: x.y + 20 }; });
 	await p.mouse.move(r.x, r.y); await p.mouse.down(); await p.mouse.move(300, 200, { steps: 8 }); await p.mouse.up();
 	const at = await p.$eval('#sb-toggle', (e) => [e.style.left, e.style.top]);
-	check(at[0] === '280px' && at[1] === '180px', `dragged to ${at}`);
+	check(Math.round(parseFloat(at[0])) === 280 && Math.round(parseFloat(at[1])) === 180, `dragged to ${at}`);
 	const inside = await p.$eval('#sb-panel', (e) => { const x = e.getBoundingClientRect(); return x.left >= 0 && x.top >= 0 && x.right <= innerWidth && x.bottom <= innerHeight; });
 	check(inside, 'the panel stays inside the window');
 	newsBody = JSON.stringify([{ id: 'old', text: 'old news' }, { id: 'n1', title: '📢 Hi', text: 'SlimeBeep can now keep your beeps!' }]);

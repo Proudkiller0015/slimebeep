@@ -13,7 +13,7 @@
 (function () {
 	'use strict';
 
-	const VERSION = '2.6.0';
+	const VERSION = '2.7.0';
 	// Loaded once per page, whatever loads it.
 	if (window.SlimeBeep) return;
 	window.SlimeBeep = { version: VERSION };
@@ -129,6 +129,17 @@
 	const keyOf = (b) => (b.Id ? `id:${b.Id}` : `${b.MemberNumber}|${new Date(b.Time).getTime()}|${b.Sent ? 1 : 0}|${String(b.Message || '').slice(0, 40)}`);
 
 	const $ = (id) => document.getElementById(id);
+	// SlimeBeep's own caught errors, the last few, for the 🐞 report; also in the console as before.
+	const errors = [];
+	function warn(e, where = '') {
+		try {
+			const msg = `${where ? `${where}: ` : ''}${(e && e.message) || String(e)}`.slice(0, 200);
+			const at = e && e.stack ? String(e.stack).split('\n').find((l) => /slimebeep/i.test(l)) || '' : '';
+			errors.push(`${new Date().toISOString().slice(11, 19)} ${msg}${at ? ` (${at.trim().slice(0, 120)})` : ''}`);
+			if (errors.length > 10) errors.shift();
+			console.warn('[SlimeBeep]', where, e);
+		} catch (x) { /* never let a report break anything */ }
+	}
 	const esc = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 	const loggedIn = () => typeof ServerSocket !== 'undefined' && ServerSocket && typeof Player !== 'undefined' && Player && Player.MemberNumber != null;
 	/** The chat room you are in, or null. */
@@ -316,8 +327,8 @@
 		.sb-head small { opacity: .85; font-weight: normal; font-size: 11px; }
 		.sb-head button { border: none; background: #ffffff55; color: #fff; width: 28px; height: 28px; border-radius: 50%; font-size: 14px; }
 		.sb-head button:hover { background: #ffffff88; }
-		.sb-tabs { display: flex; gap: 4px; padding: 8px 10px 6px; background: #ffe6f3; }
-		.sb-tabs button { flex: 1; border: none; border-radius: 14px; padding: 5px 0; background: #fff; color: #c2186b; text-align: center; }
+		.sb-tabs { display: flex; gap: 3px; padding: 8px 8px 6px; background: #ffe6f3; }
+		.sb-tabs button { flex: 1 1 auto; min-width: 0; white-space: nowrap; border: none; border-radius: 14px; padding: 5px 5px; background: #fff; color: #c2186b; text-align: center; }
 		.sb-tabs button.on { background: #ff4fa3; color: #fff; box-shadow: 0 2px 6px #ff4fa366; }
 		.sb-tabs button i { font-style: normal; background: #ff2e8a; color: #fff; border-radius: 8px; padding: 0 5px; margin-left: 4px; font-size: 10px; }
 		.sb-tabs button.on i { background: #fff; color: #ff2e8a; }
@@ -522,7 +533,7 @@
 				if (d.BeepType === PROTO) onHidden(d);
 				else catchBeep(d);
 			}
-		} catch (e) { console.warn('[SlimeBeep]', e); }
+		} catch (e) { warn(e); }
 	}
 	const anyListener = (event, data) => onServer(event, data);
 	const beepListener = (data) => onServer('AccountBeep', data);
@@ -791,7 +802,7 @@
 	function drain() {
 		if (!outbox.length) return;
 		const [n, msg] = outbox[0];
-		try { ServerSend('AccountBeep', { MemberNumber: n, BeepType: PROTO, IsSecret: true, Message: msg }); } catch (e) { console.warn('[SlimeBeep]', e); }
+		try { ServerSend('AccountBeep', { MemberNumber: n, BeepType: PROTO, IsSecret: true, Message: msg }); } catch (e) { warn(e); }
 		setTimeout(() => { outbox.shift(); drain(); }, 250);
 	}
 
@@ -918,7 +929,7 @@
 				if (opts.sound) chime();
 				announce(h);
 				if (isOpen() && tab !== 'options' && tab !== 'wave') render(true);
-			} catch (e) { console.warn('[SlimeBeep]', e); }
+			} catch (e) { warn(e); }
 		}, 1500);
 	}
 	const askFriends = () => { if (loggedIn()) { listen(); ServerSend('AccountQuery', { Query: 'OnlineFriends' }); } };
@@ -970,7 +981,7 @@
 			for (const h of fresh.slice(-4)) announce(h);
 			if (isOpen() && tab !== 'options' && tab !== 'wave') render(true);
 		} catch (e) {
-			if (!tick.warned) { tick.warned = true; console.warn('[SlimeBeep]', e); }
+			if (!tick.warned) { tick.warned = true; warn(e); }
 		}
 	}
 
@@ -1117,12 +1128,14 @@
 			<button data-tab="groups" class="${on('groups')}" title="Group chats">👥 Groups${unreadGroups ? `<i>${unreadGroups}</i>` : ''}</button>
 			<button data-tab="friends" class="${on('friends')}" title="Friends online">💖${friends.length ? `<i>${friends.length}</i>` : ''}</button>
 			<button data-tab="wave" class="${on('wave')}" title="WaveBeep: one beep to many friends">🌊 Wave</button>
+			<button data-tab="bug" class="${on('bug')}" title="Report a bug">🐞</button>
 		</div>`;
 		const body = $('sb-body');
 		const scroll = keepScroll && body ? body.scrollTop : 0;
 		if (tab === 'options') view.innerHTML = tabs + `<div class="sb-body" id="sb-body">${optionsHtml()}</div>`;
 		else if (tab === 'newgc') view.innerHTML = tabs + `<div class="sb-body sb-group" id="sb-body">${newGroupHtml()}</div>`;
 		else if (tab === 'wave') view.innerHTML = tabs + `<div class="sb-body sb-group" id="sb-body">${groupHtml()}</div>`;
+		else if (tab === 'bug') view.innerHTML = tabs + `<div class="sb-body sb-group" id="sb-body">${bugHtml()}</div>`;
 		else {
 			const q = search.toLowerCase();
 			const rows = tab === 'chats' ? chatRows(q) : tab === 'groups' ? groupRows(q) : friendRows(q);
@@ -1149,6 +1162,7 @@
 		if ($('sb-newgc')) $('sb-newgc').addEventListener('click', () => { tab = 'newgc'; render(); });
 		if (tab === 'newgc') wireNewGroup();
 		if (tab === 'wave') wireGroup();
+		if (tab === 'bug') wireBug();
 		if (tab === 'options') wireOptions();
 	}
 
@@ -1202,7 +1216,7 @@
 	function newGroupHtml() {
 		return `<div class="sb-line"><button class="sb-pill" id="sb-gc-back">‹ Back</button><b>👥 New group chat</b></div>
 			<div class="sb-hint" style="margin:4px 0 6px">Up to ${LIMITS.members} people, all with SlimeBeep (🫧). Messages stay inside SlimeBeep; the game never shows them.</div>
-			<input class="sb-search" id="sb-gc-name" maxlength="${LIMITS.name}" placeholder="Group name">
+			<input class="sb-search" id="sb-gc-name" maxlength="${LIMITS.name}" placeholder="Group name (optional)">
 			<label><input type="checkbox" id="sb-gc-open"><span>Anyone can invite<span class="sb-hint" style="display:block">Otherwise only you and the admins you pick can add people.</span></span></label>
 			<div class="sb-line"><b>Who?</b><button class="sb-pill" id="sb-gc-find">🔍 Find SlimeBeep friends</button></div>
 			${pickList()}
@@ -1213,8 +1227,7 @@
 		const boxes = () => [...$('sb-body').querySelectorAll('label input[type=checkbox][value]:not(:disabled)')];
 		const update = () => {
 			const n = boxes().filter((b) => b.checked).length;
-			$('sb-gc-count').textContent = `${n} picked${n >= LIMITS.members - 1 ? ' (full)' : ''}`;
-			$('sb-gc-make').disabled = !n || !$('sb-gc-name').value.trim();
+			$('sb-gc-count').textContent = n ? `${n} picked${n >= LIMITS.members - 1 ? ' (full)' : ''}` : 'Tick who to add';
 			for (const b of boxes()) if (!b.checked) b.disabled = n >= LIMITS.members - 1;
 		};
 		for (const b of boxes()) b.addEventListener('change', update);
@@ -1223,8 +1236,9 @@
 		wireFind();
 		$('sb-gc-make').addEventListener('click', () => {
 			const picked = boxes().filter((b) => b.checked).map((b) => Number(b.value));
-			const name = $('sb-gc-name').value;
-			if (!picked.length || !name.trim()) return;
+			// Never a silent grey button: say what's missing. No name: "Group chat", renamable later.
+			if (!picked.length) { notify('Tick at least one friend first'); $('sb-gc-count').textContent = '👆 Tick at least one friend'; return; }
+			const name = clean($('sb-gc-name').value, LIMITS.name) || 'Group chat';
 			const id = createGroup(name, picked, $('sb-gc-open').checked);
 			notify(`👥 ${clean(name, LIMITS.name)} created`);
 			tab = 'groups';
@@ -1568,7 +1582,7 @@
 					if (mouse(CLEAR)) clearKept();
 					if (mouse(PIC)) pickPicture();
 					if (myPfp() && mouse(NOPIC)) setOpt('pfp', null);
-				} catch (e) { console.warn('[SlimeBeep]', e); }
+				} catch (e) { warn(e); }
 			},
 			exit: () => true,
 		});
@@ -1618,6 +1632,89 @@
 		if (box) box.checked = opts.night;
 	}
 
+	/*
+	 * 🐞 Bug reports. The player writes what went wrong; SlimeBeep adds what helps find it (its version,
+	 * the game's, the browser, other mods, its own recent errors) and nothing about anyone else. It goes
+	 * out how the player chooses: a GitHub issue, the clipboard, or a beep to SlimeQueenSamantha, which
+	 * only arrives if she has them on her friend list (the game's beep rule).
+	 */
+	const OWNER = 255659; // SlimeQueenSamantha
+	const ISSUES = 'https://github.com/Proudkiller0015/slimebeep/issues/new';
+	function details(withNumber) {
+		const mods = (() => {
+			try {
+				const sdk = window.bcModSdk;
+				return sdk && typeof sdk.getModsInfo === 'function' ? sdk.getModsInfo().map((m) => `${m.name} ${m.version}`).join(', ') : '';
+			} catch (e) { return ''; }
+		})();
+		const d = window.SlimeBeep && typeof window.SlimeBeep.debug === 'function' ? window.SlimeBeep.debug() : {};
+		return [
+			`SlimeBeep ${VERSION}`,
+			`Game: ${typeof GameVersion === 'string' ? GameVersion : '?'}${typeof CurrentScreen === 'string' ? ` (screen: ${CurrentScreen})` : ''}`,
+			`Browser: ${navigator.userAgent}`,
+			withNumber && loggedIn() ? `Reported by: #${Player.MemberNumber}` : null,
+			`Listening: ${d.listening ? 'yes' : 'no'}${d.catchAll ? ', catch-all' : ''}; groups: ${Object.keys(groups).length}; kept beeps: ${hist.length}`,
+			mods ? `Other mods: ${mods}` : null,
+			errors.length ? `Recent errors:\n${errors.map((x) => `- ${x}`).join('\n')}` : 'Recent errors: none',
+		].filter(Boolean).join('\n');
+	}
+	function reportText() {
+		const what = clean($('sb-bug-what').value, 1500);
+		const how = clean($('sb-bug-how').value, 800);
+		return { what, how, full: `What happened:\n${what || '(not filled in)'}\n\nWhat I was doing:\n${how || '(not filled in)'}\n\n---\n${details($('sb-bug-num').checked)}` };
+	}
+
+	function bugHtml() {
+		const draft = bugHtml.draft || {};
+		return `<div class="sb-line" style="margin-top:2px"><b>🐞 Report a bug</b></div>
+			<div class="sb-hint" style="margin:0 0 6px">Tell SlimeQueenSamantha what went wrong. SlimeBeep adds its version and recent errors for you.</div>
+			<textarea id="sb-bug-what" maxlength="1500" placeholder="What happened?">${esc(draft.what || '')}</textarea>
+			<textarea id="sb-bug-how" maxlength="800" placeholder="What were you doing? (optional)" style="height:52px;margin-top:6px">${esc(draft.how || '')}</textarea>
+			<label><input type="checkbox" id="sb-bug-num" ${draft.num === false ? '' : 'checked'}><span>Include my member number so she can beep me back</span></label>
+			<details style="margin:6px 2px"><summary class="sb-hint" style="cursor:pointer">What gets added</summary><pre id="sb-bug-details" style="white-space:pre-wrap;font-size:11px;margin:4px 0 0">${esc(details(draft.num !== false))}</pre></details>
+			<div class="sb-line" style="flex-wrap:wrap;justify-content:flex-start;gap:6px">
+				<button class="sb-go" id="sb-bug-github" title="Opens a new bug report on GitHub, filled in (needs a GitHub account)">🐙 Open on GitHub</button>
+				<button class="sb-pill" id="sb-bug-copy">📋 Copy</button>
+				<button class="sb-pill" id="sb-bug-beep" title="Only arrives if SlimeQueenSamantha has you on her friend list">📨 Beep it to her</button>
+			</div>
+			<div class="sb-hint" id="sb-bug-status"></div>`;
+	}
+
+	function wireBug() {
+		const keep = () => { bugHtml.draft = { what: $('sb-bug-what').value, how: $('sb-bug-how').value, num: $('sb-bug-num').checked }; };
+		const status = (t) => { const x = $('sb-bug-status'); if (x) x.textContent = t; };
+		for (const id of ['sb-bug-what', 'sb-bug-how']) $(id).addEventListener('input', keep);
+		$('sb-bug-num').addEventListener('change', () => { keep(); $('sb-bug-details').textContent = details($('sb-bug-num').checked); });
+		const ready = () => {
+			const r = reportText();
+			if (!r.what) { status('Write what happened first.'); $('sb-bug-what').focus(); return null; }
+			return r;
+		};
+		$('sb-bug-github').addEventListener('click', () => {
+			const r = ready();
+			if (!r) return;
+			const title = `Bug: ${r.what.split('\n')[0].slice(0, 70)}`;
+			window.open(`${ISSUES}?title=${encodeURIComponent(title)}&body=${encodeURIComponent(r.full)}`, '_blank', 'noopener');
+			status('Opened on GitHub: check it and press "Create" there.');
+		});
+		$('sb-bug-copy').addEventListener('click', async () => {
+			const r = ready();
+			if (!r) return;
+			try { await navigator.clipboard.writeText(r.full); status('📋 Copied. Paste it wherever you talk to SlimeQueenSamantha.'); }
+			catch (e) { status('The browser would not copy it. Open "What gets added" and copy by hand.'); }
+		});
+		$('sb-bug-beep').addEventListener('click', () => {
+			const r = ready();
+			if (!r) return;
+			if (!loggedIn()) return status('Log in first.');
+			// One beep holds 1000 characters: the words first, then as much of the details as fits.
+			const text = `🐞 SlimeBeep bug report\n${r.what}${r.how ? `\nDoing: ${r.how}` : ''}\n— ${details($('sb-bug-num').checked)}`.slice(0, 990);
+			beep(OWNER, text, false);
+			notify('🐞 Report beeped');
+			status('Beeped to SlimeQueenSamantha. It only arrives if she has you on her friend list; if unsure, use GitHub or Copy too.');
+		});
+	}
+
 	function optionsHtml() {
 		return `<div class="sb-opts">
 			<b style="display:block;margin:6px 2px">⚙ Options</b>
@@ -1658,6 +1755,6 @@
 	try {
 		build();
 	} catch (e) {
-		console.warn('[SlimeBeep] could not start:', e);
+		warn(e, 'could not start');
 	}
 })();

@@ -52,5 +52,11 @@
     "date": "16 Oct 2026",
     "title": "📢 SlimeBeep 2.6",
     "text": "New tabs: 👥 Groups for your group chats, and 🌊 WaveBeep (the old Group tab) to send one beep to many friends."
+  },
+  {
+    "id": "2.7.0",
+    "date": "16 Oct 2026",
+    "title": "📢 SlimeBeep 2.7",
+    "text": "🐞 New Bug tab: tell SlimeQueenSamantha what went wrong, and SlimeBeep adds the details that help fix it. Making a group chat is easier too: tick friends, the name is optional."
   }
 ]
