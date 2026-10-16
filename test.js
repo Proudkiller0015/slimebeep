@@ -280,7 +280,7 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 		try { a.groups = null; } catch (e) { frozen = true; }
 		return { v: a.apiVersion, frozen: frozen || a.groups !== null, fns: Object.keys(a).sort().join(',') };
 	});
-	check(api0.v === 1 && api0.frozen && api0.fns === 'apiVersion,group,groups,hasSlimeBeep,on,openChat,openGroup,slimeBeepFriends,version', `window.SlimeBeep.api is there for other add-ons, and can't be changed (${api0.fns})`);
+	check(api0.v === 1 && api0.frozen && api0.fns === 'apiVersion,group,groups,hasSlimeBeep,inviteToGroup,on,openChat,openGroup,openInvite,slimeBeepFriends,version', `window.SlimeBeep.api is there for other add-ons, and can't be changed (${api0.fns})`);
 	await hide(11, 'Ann', { sb: 1, pong: 1 });
 	await hide(13, 'Cat', { sb: 1, ping: 1 });
 	await wait(400);
@@ -315,6 +315,27 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 		const inv = await p.evaluate(() => hidden.map((h) => JSON.parse(h.Message)).find((m) => m.ginv));
 		check(inv && /^SB-[a-z0-9]+-[A-Z2-9]{10}$/.test(inv.ginv.code) && inv.ginv.name === 'Slime Squad', 'Ann, a SlimeBeep friend, gets her invite as a hidden beep');
 		const [, gid, code] = /^SB-([a-z0-9]+)-([A-Z2-9]+)$/.exec(inv.ginv.code);
+		// Other add-ons inviting: Bea is a friend without SlimeBeep, so a code made for her; Cat (has SlimeBeep) gets a card.
+		const viaApi = await p.evaluate(async (g) => {
+			hidden.length = 0;
+			const bea = await SlimeBeep.api.inviteToGroup(g, 12);
+			const cat = await SlimeBeep.api.inviteToGroup(g, 13);
+			await new Promise((r) => setTimeout(r, 500));
+			const card = hidden.map((h) => JSON.parse(h.Message)).find((m) => m.ginv);
+			return { bea, cat, catCard: hidden.some((h) => h.MemberNumber === 13 && /ginv/.test(h.Message)) && !!card, me: await SlimeBeep.api.inviteToGroup(g, 1), canInvite: SlimeBeep.api.group(g).canInvite };
+		}, gid);
+		check(viaApi.bea.ok && /^SB-[a-z0-9]+-[A-Z2-9]{10}$/.test(viaApi.bea.code) && viaApi.cat.ok && viaApi.cat.sent === 'invite' && viaApi.catCard,
+			`api.inviteToGroup: a code for someone without SlimeBeep, an invite card for a SlimeBeep friend (${JSON.stringify(viaApi.bea)} ${JSON.stringify(viaApi.cat)})`);
+		check(!viaApi.me.ok && viaApi.canInvite === true, `inviting yourself is refused, and groups() says you can invite (${viaApi.me.why})`);
+		// openInvite: SlimeBeep's own "Invite Dee to…" screen.
+		await p.evaluate(() => SlimeBeep.api.openInvite(14));
+		await wait(200);
+		check(/Invite Dee/.test(await p.$eval('#sb-body', (e) => e.textContent)) && await p.$$eval('[data-invite]', (e) => e.length) === 1, 'api.openInvite opens "Invite Dee to…" with each group you can invite to');
+		await p.click('[data-invite]');
+		const shown = await waitFor(() => p.evaluate(() => /Code: SB-/.test(document.querySelector('#sb-body').textContent)), 4000);
+		check(shown, 'pressing Invite there shows the code for Dee');
+		await p.evaluate((g) => SlimeBeep.api.openGroup(g), gid);
+		await wait(200);
 		const a = await relayJoin(gid, ann, { invite: code });
 		check(!!a.welcome, 'Ann joins with it');
 		a.say('hi from Ann <img src=x onerror="window.pwned=1">');

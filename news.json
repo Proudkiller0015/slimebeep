@@ -82,5 +82,11 @@
     "date": "16 Oct 2026",
     "title": "📢 SlimeBeep 2.9",
     "text": "Other add-ons (like CRABS) can now work together with SlimeBeep, for example to see who is in your SlimeBeep group chats."
+  },
+  {
+    "id": "2.10.0",
+    "date": "16 Oct 2026",
+    "title": "📢 SlimeBeep 2.10",
+    "text": "Other add-ons can now open a chat with someone or invite them to your group chats straight from their own buttons."
   }
 ]

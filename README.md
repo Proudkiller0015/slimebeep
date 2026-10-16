@@ -40,13 +40,18 @@ SlimeBeep has a small read-only API at `window.SlimeBeep.api` for other mods. It
 const sb = window.SlimeBeep?.api;
 if (sb && sb.apiVersion === 1) {
 	sb.groups();
-	// [{ id, name, owner, admins: [memberNumber], anyoneCanInvite,
+	// [{ id, name, owner, admins: [memberNumber], anyoneCanInvite, canInvite,
 	//    members: [{ memberNumber, name, online, role: 'owner' | 'admin' | 'member' }] }]
 	sb.group(id);              // one group, or null
 	sb.slimeBeepFriends();     // member numbers of friends known to have SlimeBeep
 	sb.hasSlimeBeep(12345);    // true / false
 	sb.openGroup(id);          // opens SlimeBeep on that group chat
 	sb.openChat(12345);        // opens SlimeBeep on a chat with that member
+	sb.openInvite(12345);      // opens "Invite them to…", listing the groups you can invite to
+	await sb.inviteToGroup(id, 12345);
+	// a friend with SlimeBeep gets an invite card:   { ok: true, sent: 'invite' }
+	// anyone else gets a code made for them alone:   { ok: true, code: 'SB-…' }  (show or copy it)
+	// not allowed / full / already in it:            { ok: false, why }
 
 	const stop = sb.on('presence', (group) => { /* online members of a group changed */ });
 	sb.on('group', (group) => { /* a group was joined or changed (members, roles, name) */ });
@@ -56,7 +61,7 @@ if (sb && sb.apiVersion === 1) {
 }
 ```
 
-`groups()` is empty until the player is logged in. `apiVersion` only goes up if something changes in a way that breaks existing use; new functions and events are added without changing it.
+`canInvite` says whether the player may invite to that group (admins, or everyone when the group lets anyone invite). `groups()` is empty until the player is logged in. `apiVersion` only goes up if something changes in a way that breaks existing use; new functions and events are added without changing it.
 
 ## Group chats and privacy
 

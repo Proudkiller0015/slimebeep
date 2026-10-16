@@ -13,7 +13,7 @@
 (function () {
 	'use strict';
 
-	const VERSION = '2.9.0';
+	const VERSION = '2.10.0';
 	// Loaded once per page, whatever loads it.
 	if (window.SlimeBeep) return;
 	window.SlimeBeep = { version: VERSION };
@@ -605,7 +605,7 @@
 		const me = loggedIn() ? Player.MemberNumber : 0;
 		const online = new Set([...(g.online || []), me]);
 		return {
-			id: g.id, name: g.name, owner: g.owner, admins: [...g.admins], anyoneCanInvite: !!g.open,
+			id: g.id, name: g.name, owner: g.owner, admins: [...g.admins], anyoneCanInvite: !!g.open, canInvite: canInvite(g, me) && g.members.length < LIMITS.members,
 			members: g.members.map((m) => ({ memberNumber: m.n, name: m.n === me ? myName() : m.name, online: online.has(m.n),
 				role: m.n === g.owner ? 'owner' : g.admins.includes(m.n) ? 'admin' : 'member' })),
 		};
@@ -623,6 +623,10 @@
 		hasSlimeBeep: (memberNumber) => peers.has(memberNumber),
 		/** Opens SlimeBeep on a group chat. */
 		openGroup: (id) => { if (!groups[id]) return false; tab = 'groups'; thread = `g:${id}`; if (!isOpen()) setOpen(true); else render(); return true; },
+		/** Invites someone to a group: a SlimeBeep friend gets an invite card, anyone else a code for them alone. Promise of { ok, sent } / { ok, code } / { ok: false, why }. */
+		inviteToGroup: (id, memberNumber) => inviteToGroup(id, memberNumber),
+		/** Opens SlimeBeep on "Invite <them> to…", listing the groups you can invite to. */
+		openInvite: (memberNumber) => { if (!isNum(memberNumber)) return false; inviteFor = { n: memberNumber, results: {} }; thread = null; tab = 'invitefor'; if (!isOpen()) setOpen(true); else render(); return true; },
 		/** Opens SlimeBeep on a chat with this member number. */
 		openChat: (memberNumber) => { if (!isNum(memberNumber)) return false; thread = memberNumber; if (!isOpen()) setOpen(true); else render(); return true; },
 		/**
@@ -863,7 +867,7 @@
 		}
 		if (p.t === 'invite') {
 			const cb = c.waiters.shift();
-			if (cb && typeof p.code === 'string' && /^[A-Z2-9]{10}$/.test(p.code)) cb(`SB-${gid}-${p.code}`);
+			if (cb) cb(typeof p.code === 'string' && /^[A-Z2-9]{10}$/.test(p.code) ? `SB-${gid}-${p.code}` : null);
 			return;
 		}
 		const why = clean(p.why, 120);
@@ -873,7 +877,10 @@
 			if (groups[gid] && (p.t === 'gone' || /not a member|no such group/.test(why))) dropGroup(gid, why === 'left' ? null : `You're no longer in ${groups[gid].name}`);
 			return;
 		}
-		if (p.t === 'error') notify(`⚠ ${why}`);
+		if (p.t === 'error') {
+			if (/invite|full|already a member|member number/.test(why) && c.waiters.length) c.waiters.shift()(null, why);
+			notify(`⚠ ${why}`);
+		}
 	}
 
 	/** A group's member list from the relay, made safe; you must be in it. */
@@ -956,9 +963,34 @@
 		c.waiters.push(cb);
 		relaySend(id, { t: 'invite', member: member == null ? null : member });
 	}
+	/**
+	 * Invites one person to one group: a SlimeBeep friend gets the invite as a card (a hidden beep),
+	 * anyone else gets a code made for them alone, to pass on however you like. Resolves to
+	 * { ok, sent: 'invite' } or { ok, code } or { ok: false, why }.
+	 */
+	function inviteToGroup(id, n) {
+		const g = groups[id];
+		if (!g) return Promise.resolve({ ok: false, why: 'no such group' });
+		if (!isNum(n) || !loggedIn() || n === Player.MemberNumber) return Promise.resolve({ ok: false, why: 'bad member number' });
+		if (isMember(g, n)) return Promise.resolve({ ok: false, why: 'already a member' });
+		if (!canInvite(g, Player.MemberNumber)) return Promise.resolve({ ok: false, why: 'only admins can invite here' });
+		if (g.members.length >= LIMITS.members) return Promise.resolve({ ok: false, why: 'group is full' });
+		return new Promise((resolve) => {
+			const timer = setTimeout(() => resolve({ ok: false, why: 'no answer from the group chat server' }), 10000);
+			requestInvite(id, n, (code, why) => {
+				clearTimeout(timer);
+				if (!code) return resolve({ ok: false, why: why || 'refused' });
+				if (peers.has(n) && isFriend(n)) {
+					sendHidden(n, { sb: 1, ginv: { code, name: g.name } });
+					resolve({ ok: true, sent: 'invite' });
+				} else resolve({ ok: true, code });
+			});
+		});
+	}
+
 	/** An invite made for one friend, sent to them as a hidden beep (only friends get those). */
 	function inviteFriend(id, n) {
-		requestInvite(id, n, (code) => sendHidden(n, { sb: 1, ginv: { code, name: groups[id] ? groups[id].name : 'Group chat' } }));
+		requestInvite(id, n, (code) => { if (code) sendHidden(n, { sb: 1, ginv: { code, name: groups[id] ? groups[id].name : 'Group chat' } }); });
 	}
 	function joinCode(raw, done) {
 		const m = CODE_RE.exec(String(raw || '').trim());
@@ -1303,6 +1335,7 @@
 		else if (tab === 'newgc') view.innerHTML = tabs + `<div class="sb-body sb-group" id="sb-body">${newGroupHtml()}</div>`;
 		else if (tab === 'wave') view.innerHTML = tabs + `<div class="sb-body sb-group" id="sb-body">${groupHtml()}</div>`;
 		else if (tab === 'bug') view.innerHTML = tabs + `<div class="sb-body sb-group" id="sb-body">${bugHtml()}</div>`;
+		else if (tab === 'invitefor') view.innerHTML = tabs + `<div class="sb-body sb-group" id="sb-body">${inviteForHtml()}</div>`;
 		else {
 			const q = search.toLowerCase();
 			const rows = tab === 'chats' ? chatRows(q) : tab === 'groups' ? groupRows(q) : friendRows(q);
@@ -1331,6 +1364,7 @@
 		if (tab === 'newgc') wireNewGroup();
 		if (tab === 'wave') wireGroup();
 		if (tab === 'bug') wireBug();
+		if (tab === 'invitefor') wireInviteFor();
 		if (tab === 'options') wireOptions();
 	}
 
@@ -1514,6 +1548,7 @@
 				const want = $('sb-gm-for') ? Number($('sb-gm-for').value.replace(/\D/g, '')) : 0;
 				const forWho = isNum(want) ? want : null;
 				requestInvite(id, forWho, (code) => {
+					if (!code) return;
 					// Kept, so it stays on screen when the page redraws (someone joining, say).
 					renderMembers.code = { id, code, forWho };
 					showCode();
@@ -1950,6 +1985,37 @@
 			beep(OWNER, text, false);
 			notify('🐞 Report beeped');
 			status('Beeped to SlimeQueenSamantha. It only arrives if she has you on her friend list; if unsure, use GitHub or Copy too.');
+		});
+	}
+
+	/* "Invite <them> to…": every group you can invite to, an Invite button each (opened by other add-ons too). */
+	let inviteFor = null; // { n, results: { groupId: text } }
+	function inviteForHtml() {
+		if (!inviteFor) return '';
+		const n = inviteFor.n;
+		const name = nameOf(n);
+		const list = Object.values(groups).filter((g) => canInvite(g, Player.MemberNumber));
+		const rows = list.map((g) => {
+			const res = inviteFor.results[g.id];
+			const inside = isMember(g, n);
+			return `<div class="sb-row" style="cursor:default;display:block"><div style="display:flex;align-items:center;gap:8px"><span class="sb-av sb-gav">👥</span>
+				<div class="sb-main"><div class="sb-name">${esc(g.name)}</div><div class="sb-sub">${g.members.length} / ${LIMITS.members} members</div></div>
+				${inside ? '<span class="sb-hint">Already in it</span>' : `<button class="sb-go" data-invite="${esc(g.id)}" ${res ? 'disabled' : ''}>Invite</button>`}</div>
+				${res ? `<div class="sb-hint" style="margin-top:4px">${res}</div>` : ''}</div>`;
+		}).join('');
+		return `<div class="sb-line"><button class="sb-pill" id="sb-if-back">‹ Back</button><b>👥 Invite ${esc(name)}</b></div>
+			<div class="sb-hint" style="margin:2px 0 6px">${peers.has(n) && isFriend(n) ? `${esc(name)} has SlimeBeep: they get an invite card.` : `They get a code to paste in 👥 Groups, made for #${n} only.`}</div>
+			${rows || '<div class="sb-empty">👥 No group chats you can invite to yet.</div>'}`;
+	}
+	function wireInviteFor() {
+		$('sb-if-back').addEventListener('click', () => { inviteFor = null; tab = 'groups'; render(); });
+		for (const b of $('sb-body').querySelectorAll('[data-invite]')) b.addEventListener('click', async () => {
+			const id = b.dataset.invite;
+			b.disabled = true;
+			const r = await inviteToGroup(id, inviteFor.n);
+			inviteFor.results[id] = r.ok ? (r.sent ? '📨 Invite sent!' : `Code: <code style="user-select:all">${esc(r.code)}</code> — give it to them (copied).`) : `⚠ ${esc(r.why)}`;
+			if (r.code) { try { await navigator.clipboard.writeText(r.code); } catch (e) { /* shown to copy by hand */ } }
+			if (tab === 'invitefor') render(true);
 		});
 	}
 
