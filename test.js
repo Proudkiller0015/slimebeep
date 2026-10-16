@@ -154,7 +154,7 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	const chats = await p.$$eval('#sb-body .sb-row', (rows) => rows.map((r) => r.querySelector('.sb-name').textContent + '|' + r.querySelector('.sb-sub').textContent));
 	check(chats.length === 2 && /Cat/.test(chats[0]) && /Ann/.test(chats[1]), `chats newest first, the reaction-only chat left out (${chats.join(', ')})`);
 	check(/You: hey Ann/.test(chats[1]), 'your own last beep shows as "You:", metadata stripped');
-	check(await p.$eval('.sb-head', (e) => /v2\.\d+\.\d+/.test(e.textContent)), 'header shows the version');
+	check(await p.$eval('.sb-head', (e) => /v\d+\.\d+\.\d+/.test(e.textContent)), 'header shows the version');
 	await shot('chats');
 
 	await p.click('#sb-body .sb-row');

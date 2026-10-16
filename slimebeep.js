@@ -15,7 +15,7 @@
 	// The address this copy was loaded from, when it came in a <script src> (FUSAM loads it that way).
 	const LOADED_FROM = (document.currentScript && document.currentScript.src) || '';
 
-	const VERSION = '2.19.2';
+	const VERSION = '3.0.0';
 	// Loaded once per page, whatever loads it.
 	if (window.SlimeBeep) return;
 	window.SlimeBeep = { version: VERSION };

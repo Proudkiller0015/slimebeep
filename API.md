@@ -13,7 +13,7 @@ if (sb && sb.apiVersion === 1) {
 }
 ```
 
-`apiVersion` only goes up if something changes in a way that breaks existing use. New functions and events are added without changing it. `sb.version` is the SlimeBeep version (like `'2.13.0'`).
+`apiVersion` only goes up if something changes in a way that breaks existing use. New functions and events are added without changing it. `sb.version` is the SlimeBeep version (like `'3.0.0'`).
 
 ## Groups
 
@@ -47,10 +47,13 @@ sb.openInvite(12345);      // opens "Invite them to…", listing the groups you 
 ```js
 await sb.inviteToGroup(id, 12345);
 // a friend with SlimeBeep gets an invite card:        { ok: true, sent: 'invite' }
-// a friend without it gets a beep with code + link:   { ok: true, sent: 'beep', code: 'SB-…' }
+// a friend without it gets a beep with the code:       { ok: true, sent: 'beep', code: 'SB-…' }
+// ...but past 3 of those a minute, no beep is sent:    { ok: true, sent: 'later', code: 'SB-…' }
 // anyone else gets a code made for them alone:        { ok: true, code: 'SB-…' }  (show or copy it)
 // not allowed / full / already in it:                 { ok: false, why }
 ```
+
+The beep to a friend without SlimeBeep has no link in it, and at most 3 go out a minute, a few seconds apart, so inviting many people never turns into a burst of beeps. With `sent: 'later'` the code still works: try again in a minute, or pass the code on yourself.
 
 ## Theme add-ons
 

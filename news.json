@@ -190,5 +190,11 @@
     "date": "16 Oct 2026",
     "title": "📢 SlimeBeep 2.19.2",
     "text": "Group invites to friends without SlimeBeep are now a plain beep with the code (no link), and go 3 at a time."
+  },
+  {
+    "id": "3.0.0",
+    "date": "16 Oct 2026",
+    "title": "🎉 SlimeBeep 3.0",
+    "text": "SlimeBeep 3.0: the official launch! Chats, group chats with pictures, mailboxes for offline friends, WaveBeep, mute, emoji and more. Thank you for testing it with me 💖"
   }
 ]
