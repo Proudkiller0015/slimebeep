@@ -45,8 +45,21 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 		window.local = []; window.ServerPlayerIsInChatRoom = () => true; window.ChatRoomSendLocal = (c) => local.push(c);
 		window.PreferenceExtensionsSettings = {};
 		window.PreferenceRegisterExtensionSetting = (x) => { if (PreferenceExtensionsSettings[x.Identifier]) throw new Error('twice'); PreferenceExtensionsSettings[x.Identifier] = x; };
-		window.cleared = 0; window.PreferenceSubscreenExtensionsClear = () => { cleared++; PreferenceExtensionsSettings.SlimeBeep.unload(); };
-		window.MouseIn = () => true; window.DrawCharacter = () => {}; window.DrawButton = () => {};
+		window.cleared = 0; window.PreferenceSubscreenExtensionsClear = () => { cleared++; };
+		// A stand-in for the game's 2000x1000 canvas: draws what the real Draw* calls would, roughly, to look at.
+		window.MouseX = 0; window.MouseY = 0;
+		window.MouseIn = (l, t, w, h) => MouseX >= l && MouseX <= l + w && MouseY >= t && MouseY <= t + h;
+		const cv = document.createElement('canvas'); cv.width = 2000; cv.height = 1000; cv.id = 'MainCanvas';
+		cv.style.cssText = 'position:fixed;left:0;top:0;width:1200px;height:600px;background:#eee;z-index:1';
+		document.body.appendChild(cv);
+		window.MainCanvas = cv.getContext('2d');
+		window.drawn = [];
+		window.DrawCharacter = () => { MainCanvas.fillStyle = '#c9c'; MainCanvas.fillRect(100, 100, 350, 850); };
+		window.DrawText = (t, x, y, c) => { drawn.push(t); MainCanvas.font = '36px Arial'; MainCanvas.fillStyle = c; MainCanvas.textBaseline = 'middle'; MainCanvas.fillText(t, x, y); };
+		window.DrawButton = (l, t, w, h, label, color, img) => { drawn.push(label || img || ''); MainCanvas.fillStyle = color; MainCanvas.fillRect(l, t, w, h); MainCanvas.strokeRect(l, t, w, h);
+			if (label) { const a = MainCanvas.textAlign; MainCanvas.textAlign = 'center'; DrawText(label, l + w / 2, t + h / 2, 'Black'); MainCanvas.textAlign = a; }
+			if (img === 'Icons/Checked.png') { MainCanvas.fillStyle = '#393'; MainCanvas.fillRect(l + 16, t + 16, w - 32, h - 32); } };
+		window.DrawCheckbox = (l, t, w, h, text, on) => { DrawText(text, l + 100, t + 33, 'Black'); DrawButton(l, t, w, h, '', 'White', on ? 'Icons/Checked.png' : ''); };
 		let gameKeys = 0; document.addEventListener('keydown', () => gameKeys++); window.gameKeys = () => gameKeys;
 	};
 	const shot = async (name) => { if (SHOTS) await p.screenshot({ path: `${__dirname}/../sb-${name}.png` }); };
@@ -59,13 +72,18 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 	check(notes.length === 1 && /SlimeBeep v[\d.]+ is ready/.test(notes[0]), 'a first install says hello once in the room chat');
 	check(await p.evaluate(() => Object.keys(PreferenceExtensionsSettings).join() === 'SlimeBeep' && PreferenceExtensionsSettings.SlimeBeep.Image.startsWith('data:image/png')),
 		'listed once in Settings > Extensions, with the slime icon');
-	await p.evaluate(() => { const x = PreferenceExtensionsSettings.SlimeBeep; x.load(); x.run(); });
-	check(await p.$eval('#sb-ext', (e) => /Pop sound/.test(e.textContent) && e.classList.contains('HideOnPopup')), 'its settings screen shows the options');
-	await p.click('#sb-o-sound');
-	check(await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.options')).sound === false), 'and changing one there saves it');
-	await p.click('#sb-o-sound');
-	await p.evaluate(() => PreferenceExtensionsSettings.SlimeBeep.click());
-	check(await p.evaluate(() => cleared === 1 && !document.getElementById('sb-ext')), 'the exit button closes it');
+	const page = await p.evaluate(() => { const x = PreferenceExtensionsSettings.SlimeBeep; x.load(); x.run(); return drawn.join(' | ') + (document.querySelector('#sb-ext') ? ' FLOATING' : ''); });
+	check(/SlimeBeep Settings/.test(page) && /Pop sound/.test(page) && /Icons\/Exit\.png/.test(page) && !/FLOATING/.test(page),
+		'its settings page is drawn on the game canvas like the others (title, checkboxes, exit), no floating window');
+	check(await p.evaluate(() => MainCanvas.textAlign === 'center'), 'and it leaves the canvas text alignment as it found it');
+	await shot('settings');
+	// Click the second checkbox (pop sound): the rows start at 200 and are 85 apart.
+	await p.evaluate(() => { MouseX = 520; MouseY = 200 + 85 + 20; PreferenceExtensionsSettings.SlimeBeep.click(); });
+	check(await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.options')).sound === false), 'clicking a checkbox there changes and saves it');
+	await p.evaluate(() => { PreferenceExtensionsSettings.SlimeBeep.click(); });
+	await p.evaluate(() => { MouseX = 1850; MouseY = 100; PreferenceExtensionsSettings.SlimeBeep.click(); });
+	check(await p.evaluate(() => cleared === 1), 'the exit door leaves it');
+	await p.evaluate(() => { document.getElementById('MainCanvas').remove(); });
 	await wait(1200);
 	check(await p.$eval('#sb-badge', (e) => e.textContent) === '2', 'badge counts 2 unread (a reaction does not count)');
 

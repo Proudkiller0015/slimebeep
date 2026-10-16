@@ -10,5 +10,11 @@
     "date": "16 Oct 2026",
     "title": "📢 SlimeBeep 2.3",
     "text": "🌙 Night mode with a night blue slime (thanks Alyx!), SlimeBeep in Settings > Extensions, and this little note in the room chat after every update."
+  },
+  {
+    "id": "2.3.1",
+    "date": "16 Oct 2026",
+    "title": "📢 SlimeBeep 2.3.1",
+    "text": "SlimeBeep's page in Settings > Extensions now looks like the game's other settings pages."
   }
 ]
