@@ -12,8 +12,10 @@
  */
 (function () {
 	'use strict';
+	// The address this copy was loaded from, when it came in a <script src> (FUSAM loads it that way).
+	const LOADED_FROM = (document.currentScript && document.currentScript.src) || '';
 
-	const VERSION = '2.19.0';
+	const VERSION = '2.19.1';
 	// Loaded once per page, whatever loads it.
 	if (window.SlimeBeep) return;
 	window.SlimeBeep = { version: VERSION };
@@ -70,7 +72,13 @@
 	const PROTO = 'SlimeBeep';
 	const RELAY = 'wss://slimebeep-relay.slimebeep-relay.workers.dev';
 	// A different relay for testing only (set by hand in the console); the real one otherwise.
-	const relayUrl = () => { try { return localStorage.getItem('slimebeep.relay') || RELAY; } catch (e) { return RELAY; } };
+	// Always SlimeBeep's own relay. The only other address it takes is a relay on this computer, for testing.
+	const relayUrl = () => {
+		try {
+			const local = localStorage.getItem('slimebeep.relay');
+			return local && /^ws:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(local) ? local : RELAY;
+		} catch (e) { return RELAY; }
+	};
 	const LIMITS = { name: 40, text: 500, members: 40, admins: 10, groups: 30, perMinute: 60 };
 	let groups = {}; // id -> { id, name, owner, admins: [n], open, members: [{ n, name, kf }], last, picv }
 	let peers = new Set(); // friends known to have SlimeBeep
@@ -780,6 +788,12 @@
 			}
 		} catch (e) { warn(e); }
 	}
+	/*
+	 * Listening to the game's connection. Only two kinds of message are ever looked at (onServer drops
+	 * everything else straight away): AccountBeep (beeps, and SlimeBeep's own hidden ones) and the
+	 * OnlineFriends answer. The catch-all, put first, is only there so a beep is copied before the game or
+	 * another add-on trims or changes it; where the socket has no catch-all, two plain listeners are used.
+	 */
 	const anyListener = (event, data) => onServer(event, data);
 	const beepListener = (data) => onServer('AccountBeep', data);
 	const queryListener = (data) => onServer('AccountQueryResult', data);
@@ -3023,7 +3037,8 @@
 	 * The installed loader fetches this file from raw.githubusercontent.com, which can hand out an old
 	 * copy for a few minutes after an update. GitHub Pages (where FUSAM loads it) has the new one within
 	 * a minute, so before starting, this copy asks Pages which version is current and, if that one is
-	 * newer, runs it instead. Without an answer within 4 seconds, it just starts.
+	 * newer, runs it instead. Without an answer within 4 seconds, it just starts. A copy that came from
+	 * Pages itself (FUSAM, the bookmarklet) is already the newest and starts straight away, with no fetch.
 	 */
 	const PAGES = 'https://proudkiller0015.github.io/slimebeep/slimebeep.js';
 	const newer = (a, b) => {
@@ -3038,7 +3053,7 @@
 			warn(e, 'could not start');
 		}
 	}
-	if (window.SlimeBeepHopped) start();
+	if (window.SlimeBeepHopped || LOADED_FROM.startsWith('https://proudkiller0015.github.io/slimebeep/')) start();
 	else {
 		const ctl = typeof AbortController === 'function' ? new AbortController() : null;
 		const timer = setTimeout(() => { if (ctl) ctl.abort(); }, 4000);

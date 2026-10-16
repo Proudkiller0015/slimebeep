@@ -178,5 +178,11 @@
     "date": "16 Oct 2026",
     "title": "📢 SlimeBeep 2.19",
     "text": "📬 Beeps to an offline friend with SlimeBeep now wait in their mailbox and reach them when they log in, even if you've gone. 🔕 Mute any chat or group with the 🔔 at its top."
+  },
+  {
+    "id": "2.19.1",
+    "date": "16 Oct 2026",
+    "title": "📢 SlimeBeep 2.19.1",
+    "text": "Small tidy-up under the hood: SlimeBeep starts a little faster when loaded from its own site. Nothing to do on your side."
   }
 ]

@@ -602,6 +602,18 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 		await wait(1500);
 		const hop = await p.evaluate(() => ({ v: window.SlimeBeep && window.SlimeBeep.version, buttons: document.querySelectorAll('#sb-toggle').length }));
 		check(hop.v === `${a1}.${b1}.${c1 + 1}` && hop.buttons === 1, `an old copy hands over to the newer one on Pages, which runs once (${hop.v}, ${hop.buttons} button)`);
+		// Loaded from Pages itself (FUSAM, the bookmarklet): it starts straight away and fetches no code.
+		pagesBody = src;
+		const asked = [];
+		const note = (r) => { if (/slimebeep\.js\?t=/.test(r.url())) asked.push(r.url()); };
+		p.on('request', note);
+		await p.reload();
+		await p.evaluate(stub);
+		await p.evaluate(() => makeLog());
+		await p.addScriptTag({ url: 'https://proudkiller0015.github.io/slimebeep/slimebeep.js?v=1' });
+		await wait(1500);
+		p.off('request', note);
+		check(asked.length === 0 && !!await p.$('#sb-toggle') && await p.evaluate(() => !window.SlimeBeepHopped), `loaded from Pages, it starts without fetching its code again (${asked.length} fetches)`);
 		pagesBody = null;
 		await p.reload();
 		await p.evaluate(stub);
