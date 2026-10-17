@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.0.4';
+	const VERSION = '3.0.5';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -513,8 +513,8 @@
 		}
 		return esc(v);
 	};
-	/** Tag for HTML templates: every inserted value is escaped unless it is SafeHtml, so text can never become markup. */
 	/**
+	 * Tag for HTML templates: every inserted value is escaped unless it is SafeHtml, so text can never become markup.
 	 * @param {TemplateStringsArray} strings
 	 * @param {...HtmlValue} values
 	 * @returns {SafeHtml}
@@ -709,14 +709,13 @@
 	}
 	/**
 	 * Whether a beep is another add-on's data rather than a message (never shown): a JSON object or
-	 * array, optionally after a short tag ("KIKILINK/1 {...}"), or, with `typed` (the beep had its own
-	 * BeepType), a CamelCase word like "ReqRoom".
-	 */
-	/**
+	 * array, optionally after a short tag ("KIKILINK/1 {...}"), or, when the beep had its own BeepType,
+	 * a CamelCase word like "ReqRoom". BCT's beeps (BeepType "bctBeep") carry any single word, such as
+	 * "Friends" and "BFLockAcc".
 	 * @param {unknown} msg
-	 * @param {boolean} [typed]
+	 * @param {string} [type] the beep's BeepType
 	 */
-	function isSignal(msg, typed = false) {
+	function isSignal(msg, type = '') {
 		if (typeof msg !== 'string') {
 			return false;
 		}
@@ -724,7 +723,10 @@
 		if (!t) {
 			return false;
 		}
-		if (typed && /^[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+$/.test(t)) {
+		if (type && /^[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+$/.test(t)) {
+			return true;
+		}
+		if (type === 'bctBeep' && /^[A-Za-z]\w*$/.test(t)) {
 			return true;
 		}
 		// It has to parse into a non-empty object (or array after a tag).
@@ -1788,8 +1790,6 @@
 		 * on('group' | 'groupGone' | 'presence' | 'slimeBeepFriend', fn): fn gets a copy each time; returns a function that stops it.
 		 * group: a group was joined or changed (a group, as in groups()); groupGone: { id }; presence: a group whose
 		 * online members changed; slimeBeepFriend: { memberNumber } of a friend just found to have SlimeBeep.
-		 */
-		/**
 		 * @param {string} type
 		 * @param {(data: unknown) => void} fn
 		 * @returns {() => void}
@@ -2219,8 +2219,8 @@
 	 * A hidden beep (BeepType PROTO) from a friend: JSON with `sb: 1` and any of `kf` (their key start),
 	 * picture fields (pictureNews), `ping`/`pong` (SlimeBeep check) or `ginv` (group invite).
 	 * Ignored from non-friends; the sender's member number comes from the game server.
+	 * @param {ServerBeep} d
 	 */
-	/** @param {ServerBeep} d */
 	function onHidden(d) {
 		if (!loggedIn() || !isNum(d.MemberNumber) || typeof d.Message !== 'string' || d.Message.length > 1000) {
 			return;
@@ -3505,8 +3505,8 @@
 	/**
 	 * A beep from the server. If the game's beep log has not listed it 1.5 s later (another add-on took
 	 * it, or its BeepType kept it out), it is added to `hist` here. Leash beeps and add-on data are skipped.
+	 * @param {ServerBeep} d
 	 */
-	/** @param {ServerBeep} d */
 	function catchBeep(d) {
 		if (!d || typeof d.MemberNumber !== 'number' || typeof d.MemberName !== 'string') {
 			return;
@@ -3516,7 +3516,7 @@
 			return;
 		}
 		const msg = typeof d.Message === 'string' ? d.Message : undefined;
-		if (isSignal(msg, !!type)) {
+		if (isSignal(msg, type)) {
 			return;
 		}
 		if (type && !parseBeep(msg).text) {
@@ -4922,8 +4922,8 @@
 	/**
 	 * Joins a chat room like the game's chat search: leaves the current room if the game allows it now,
 	 * then sends ServerRoomJoin; the game handles the answer.
+	 * @param {string} roomName
 	 */
-	/** @param {string} roomName */
 	async function joinRoom(roomName) {
 		const name = String(roomName || '').trim();
 		if (!name || !loggedIn() || Date.now() - joiningRoom < 3000) {

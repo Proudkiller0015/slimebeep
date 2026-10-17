@@ -466,6 +466,9 @@ const check = (ok, what) => {
 			Message: 'lost marker\n{"messageType":"Message","messageColor":"#F4CC00"}',
 		});
 		fire('AccountBeep', { MemberNumber: 13, MemberName: 'Cat', BeepType: 'EBC', Message: 'ReqRoom' });
+		fire('AccountBeep', { MemberNumber: 13, MemberName: 'Cat', BeepType: 'bctBeep', Message: 'Friends' });
+		fire('AccountBeep', { MemberNumber: 13, MemberName: 'Cat', BeepType: 'bctBeep', Message: 'BFLockAcc' });
+		fire('AccountBeep', { MemberNumber: 13, MemberName: 'Cat', BeepType: 'bctBeep', Message: 'see you at the club' });
 		fire('AccountBeep', { MemberNumber: 13, MemberName: 'Cat', BeepType: '', Message: 'KIKILINK/1 {"t":"pq","i":"-9fa1-9ce98fb5ea95"}' });
 		FriendListBeepLog.push({
 			MemberNumber: 13,
@@ -493,7 +496,11 @@ const check = (ok, what) => {
 	await p.click('[data-open="13"]');
 	await wait(200);
 	const cat = await p.$eval('#sb-msgs', (e) => e.textContent);
-	check(!/ReqRoom|KIKILINK/.test(cat), "other add-ons' signals (ReqRoom, KIKILINK/1 {...}) are not shown as beeps");
+	check(
+		!/ReqRoom|KIKILINK|Friends|BFLockAcc/.test(cat),
+		"other add-ons' signals (ReqRoom, KIKILINK/1 {...}, BCT's Friends) are not shown as beeps",
+	);
+	check(/see you at the club/.test(cat), 'but a sentence in a typed beep still shows');
 	const catBubbles = await p.$$eval('.sb-b.them', (e) => e.map((x) => x.firstChild.textContent));
 	check(
 		['lol {hug}', '<3', 'hi', 'HiHi', '[3]', '{}', 'LoveYou'].every((m) => catBubbles.includes(m)),

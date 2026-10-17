@@ -220,5 +220,11 @@
     "date": "16 Oct 2026",
     "title": "📢 SlimeBeep 3.0.4",
     "text": "The window is now its own window: drag it by its top bar and resize it from any edge or corner (double-click an edge for the usual size, ⚙ Put it back resets everything). Group messages no longer show up in one-to-one chats, invites from friends you never beeped arrive, buttons are centred everywhere, and the picture buttons in ⚙ fit."
+  },
+  {
+    "id": "3.0.5",
+    "date": "17 Oct 2026",
+    "title": "📢 SlimeBeep 3.0.5",
+    "text": "BCT's behind-the-scenes beeps (like \"Friends\" between best friends) no longer show up as messages in your chats."
   }
 ]
