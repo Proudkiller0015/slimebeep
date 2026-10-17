@@ -33,7 +33,10 @@ Click the pink slime (drag it anywhere you like; it stays there). A pink dot on 
 - **✨ Actions:** `*giggles*` shows in italics, and a beep that's only an action gets a soft bubble of its own.
 - **📬 Offline beeps:** beep a friend who's offline and, if they have SlimeBeep, it's left in their SlimeBeep mailbox (📬): they get it when they log in, even if you're gone by then. Only their own SlimeBeep can read it. For friends without SlimeBeep (or if the mailbox can't be reached) it waits here instead and goes out the moment they're back online (you need to be online then too); cancel it any time before.
 - **🔕 Mute a chat:** the 🔔 at the top of any chat or group chat turns its sound off (its cards still come). Press it again for sound.
-- **🔗 Links and codes:** web links in chats can be clicked (they open in a new tab; nothing is loaded in SlimeBeep), and a group code gets a **Join** button, in SlimeBeep and in the room chat.
+- **🔗 Links and codes:** web links in chats can be clicked (they open in a new tab), and a group code gets a **Join** button, in SlimeBeep and in the room chat.
+- **🖼 Pictures and GIFs:** a picture link shows the picture under it, and so do Tenor and Giphy links. Pictures from Tenor, Giphy, imgur, Discord, catbox, Reddit and Twitter show straight away; from any other site SlimeBeep asks first (**Show** once, or **Always trust** that site), because loading a picture tells its site who looked. ⚙ can forget the trusted sites.
+- **🎵 Music:** 🎵 in SlimeBeep's header opens a small music player you can drag anywhere. Paste a YouTube link or a sound file link (mp3, ogg, m4a, flac, wav… from catbox, file.garden, Discord, Dropbox or any site) and it plays, without opening YouTube; more songs wait in a queue (⏮ ⏭), and the volume is yours. Song links in chats get a **▶ Play** button that plays them for you only. **Listen along:** open a chat and press **Share** in the player; that friend (if they have SlimeBeep) or everyone in the group gets a **Listen along** button, and whoever presses it hears your song in time with you. You control it; they can leave whenever they like. Nothing ever plays unless you press Play or Listen along.
+- **⬇ Jump to present:** scrolled up to read older messages, you stay there when new ones come in; the button at the bottom says how many and takes you down.
 - **🖼 Group pictures:** admins set one on the group's 👥 page.
 - **🎨 Theme add-ons:** with Themed or BCNeko running, SlimeBeep's page in Settings > Extensions offers **Match my … colours** (off unless you turn it on).
 - **🌙 Night mode:** the moon in the header (or ⚙) switches to navy with a night blue slime.
@@ -51,7 +54,7 @@ SlimeBeep has an API at `window.SlimeBeep.api` (groups, friends with SlimeBeep, 
 
 SlimeBeep runs its own small server on Cloudflare (a Worker with Durable Objects, free plan; the code is in the `relay/` folder). It stores:
 
-- **Group chats:** each group's name, members and roles, open invite codes (7 days), the last 200 messages, and the group's and members' pictures.
+- **Group chats:** each group's name, members and roles, open invite codes (7 days), the last 200 messages, the group's and members' pictures, and the song the group is listening to (its link and where it is, kept 12 hours; never the sound).
 - **Mailboxes:** beeps left for a SlimeBeep friend who was offline, until they read them (at most 14 days).
 
 That's all. Beeps to someone online are ordinary game beeps and never touch the server. In your browser, SlimeBeep keeps your chat history (if **keep** is on), options, friends' pictures and your sign-in key.

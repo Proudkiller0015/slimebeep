@@ -1,7 +1,8 @@
 /**
  * SlimeBeep relay: a Cloudflare Worker with two Durable Object classes.
  *
- * Group (/ws?g=<group id>): a group chat's members, roles, invites and last LIMITS.keep messages.
+ * Group (/ws?g=<group id>): a group chat's members, roles, invites, last LIMITS.keep messages and the
+ * song it is listening to (one small record, replaced on every change).
  * Mailbox (/ws?m=<member number>): beeps left for an offline player, readable only with the key they
  * were addressed to.
  *
@@ -54,6 +55,12 @@ const LIMITS = {
 	openUses: 20,
 	/** Most messages a group takes per day. */
 	perDay: 2000,
+	/** Longest song link. */
+	songUrl: 300,
+	/** Longest song title. */
+	songTitle: 100,
+	/** Hours a group's song is kept for members who connect later. */
+	songHours: 12,
 };
 /** A group id. */
 const ID_RE = /^[a-z0-9]{8,24}$/;
@@ -137,7 +144,8 @@ export default {
 
 /**
  * One group chat. Storage: 'meta' { name, owner, admins, open, created, pic }, 'members' (member number ->
- * { n, name, pub, joined, pic }), 'invites' (secret -> { member, by, exp, uses }) and 'msg:<seq>' messages.
+ * { n, name, pub, joined, pic }), 'invites' (secret -> { member, by, exp, uses }), 'msg:<seq>' messages and
+ * 'music' { u, ti, p, pl, d, by, name, at }: the song playing, only its link and where it is, never the sound.
  */
 export class Group extends DurableObject {
 	constructor(ctx, env) {
@@ -172,7 +180,7 @@ export class Group extends DurableObject {
 
 	/**
 	 * A client message (JSON with `t`). Before sign-in only 'auth'; then 'say', 'history', 'invite', 'kick',
-	 * 'admin', 'owner', 'rename', 'open', 'profile', 'gpic', 'leave' and 'disband'. Rate limited per connection.
+	 * 'admin', 'owner', 'rename', 'open', 'profile', 'gpic', 'music', 'musicEnd', 'leave' and 'disband'. Rate limited per connection.
 	 */
 	async webSocketMessage(ws, raw) {
 		const att = ws.deserializeAttachment();
@@ -228,6 +236,10 @@ export class Group extends DurableObject {
 					return await this.profile(att.member, p);
 				case 'gpic':
 					return await this.groupPic(att.member, p.pic);
+				case 'music':
+					return await this.setMusic(att.member, p);
+				case 'musicEnd':
+					return await this.endMusic(att.member);
 				case 'leave':
 					return await this.leave(att.member);
 				case 'disband':
@@ -347,6 +359,11 @@ export class Group extends DurableObject {
 		}
 		if (this.meta.pic) {
 			this.send(ws, { t: 'gpic', data: this.meta.pic });
+		}
+		const music = await this.ctx.storage.get('music');
+		if (music && Date.now() - music.at < LIMITS.songHours * 36e5) {
+			const { at, ...song } = music;
+			this.send(ws, { t: 'music', music: song, age: Date.now() - at });
 		}
 		this.history(ws, p.after);
 		this.broadcast({ t: 'roster', roster: this.roster() });
@@ -541,6 +558,33 @@ export class Group extends DurableObject {
 		await this.save();
 		await this.note(pic ? `${this.members[by].name} changed the group picture` : `${this.members[by].name} removed the group picture`);
 		this.broadcast({ t: 'gpic', data: this.meta.pic || null });
+	}
+
+	/**
+	 * The song a member shares with the group (its host; a member who starts their own takes over).
+	 * Each player plays the link itself; only this record is kept.
+	 */
+	async setMusic(member, p) {
+		const u = typeof p.u === 'string' && p.u.length <= LIMITS.songUrl && /^https:\/\/[^\s<>"']+$/.test(p.u) ? p.u : '';
+		const pos = typeof p.p === 'number' && Number.isFinite(p.p) && p.p >= 0 && p.p <= 86400 ? p.p : -1;
+		const dur = typeof p.d === 'number' && Number.isFinite(p.d) && p.d >= 0 && p.d <= 86400 ? p.d : 0;
+		if (!u || pos < 0 || typeof p.pl !== 'boolean') {
+			return;
+		}
+		const m = this.members[member];
+		const song = { u, ti: clean(p.ti, LIMITS.songTitle), p: pos, pl: p.pl, d: dur, by: member, name: m.name };
+		await this.ctx.storage.put('music', { ...song, at: Date.now() });
+		this.broadcast({ t: 'music', music: song, age: 0 });
+	}
+
+	/** The host stops sharing their song. */
+	async endMusic(member) {
+		const music = await this.ctx.storage.get('music');
+		if (!music || music.by !== member) {
+			return;
+		}
+		await this.ctx.storage.delete('music');
+		this.broadcast({ t: 'music', music: null, by: member });
 	}
 
 	/** A member leaves; ownership passes on, and an empty group is deleted. */

@@ -49,6 +49,24 @@ async function relayJoin(gid, who, fields = {}) {
 	c.welcome = c.last('welcome');
 	return c;
 }
+/** Three seconds of silence as a WAV file (8 kHz, 8-bit mono), for the music player. */
+const SILENCE = (() => {
+	const n = 24000;
+	const b = Buffer.alloc(44 + n, 128);
+	b.write('RIFF', 0);
+	b.writeUInt32LE(36 + n, 4);
+	b.write('WAVEfmt ', 8);
+	b.writeUInt32LE(16, 16);
+	b.writeUInt16LE(1, 20);
+	b.writeUInt16LE(1, 22);
+	b.writeUInt32LE(8000, 24);
+	b.writeUInt32LE(8000, 28);
+	b.writeUInt16LE(1, 32);
+	b.writeUInt16LE(8, 34);
+	b.write('data', 36);
+	b.writeUInt32LE(n, 40);
+	return b;
+})();
 const waitFor = async (fn, ms) => {
 	const end = Date.now() + ms;
 	while (Date.now() < end) {
@@ -92,6 +110,25 @@ const check = (ok, what) => {
 		}
 		if (r.url().includes('/news.json')) {
 			return r.respond({ status: 200, contentType: 'application/json', headers: cors, body: newsBody });
+		}
+		// File hosts send songs as downloads (octet-stream, nosniff, attachment); a Dropbox share page only with raw=1.
+		if (
+			/^https:\/\/(files\.catbox\.moe|file\.garden|cdn\.discordapp\.com)\/.*\.wav(\?|$)/.test(r.url()) ||
+			/^https:\/\/www\.dropbox\.com\/.*\.wav\?.*raw=1/.test(r.url())
+		) {
+			return r.respond({
+				status: 200,
+				contentType: 'application/octet-stream',
+				headers: { ...cors, 'X-Content-Type-Options': 'nosniff', 'Content-Disposition': 'attachment' },
+				body: SILENCE,
+			});
+		}
+		if (r.url() === 'https://example.com/music/song.wav') {
+			return r.respond({ status: 200, contentType: 'audio/wav', headers: cors, body: SILENCE });
+		}
+		// The YouTube player is left out: the tests check what SlimeBeep asks of it.
+		if (r.url().startsWith('https://www.youtube-nocookie.com/')) {
+			return r.respond({ status: 200, contentType: 'text/html', body: '<!doctype html><title>player</title>' });
 		}
 		return r.continue();
 	});
@@ -1089,6 +1126,389 @@ const check = (ok, what) => {
 		await p.click('#sb-msgs .sb-b:last-child button.sb-joincode');
 		await wait(300);
 		check(await p.evaluate(() => /Slime Squad/.test(document.querySelector('.sb-thead').textContent)), 'and it opens the group');
+		await tap('#sb-back');
+
+		// Picture links show the picture; a site that isn't trusted asks first.
+		await p.evaluate(() => {
+			for (const m of [
+				'https://tenor.com/view/cat-dance-gif-7523542997650649169',
+				'https://giphy.com/gifs/happy-dance-JIX9t2j0ZTN9S',
+				'https://i.imgur.com/abc123.png?x=1&y=2',
+				'https://example.com/tracker.gif',
+				'http://i.imgur.com/plain.png',
+			]) {
+				FriendListBeepLog.push({ MemberNumber: 12, MemberName: 'Bea', Sent: false, Read: false, Time: new Date(), Message: m });
+			}
+		});
+		await wait(1300);
+		/** The chat's pictures and trust questions. */
+		const picsNow = () =>
+			p.evaluate(() => {
+				SlimeBeep.api.openChat(12);
+				return {
+					src: [...document.querySelectorAll('#sb-msgs .sb-embed img')].map((x) => x.getAttribute('src')),
+					policy: [...document.querySelectorAll('#sb-msgs .sb-embed img')].every((x) => x.referrerPolicy === 'no-referrer'),
+					ask: [...document.querySelectorAll('#sb-msgs [data-pic-trust]')].map((x) => x.dataset.picTrust),
+				};
+			});
+		const pics = await picsNow();
+		check(
+			JSON.stringify(pics.src) ===
+				JSON.stringify([
+					'https://tenor.com/view/cat-dance-gif-7523542997650649169.gif',
+					'https://i.giphy.com/JIX9t2j0ZTN9S.gif',
+					'https://i.imgur.com/abc123.png?x=1&y=2',
+				]) &&
+				pics.policy &&
+				JSON.stringify(pics.ask) === '["example.com"]',
+			`Tenor, Giphy and imgur links show their picture, example.com asks first, http:// stays a link (${JSON.stringify(pics)})`,
+		);
+		await wait(2500);
+		await shot('chat-pictures');
+		await p.click('#sb-msgs [data-pic-once]');
+		await wait(200);
+		const once = await picsNow();
+		check(once.src.includes('https://example.com/tracker.gif') && !once.ask.length, `Show loads that picture (${JSON.stringify(once)})`);
+		await p.evaluate(() =>
+			FriendListBeepLog.push({
+				MemberNumber: 12,
+				MemberName: 'Bea',
+				Sent: false,
+				Read: false,
+				Time: new Date(),
+				Message: 'https://example.com/other.png',
+			}),
+		);
+		await wait(1300);
+		const again = await picsNow();
+		check(
+			JSON.stringify(again.ask) === '["example.com"]',
+			`but only that one: a second picture from there asks again (${JSON.stringify(again)})`,
+		);
+		await p.click('#sb-msgs [data-pic-trust]');
+		await wait(200);
+		const trusted = await picsNow();
+		const trustSaved = await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.options') || '{}').trustedHosts);
+		check(
+			trusted.src.includes('https://example.com/other.png') && !trusted.ask.length && JSON.stringify(trustSaved) === '["example.com"]',
+			`Always trust shows every picture from there and is remembered (${JSON.stringify({ trusted, trustSaved })})`,
+		);
+		await p.evaluate(() => SlimeBeep.api.openChat(12));
+
+		// Reading older messages: a new one doesn't move you, "Jump to present" takes you down.
+		await p.evaluate(() => {
+			for (let i = 0; i < 40; i++) {
+				FriendListBeepLog.push({ MemberNumber: 12, MemberName: 'Bea', Sent: false, Read: true, Time: new Date(), Message: `old ${i}` });
+			}
+			SlimeBeep.api.openChat(12);
+		});
+		await wait(1300);
+		const atOpen = await p.$eval('#sb-msgs', (b) => ({
+			bottom: b.scrollHeight - b.scrollTop - b.clientHeight < 40,
+			jump: document.getElementById('sb-jump').classList.contains('on'),
+		}));
+		check(atOpen.bottom && !atOpen.jump, `a chat opens at the newest message, no jump button (${JSON.stringify(atOpen)})`);
+		const readTop = await p.$eval('#sb-msgs', (b) => {
+			b.scrollTop = 100;
+			b.dispatchEvent(new Event('scroll'));
+			return b.scrollTop;
+		});
+		await p.evaluate(() =>
+			FriendListBeepLog.push({ MemberNumber: 12, MemberName: 'Bea', Sent: false, Read: false, Time: new Date(), Message: 'a new one' }),
+		);
+		await wait(1300);
+		const reading = await p.$eval('#sb-msgs', (b) => ({
+			top: b.scrollTop,
+			shown: /a new one/.test(b.textContent),
+			jump: document.getElementById('sb-jump').classList.contains('on') && document.getElementById('sb-jump').textContent.trim(),
+		}));
+		check(
+			reading.shown && Math.abs(reading.top - readTop) < 2 && reading.jump === '1 new message',
+			`a new message while you read older ones leaves you there and counts it on the jump button (${JSON.stringify({ readTop, reading })})`,
+		);
+		await shot('chat-jump');
+		await p.click('#sb-jump');
+		await wait(900);
+		const jumped = await p.$eval('#sb-msgs', (b) => ({
+			bottom: b.scrollHeight - b.scrollTop - b.clientHeight < 40,
+			jump: document.getElementById('sb-jump').classList.contains('on'),
+		}));
+		check(jumped.bottom && !jumped.jump, `Jump to present goes to the newest message and hides itself (${JSON.stringify(jumped)})`);
+		await p.evaluate(() =>
+			FriendListBeepLog.push({ MemberNumber: 12, MemberName: 'Bea', Sent: false, Read: false, Time: new Date(), Message: 'one more' }),
+		);
+		await wait(1300);
+		check(
+			await p.$eval(
+				'#sb-msgs',
+				(b) => /one more/.test(b.lastElementChild.textContent) && b.scrollHeight - b.scrollTop - b.clientHeight < 40,
+			),
+			'at the newest message, new ones keep showing',
+		);
+		await tap('#sb-back');
+
+		// ---- 🎵 The music player: your own songs, and listening along to a friend's or a group's.
+		const YT = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+		const WAV = 'https://example.com/music/song.wav';
+		await p.evaluate(() => {
+			for (const m of [
+				'https://youtu.be/dQw4w9WgXcQ',
+				'https://music.youtube.com/watch?v=dQw4w9WgXcQ&si=x',
+				'https://www.youtube.com/shorts/dQw4w9WgXcQ',
+				'https://example.com/music/song.wav',
+				'http://example.com/x.mp3',
+				'https://www.youtube.com/watch?v=short',
+			]) {
+				FriendListBeepLog.push({ MemberNumber: 12, MemberName: 'Bea', Sent: false, Read: true, Time: new Date(), Message: m });
+			}
+		});
+		await wait(1300);
+		const plays = await p.evaluate(() => {
+			SlimeBeep.api.openChat(12);
+			return [...document.querySelectorAll('#sb-msgs [data-play]')].map((b) => b.dataset.play);
+		});
+		check(
+			JSON.stringify(plays) ===
+				JSON.stringify([
+					'https://youtu.be/dQw4w9WgXcQ',
+					'https://music.youtube.com/watch?v=dQw4w9WgXcQ&si=x',
+					'https://www.youtube.com/shorts/dQw4w9WgXcQ',
+					WAV,
+				]),
+			`YouTube links (youtu.be, music, shorts) and sound files get ▶ Play; http:// and a broken video id don't (${JSON.stringify(plays)})`,
+		);
+		/** What the music player shows and plays. */
+		const player = () =>
+			p.evaluate(() => {
+				const box = document.getElementById('sb-mu');
+				const a = box.querySelector('audio');
+				const f = box.querySelector('iframe');
+				return {
+					open: box.classList.contains('on'),
+					title: document.getElementById('sb-mu-title').textContent,
+					status: document.getElementById('sb-mu-status').textContent,
+					share: document.getElementById('sb-mu-share').textContent,
+					shareOff: document.getElementById('sb-mu-share').disabled,
+					playOff: document.getElementById('sb-mu-play').disabled,
+					mute: document.getElementById('sb-mu-mute').textContent,
+					queue: [...box.querySelectorAll('.sb-mu-song')].map((b) => b.textContent),
+					audio: a ? { playing: !a.paused, muted: a.muted, volume: a.volume, src: a.src } : null,
+					yt: f ? f.src : null,
+				};
+			});
+		/** The listen-along line at the top of the open chat. */
+		const jamLine = () => p.evaluate(() => (document.querySelector('#sb-view .sb-jamline') || { textContent: '' }).textContent);
+		/** Music fields of the hidden beeps sent to a member. */
+		const musicTo = (n) =>
+			p.evaluate(
+				(m) =>
+					hidden
+						.filter((h) => h.MemberNumber === m)
+						.map((h) => JSON.parse(h.Message))
+						.filter((x) => x.music || x.musicEnd)
+						.map((x) => x.music || 'end'),
+				n,
+			);
+		check(!(await player()).open, 'the music player stays closed until you open it');
+		await p.click('#sb-music');
+		await wait(200);
+		const empty = await player();
+		check(empty.open && empty.title === 'Nothing playing' && empty.playOff, `🎵 opens the music player, empty (${JSON.stringify(empty)})`);
+		await p.type('#sb-mu-link', 'https://example.com/not-a-song.html');
+		await p.keyboard.press('Enter');
+		await wait(200);
+		check(
+			/Paste a YouTube link/.test(await p.$eval('#sb-toast', (e) => e.textContent)) && !(await player()).audio,
+			'a link that is not a song is refused',
+		);
+		await p.$eval('#sb-mu-link', (e) => {
+			e.value = '';
+		});
+		await p.evaluate(() => {
+			hidden.length = 0;
+		});
+		await p.type('#sb-mu-link', WAV);
+		await p.keyboard.press('Enter');
+		await wait(800);
+		const mine = await player();
+		check(
+			mine.title === 'song' &&
+				mine.status === 'Only you' &&
+				mine.audio &&
+				mine.audio.playing &&
+				!mine.audio.muted &&
+				Math.abs(mine.audio.volume - 0.7) < 0.01 &&
+				mine.queue.length === 1 &&
+				(await p.evaluate(() => hidden.length)) === 0,
+			`a pasted song plays for you only, at the saved volume, and nothing is sent (${JSON.stringify(mine)})`,
+		);
+		await shot('music');
+		await p.$eval('#sb-mu-vol', (e) => {
+			e.value = '30';
+			e.dispatchEvent(new Event('input'));
+		});
+		await p.click('#sb-mu-mute');
+		await wait(100);
+		const quiet = await player();
+		check(
+			Math.abs(quiet.audio.volume - 0.3) < 0.01 && quiet.audio.muted && quiet.mute === '🔇',
+			`the volume slider and 🔇 work (${JSON.stringify(quiet.audio)})`,
+		);
+		await p.click('#sb-mu-mute');
+		await p.click('#sb-mu-play');
+		await wait(200);
+		check(!(await player()).audio.playing, '⏯ pauses it');
+		// A second song waits in the queue; ⏭ plays it.
+		await p.type('#sb-mu-link', YT);
+		await p.keyboard.press('Enter');
+		await wait(200);
+		const queued = await player();
+		check(
+			queued.queue.length === 2 && !queued.yt && queued.title === 'song',
+			`a song added while one plays waits in the queue (${JSON.stringify(queued.queue)})`,
+		);
+		await p.click('#sb-mu-next');
+		await wait(300);
+		const second = await player();
+		check(
+			!!second.yt &&
+				second.yt.startsWith('https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?') &&
+				!second.audio &&
+				/^▶/.test(second.queue[1]),
+			`⏭ plays the next song (${JSON.stringify(second)})`,
+		);
+		// ▶ in a chat plays the song now, for you only.
+		await p.click(`#sb-msgs [data-play="${WAV}"]`);
+		await wait(800);
+		const fromChat = await player();
+		check(
+			fromChat.title === 'song' &&
+				fromChat.audio &&
+				fromChat.audio.playing &&
+				fromChat.queue.length === 3 &&
+				(await p.evaluate(() => hidden.length)) === 0,
+			`▶ Play in a chat plays it for you, sending nothing (${JSON.stringify(fromChat)})`,
+		);
+		check(
+			/doesn't have SlimeBeep/.test(fromChat.share) && fromChat.shareOff,
+			`Bea has no SlimeBeep, so there is no sharing with her (${fromChat.share})`,
+		);
+		// Sharing with Cat: she gets the song and a Listen along button; nothing plays for her on its own.
+		await p.evaluate(() => SlimeBeep.api.openChat(13));
+		await wait(200);
+		check((await player()).share === '🎧 Share with Cat', "in Cat's chat the player offers to share with her");
+		await p.click('#sb-mu-share');
+		await wait(600);
+		const toCat = await musicTo(13);
+		check(
+			toCat.length === 1 && toCat[0].u === WAV && toCat[0].pl === true && /You're sharing song/.test(await jamLine()),
+			`Share sends Cat the song and where it is, and her chat says you're sharing (${JSON.stringify(toCat)})`,
+		);
+		await p.click('#sb-mu-play');
+		await wait(600);
+		const paused = await musicTo(13);
+		check(paused.length === 2 && paused[1].pl === false, 'as the host, pausing pauses it for Cat too');
+		await p.click('#sb-mu-share');
+		await wait(600);
+		check(JSON.stringify((await musicTo(13)).slice(-1)) === '["end"]' && !(await jamLine()), 'Stop sharing tells Cat it ended');
+		// Cat shares: a card and a Listen along line; nothing loads until you press it.
+		await p.click('#sb-mu-x');
+		await wait(200);
+		await hide(13, 'Cat', { sb: 1, music: { u: YT, ti: 'Never Gonna', p: 30, pl: true, d: 214 } });
+		await wait(500);
+		const offered = await player();
+		const catCard = await p.evaluate(() =>
+			[...document.querySelectorAll('.sb-card')].some((c) => /Cat is listening to music/.test(c.textContent)),
+		);
+		check(
+			!offered.open && !offered.yt && !offered.audio && catCard && /Cat is listening to Never Gonna/.test(await jamLine()),
+			`Cat's song is offered (card and Listen along), and nothing plays on its own (${JSON.stringify({ offered, catCard })})`,
+		);
+		await shot('music-offered');
+		await p.click('#sb-view [data-jam=join]');
+		await wait(400);
+		const along = await player();
+		check(
+			along.open &&
+				!!along.yt &&
+				/[?&]start=3[01]\b/.test(along.yt) &&
+				/[?&]mute=0/.test(along.yt) &&
+				/Listening along with Cat/.test(along.status) &&
+				along.playOff &&
+				/Listening along with Cat/.test(await jamLine()),
+			`Listen along plays it with sound at Cat's time; only Cat controls it (${JSON.stringify(along)})`,
+		);
+		await shot('music-along');
+		await hide(13, 'Cat', { sb: 1, music: { u: YT, ti: 'Never Gonna', p: 45, pl: false, d: 214 } });
+		await wait(300);
+		check((await p.$eval('#sb-mu-play', (e) => e.title)) === 'Play', 'when Cat pauses, it pauses here');
+		await hide(13, 'Cat', { sb: 1, musicEnd: 1 });
+		await wait(300);
+		const ended = await player();
+		check(
+			!ended.yt && !ended.audio && /Cat stopped sharing/.test(await p.$eval('#sb-toast', (e) => e.textContent)) && !(await jamLine()),
+			`when Cat stops sharing, it stops here and the line goes (${JSON.stringify(ended)})`,
+		);
+		// A group: Share sends the song to the relay; Ann's shared song is offered, followed, and ends.
+		await p.evaluate((g) => SlimeBeep.api.openGroup(g), gid);
+		await wait(300);
+		await p.type('#sb-mu-link', WAV);
+		await p.keyboard.press('Enter');
+		await wait(500);
+		await p.click('#sb-mu-share');
+		await wait(600);
+		const toGroup = a.last('music');
+		check(
+			!!toGroup && !!toGroup.music && toGroup.music.u === WAV && toGroup.music.by === 1,
+			`Share in a group sends the song to everyone in it (${JSON.stringify(toGroup)})`,
+		);
+		a.send({ t: 'music', u: YT, ti: 'Group song', p: 5, pl: true, d: 214 });
+		await wait(600);
+		check(
+			/Ann is listening to Group song/.test(await jamLine()) && /Slime Squad/.test(await p.$eval('#sb-toast', (e) => e.textContent)),
+			'when Ann shares in the group, hers is the shared song now and yours stops being shared',
+		);
+		await p.click('#sb-view [data-jam=join]');
+		await wait(400);
+		check(/Listening along with Ann/.test((await player()).status), 'Listen along follows Ann');
+		a.send({ t: 'musicEnd' });
+		await wait(600);
+		check(!(await player()).yt && !(await jamLine()), 'and stops when Ann stops sharing');
+		// Songs on file hosts play too: catbox, file.garden, Discord, and a Dropbox share link (as its file).
+		const HOSTED = [
+			'https://files.catbox.moe/ab12cd.wav',
+			'https://file.garden/ZxY9/My%20Song.wav',
+			'https://cdn.discordapp.com/attachments/1/2/tune.wav?ex=abc&is=def',
+			'https://www.dropbox.com/scl/fi/xyz/box.wav?rlkey=k&dl=0',
+		];
+		await p.evaluate((links) => {
+			for (const m of links) {
+				FriendListBeepLog.push({ MemberNumber: 12, MemberName: 'Bea', Sent: false, Read: true, Time: new Date(), Message: m });
+			}
+		}, HOSTED);
+		await wait(1300);
+		await p.evaluate(() => SlimeBeep.api.openChat(12));
+		await wait(200);
+		const hosted = [];
+		for (const link of HOSTED) {
+			await p.click(`#sb-msgs [data-play="${link}"]`);
+			await wait(700);
+			const now = await player();
+			hosted.push([now.title, !!now.audio && now.audio.playing, now.audio ? now.audio.src : null]);
+		}
+		check(
+			JSON.stringify(hosted.map((h) => h.slice(0, 2))) ===
+				JSON.stringify([
+					['ab12cd', true],
+					['My Song', true],
+					['tune', true],
+					['box', true],
+				]) &&
+				/[?&]raw=1/.test(hosted[3][2]) &&
+				!/dl=0/.test(hosted[3][2]),
+			`catbox, file.garden, Discord and Dropbox links play, named after their file (${JSON.stringify(hosted)})`,
+		);
+		await p.click('#sb-mu-x');
 		await tap('#sb-back');
 
 		// The game's own chat: a Join button after a group code, for SlimeBeep users.

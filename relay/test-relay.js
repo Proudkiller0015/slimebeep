@@ -203,6 +203,38 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 	await wait(300);
 	check(a.last('gpic').data === null, 'and it can be removed');
 
+	// A song for the group: any member sets it, everyone gets it, newcomers get it with its age.
+	const song = { u: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', ti: 'A song', p: 12.5, pl: true, d: 214 };
+	c3.send({ t: 'music', ...song });
+	await wait(300);
+	const heard = a.last('music');
+	check(
+		heard && heard.music.u === song.u && heard.music.p === 12.5 && heard.music.by === 13 && heard.music.name === 'Cat' && heard.age === 0,
+		`a member plays a song and everyone gets it, with who played it (${JSON.stringify(heard)})`,
+	);
+	c3.send({ t: 'music', ...song, u: 'http://example.com/a.mp3' });
+	c3.send({ t: 'music', ...song, p: -1 });
+	c3.send({ t: 'music', ...song, pl: 'yes' });
+	await wait(300);
+	check(a.got.filter((x) => x.t === 'music').length === 1, 'a song without https, a proper time or playing/paused is ignored');
+	await wait(1000);
+	const c5 = await connect(gid, cat);
+	const stored = c5.last('music');
+	check(
+		stored && stored.music.u === song.u && stored.age >= 1000 && stored.age < 5000,
+		`signing in brings the song and how long ago it was set, so players can catch up (${JSON.stringify(stored)})`,
+	);
+	c5.ws.close();
+	a.send({ t: 'musicEnd' });
+	await wait(300);
+	check(a.last('music').music !== null, "only the member sharing the song can stop it (Ann can't stop Cat's)");
+	c3.send({ t: 'musicEnd' });
+	await wait(300);
+	check(a.last('music').music === null && a.last('music').by === 13, 'Cat stops sharing and everyone is told');
+	const c6 = await connect(gid, cat);
+	check(!c6.got.some((x) => x.t === 'music'), 'and nobody signing in later gets it');
+	c6.ws.close();
+
 	a.send({ t: 'leave' });
 	await wait(300);
 	check(c3.last('roster').roster.owner === 13, 'when the owner leaves, the group passes to an admin');

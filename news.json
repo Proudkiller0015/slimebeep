@@ -232,5 +232,11 @@
     "date": "17 Oct 2026",
     "title": "📢 SlimeBeep 3.0.6",
     "text": "Group invites now go as a normal beep with a Join button, so you can see them in your chat too, and they arrive the same way your beeps do. Send invites tells you how it went, and ⚙'s pop-up setting has a clearer name. Night mode no longer tints profile pictures, and \"Let them join me\" now starts off for new players."
+  },
+  {
+    "id": "3.0.7",
+    "date": "17 Oct 2026",
+    "title": "📢 SlimeBeep 3.0.7",
+    "text": "🎵 A music player: press 🎵, paste a YouTube or mp3 link and listen, with a queue and your own volume. Share it in a chat and friends can listen along in time with you. Picture and GIF links now show the picture (sites SlimeBeep doesn't know ask first), and reading older messages no longer jumps you down: Jump to present takes you back."
   }
 ]

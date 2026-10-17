@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.0.6';
+	const VERSION = '3.0.7';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -55,6 +55,14 @@
 		recentEmoji: [],
 		/** @type {string[]} Chats that make no sound: 'n:<member number>' or 'g:<group id>'. */
 		muted: [],
+		/** @type {string[]} Sites besides EMBED_HOSTS whose pictures show in chats without asking. */
+		trustedHosts: [],
+		/** Music player volume, 0 to 100. */
+		musicVolume: 70,
+		/** Whether the music player is muted. */
+		musicMuted: false,
+		/** @type {{ x: number, y: number } | null} Where the music player was dragged to, in px; null for bottom left. */
+		musicPos: null,
 		/** @type {Picture | null} Your profile picture. */
 		pfp: null,
 		/** Version and missing game parts already warned about by gameCheck. */
@@ -815,8 +823,83 @@
 	const isAction = (text) => /^\*{1,2}[^*\n]+\*{1,2}$/.test(String(text).trim());
 	/** Group invite codes inside a text. */
 	const CODE_IN = /SB-[a-z0-9]{8,24}-[A-Z2-9]{10}/g;
+	/** @type {Record<string, string>} Undoes ESCAPES. */
+	const UNESCAPES = Object.fromEntries(Object.entries(ESCAPES).map(([c, e]) => [e, c]));
+	/** Image hosts whose pictures show in chats without asking (more can be trusted, see opts.trustedHosts). */
+	const EMBED_HOSTS = new Set([
+		'media.tenor.com',
+		'media1.tenor.com',
+		'c.tenor.com',
+		'media.giphy.com',
+		'media0.giphy.com',
+		'media1.giphy.com',
+		'media2.giphy.com',
+		'media3.giphy.com',
+		'media4.giphy.com',
+		'i.giphy.com',
+		'i.imgur.com',
+		'cdn.discordapp.com',
+		'media.discordapp.net',
+		'files.catbox.moe',
+		'i.redd.it',
+		'pbs.twimg.com',
+	]);
 	/**
-	 * A message as HTML: escaped, with *actions* in italics, clickable links (new tab) and a Join button after group codes.
+	 * The picture behind a link: a picture file on any https site, or the GIF of a Tenor or Giphy page.
+	 * @param {string} link
+	 * @returns {{ src: string, host: string } | null}
+	 */
+	const picOf = (link) => {
+		let url;
+		try {
+			url = new URL(link);
+		} catch (e) {
+			return null;
+		}
+		if (url.protocol !== 'https:') {
+			return null;
+		}
+		const host = url.hostname.replace(/^www\./, '');
+		// Tenor answers a page address with ".gif" added by redirecting to the GIF itself.
+		const tenor = host === 'tenor.com' && /^(?:\/[a-z]{2}(?:-[A-Z]{2})?)?(\/view\/[\w-]+-\d+)$/.exec(url.pathname);
+		if (tenor) {
+			return { src: `https://tenor.com${tenor[1]}.gif`, host: 'media.tenor.com' };
+		}
+		const giphy = host === 'giphy.com' && /^\/gifs\/(?:[\w-]*-)?([A-Za-z0-9]+)\/?$/.exec(url.pathname);
+		if (giphy) {
+			return { src: `https://i.giphy.com/${giphy[1]}.gif`, host: 'i.giphy.com' };
+		}
+		return /\.(?:png|jpe?g|gif|webp)$/i.test(url.pathname) ? { src: url.href, host } : null;
+	};
+	/** @type {Set<string>} Pictures from untrusted sites shown once this visit with "Show". */
+	const shownOnce = new Set();
+	/** @type {Map<string, { w: number, h: number }>} Sizes of the chat pictures already loaded, by address, so a redraw keeps their space before they load again. */
+	const picSizes = new Map();
+	/** Largest size of a picture in a chat, in px. */
+	const EMBED_MAX = { w: 220, h: 240 };
+	/**
+	 * A chat picture under its link, in the space it took last time when it has loaded before. A picture
+	 * from a site that isn't trusted asks first, since loading it tells that site who opened the chat.
+	 * @param {string} link the link, escaped
+	 * @param {{ src: string, host: string }} pic
+	 */
+	const embedHtml = (link, pic) => {
+		const src = esc(pic.src);
+		if (!EMBED_HOSTS.has(pic.host) && !opts.trustedHosts.includes(pic.host) && !shownOnce.has(pic.src)) {
+			const host = esc(pic.host);
+			return `<span class="sb-asktrust">🖼 A picture from <b>${host}</b> <button class="sb-pill" data-pic-once="${src}">Show</button> <button class="sb-pill" data-pic-trust="${host}">Always trust ${host}</button></span>`;
+		}
+		const size = picSizes.get(pic.src);
+		let style = '';
+		if (size) {
+			const scale = Math.min(1, EMBED_MAX.w / size.w, EMBED_MAX.h / size.h);
+			style = ` style="width:${Math.round(size.w * scale)}px;aspect-ratio:${size.w} / ${size.h}"`;
+		}
+		return `<a class="sb-embed" href="${link}" target="_blank" rel="noopener noreferrer nofollow"><img src="${src}" alt="" loading="lazy" referrerpolicy="no-referrer"${style}></a>`;
+	};
+	/**
+	 * A message as HTML: escaped, with *actions* in italics, clickable links (new tab), pictures under
+	 * picture links (see embedHtml), ▶ Play after song links (see trackOf) and a Join button after group codes.
 	 * @param {string} text
 	 */
 	const rich = (text) =>
@@ -826,7 +909,12 @@
 				.replace(/\bhttps?:\/\/[^\s<>"']+/g, (url) => {
 					const tail = (/(?:[.,!?:;)\]]|&#39;|&quot;)+$/.exec(url) || [''])[0];
 					const link = url.slice(0, url.length - tail.length);
-					return `<a class="sb-link" href="${link}" target="_blank" rel="noopener noreferrer nofollow">${link}</a>${tail}`;
+					const raw = link.replace(/&(?:amp|lt|gt|quot|#39);/g, (e) => UNESCAPES[e]);
+					const pic = picOf(raw);
+					const play = trackOf(raw)
+						? ` <button class="sb-pill sb-playlink" data-play="${link}" title="Play it in SlimeBeep">▶ Play</button>`
+						: '';
+					return `<a class="sb-link" href="${link}" target="_blank" rel="noopener noreferrer nofollow">${link}</a>${play}${tail}${pic ? embedHtml(link, pic) : ''}`;
 				})
 				.replace(
 					CODE_IN,
@@ -965,6 +1053,11 @@
 		),
 		send: svgIcon(18, html`<path d="M4 11.5 20 4l-6.5 16-2.6-6.4z" fill="currentColor"/>`),
 		back: svgIcon(22, html`<path d="M15 4.5 7.5 12l7.5 7.5" stroke-width="3.2"/>`),
+		down: svgIcon(14, html`<path d="M12 5v14M6 13l6 6 6-6"/>`),
+		play: svgIcon(14, html`<path d="M7 4.5v15l12-7.5z" fill="currentColor" stroke-width="2"/>`),
+		pause: svgIcon(14, html`<path d="M8 5v14M16 5v14" stroke-width="3.4"/>`),
+		prev: svgIcon(14, html`<path d="M6 5v14M19 5 9 12l10 7z" fill="currentColor" stroke-width="2"/>`),
+		next: svgIcon(14, html`<path d="M18 5v14M5 5l10 7-10 7z" fill="currentColor" stroke-width="2"/>`),
 	};
 	const css = `
 		#sb-toggle { position: fixed; z-index: 100000; width: 46px; height: 46px; border-radius: 50%; padding: 0; overflow: visible;
@@ -1025,6 +1118,54 @@
 		.sb-empty { text-align: center; color: #c08aaa; padding: 30px 10px; }
 		.sb-thead { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: #ffe6f3; }
 		.sb-thead button { border: none; background: #fff; color: #ff4fa3; width: 28px; height: 28px; border-radius: 50%; font-size: 15px; }
+		#sb-mu { position: fixed; z-index: 99999; width: 300px; display: none; flex-direction: column; overflow: hidden; border-radius: 18px;
+			background: #fff7fb; color: #4a2340; box-shadow: 0 8px 30px #c2186b55; border: 3px solid #ffc2e2;
+			font: 13px "Trebuchet MS", "Segoe UI", sans-serif; color-scheme: light; }
+		#sb-mu.on { display: flex; }
+		#sb-mu, #sb-mu * { box-sizing: border-box; text-align: left; line-height: 1.3; letter-spacing: normal; text-transform: none; }
+		#sb-mu button { font: inherit; cursor: pointer; }
+		#sb-mu button:disabled { opacity: .4; cursor: default; }
+		#sb-mu .sb-head { padding: 8px 10px; }
+		#sb-mu .sb-head b { font-size: 14px; }
+		.sb-mu-now { display: flex; gap: 10px; align-items: center; padding: 10px 12px 4px; }
+		.sb-mu-art { flex: none; width: 64px; height: 64px; border-radius: 12px; overflow: hidden; background: linear-gradient(135deg, #ff9ccf, #ff4fa3);
+			display: flex; align-items: center; justify-content: center; }
+		.sb-mu-art::before { content: '🎵'; font-size: 30px; }
+		#sb-mu.yt .sb-mu-art { width: 112px; height: 63px; background: #000; }
+		#sb-mu.yt .sb-mu-art::before { content: none; }
+		.sb-mu-art iframe { width: 112px; height: 63px; border: 0; display: block; position: static; }
+		.sb-mu-art audio { display: none; }
+		.sb-mu-info { flex: 1; min-width: 0; }
+		.sb-mu-title { font-weight: bold; font-size: 14px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+		.sb-mu-status { font-size: 11px; color: #c08aaa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+		.sb-mu-progress { display: flex; align-items: center; gap: 6px; padding: 4px 12px; font-size: 10px; color: #c08aaa; }
+		#sb-mu input[type=range] { accent-color: #ff4fa3; margin: 0; height: 14px; }
+		#sb-mu-seek { flex: 1; min-width: 0; }
+		.sb-mu-controls { display: flex; align-items: center; gap: 8px; padding: 2px 12px 10px; }
+		.sb-mu-controls button, .sb-mu-add button { flex: none; border: none; background: #fff; color: #ff4fa3; width: 32px; height: 32px; border-radius: 50%;
+			padding: 0; display: inline-flex; align-items: center; justify-content: center; line-height: 1; box-shadow: 0 1px 4px #c2186b22; }
+		.sb-mu-controls .sb-mu-big { width: 42px; height: 42px; background: linear-gradient(135deg, #ff6fb5, #ff4fa3); color: #fff; }
+		.sb-mu-vol { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+		.sb-mu-controls .sb-mu-vol button { width: 28px; height: 28px; box-shadow: none; background: transparent; }
+		#sb-mu-vol { width: 70px; }
+		.sb-mu-more { border-top: 1px solid #ffd1e8; padding: 8px 12px 10px; display: flex; flex-direction: column; gap: 6px; }
+		.sb-mu-add { display: flex; gap: 6px; align-items: center; }
+		.sb-mu-add .sb-search { flex: 1; min-width: 0; margin: 0; }
+		.sb-mu-queue { max-height: 120px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+		.sb-mu-queue:empty { display: none; }
+		.sb-mu-row { display: flex; align-items: center; border-radius: 8px; }
+		.sb-mu-row.on { background: #ffe6f3; }
+		.sb-mu-song { flex: 1; min-width: 0; border: 0; background: none; color: inherit; padding: 4px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+		.sb-mu-del { flex: none; border: 0; background: none; color: #c08aaa; width: 24px; height: 24px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+		#sb-mu .sb-mu-share { width: 100%; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+		.sb-mu-share.on { background: #ff4fa3; color: #fff; }
+		#sb-mu.mini .sb-mu-more, #sb-mu.mini .sb-mu-progress { display: none; }
+		#sb-mu.mini #sb-mu-mini svg { transform: rotate(180deg); }
+		.sb-jamline { display: flex; align-items: center; gap: 6px; padding: 6px 10px; background: #fff0f8; border-bottom: 1px solid #ffd1e8; font-size: 12px; white-space: nowrap; overflow: hidden; }
+		.sb-jamline b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+		.sb-jamline .sb-pill { flex: none; padding: 2px 10px; font-size: 11px; }
+		.sb-jamline.on { background: #ffe6f3; }
+		.sb-playlink { margin-left: 4px; padding: 1px 8px !important; font-size: 11px !important; }
 		.sb-thead #sb-back { width: 36px; height: 36px; flex: none; }
 		/* Pages and add-ons can style every svg; the icons stay put. Clicks go to their button. */
 		svg.sb-ic { display: block; position: static; flex: none; margin: 0; padding: 0; opacity: 1; transform: none; overflow: visible; pointer-events: none; }
@@ -1039,6 +1180,14 @@
 		.sb-b .sb-room { display: block; font-size: 11px; margin-top: 3px; opacity: .85; }
 		.sb-emote { font-style: italic; opacity: .85; }
 		.sb-link { color: inherit; text-decoration: underline; word-break: break-all; }
+		.sb-embed { display: block; margin-top: 4px; }
+		.sb-embed img { display: block; max-width: min(100%, ${EMBED_MAX.w}px); max-height: ${EMBED_MAX.h}px; width: auto; height: auto; border-radius: 10px; }
+		.sb-asktrust { display: block; margin-top: 4px; font-size: 11px; white-space: normal; }
+		.sb-asktrust .sb-pill { padding: 1px 8px; font-size: 11px; }
+		.sb-msgwrap { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+		#sb-panel .sb-jump { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); display: none; align-items: center; gap: 4px;
+			padding: 5px 12px 5px 14px; font-size: 12px; font-weight: bold; white-space: nowrap; box-shadow: 0 2px 8px #c2186b44; cursor: pointer; }
+		#sb-panel .sb-jump.on { display: flex; }
 		.sb-joincode { margin-left: 2px; padding: 1px 8px !important; font-size: 11px !important; }
 		.sb-bcjoin { margin-left: 6px; padding: 1px 8px; border: 0; border-radius: 10px; background: #ff7ac0; color: #fff; font: bold 12px sans-serif; cursor: pointer; }
 		.sb-bcjoin:hover { background: #e85aa6; }
@@ -1148,6 +1297,17 @@
 		html.sb-night .sb-compose button.pin { background: #253064; color: #8f9fd6; }
 		html.sb-night .sb-compose button.pin.on { background: #7a5cd6; color: #fff; }
 		html.sb-night .sb-thead button { background: #253064; color: #a9c1ff; }
+		html.sb-night #sb-mu { background: #141a33; color: #dfe6ff; border-color: #2f3b75; box-shadow: 0 8px 30px #0008; color-scheme: dark; }
+		html.sb-night .sb-mu-controls button, html.sb-night .sb-mu-add button { background: #253064; color: #a9c1ff; box-shadow: none; }
+		html.sb-night .sb-mu-controls .sb-mu-big { background: linear-gradient(135deg, #4f6bd8, #3b55c4); color: #fff; }
+		html.sb-night .sb-mu-controls .sb-mu-vol button { background: transparent; }
+		html.sb-night .sb-mu-art { background: linear-gradient(135deg, #4f6bd8, #7a5cd6); }
+		html.sb-night .sb-mu-status, html.sb-night .sb-mu-progress { color: #8f9fd6; }
+		html.sb-night #sb-mu input[type=range] { accent-color: #5b8cff; }
+		html.sb-night .sb-mu-more { border-color: #2c3866; }
+		html.sb-night .sb-mu-row.on, html.sb-night .sb-jamline.on { background: #253064; }
+		html.sb-night .sb-jamline { background: #1a2147; border-color: #2c3866; }
+		html.sb-night .sb-mu-share.on { background: #5b8cff; color: #fff; }
 		html.sb-night .sb-pill { background: #1d2550; color: #a9c1ff; border-color: #2f3b75; }
 		html.sb-night #sb-panel input[type=checkbox] { accent-color: #5b8cff; }
 		html.sb-night .sb-line[style] { background: #141a33 !important; }
@@ -1190,6 +1350,15 @@
 		html.sb-themed .sb-compose button.pin { background: var(--sb-t-element); color: var(--sb-t-text-disabled); }
 		html.sb-themed .sb-compose button.pin.on { background: var(--sb-t-accent-hover); color: var(--sb-t-text); }
 		html.sb-themed .sb-thead button { background: var(--sb-t-element); color: var(--sb-t-text); }
+		html.sb-themed #sb-mu { background: var(--sb-t-main); color: var(--sb-t-text); border-color: var(--sb-t-element-hover); box-shadow: 0 8px 30px #0008; }
+		html.sb-themed .sb-mu-controls button, html.sb-themed .sb-mu-add button { background: var(--sb-t-element); color: var(--sb-t-text); box-shadow: none; }
+		html.sb-themed .sb-mu-controls .sb-mu-big, html.sb-themed .sb-mu-share.on, html.sb-themed .sb-mu-art { background: var(--sb-t-accent); color: var(--sb-t-text); }
+		html.sb-themed .sb-mu-controls .sb-mu-vol button { background: transparent; }
+		html.sb-themed .sb-mu-status, html.sb-themed .sb-mu-progress { color: var(--sb-t-text-disabled); }
+		html.sb-themed #sb-mu input[type=range] { accent-color: var(--sb-t-accent); }
+		html.sb-themed .sb-mu-more { border-color: var(--sb-t-element-hover); }
+		html.sb-themed .sb-mu-row.on, html.sb-themed .sb-jamline.on { background: var(--sb-t-element-hover); }
+		html.sb-themed .sb-jamline { background: var(--sb-t-element-disabled); border-color: var(--sb-t-element-hover); }
 		html.sb-themed .sb-pill { background: var(--sb-t-element); color: var(--sb-t-text); border-color: var(--sb-t-element-hover); }
 		html.sb-themed #sb-panel input[type=checkbox] { accent-color: var(--sb-t-accent); }
 		html.sb-themed .sb-line[style] { background: var(--sb-t-main) !important; }
@@ -1253,6 +1422,7 @@
 				<img src="${ICON}" alt="">
 				<b>SlimeBeep <small>v${VERSION}</small></b>
 				<span id="sb-me"></span>
+				<button id="sb-music" title="Music player">🎵</button>
 				<button id="sb-moon" title="Night mode">🌙</button>
 				<button id="sb-gear" title="Options">${ICONS.gear}</button>
 				<button id="sb-quit" title="Quit SlimeBeep until you reload">${ICONS.power}</button>
@@ -1263,6 +1433,8 @@
 		);
 		document.body.appendChild(panel);
 		wireWindow(panel);
+		buildMusic();
+		$('sb-music').addEventListener('click', () => openMusic(!$('sb-mu').classList.contains('on')));
 
 		/** @type {{ dx: number, dy: number, x0: number, y0: number, lastX: number, lastY: number, moved: boolean } | null} Toggle drag in progress: pointer offset, start point, last point, whether it moved. */
 		let drag = null;
@@ -1496,6 +1668,7 @@
 			/* gone */
 		}
 		listening = null;
+		removeEventListener('message', onYouTube);
 		for (const c of Object.values(conns)) {
 			c.dead = true;
 			try {
@@ -1509,7 +1682,7 @@
 		for (const b of $$(document, '.sb-bcjoin')) {
 			b.remove();
 		}
-		for (const id of ['sb-toggle', 'sb-panel', 'sb-toast', 'sb-cards', 'sb-crop', 'sb-zoom', 'sb-ask', 'sb-emoji', 'sb-style']) {
+		for (const id of ['sb-toggle', 'sb-panel', 'sb-mu', 'sb-toast', 'sb-cards', 'sb-crop', 'sb-zoom', 'sb-ask', 'sb-emoji', 'sb-style']) {
 			const el = $(id);
 			if (el) {
 				el.remove();
@@ -1556,7 +1729,7 @@
 				friendsKnown = true;
 				sendWaiting();
 				if (isOpen() && tab !== 'chats') {
-					render();
+					render(true);
 				}
 			} else if (event === 'AccountBeep') {
 				if (!data || typeof data !== 'object') {
@@ -1851,6 +2024,8 @@
 	 * @property {1} [ping] "do you have SlimeBeep?"
 	 * @property {1} [pong] the answer
 	 * @property {{ code: string, name: string }} [ginv] a group invite
+	 * @property {MusicState} [music] the song they share with you (see takeJam)
+	 * @property {1} [musicEnd] they stopped sharing it
 	 */
 	/**
 	 * Picture fields of a hidden beep: `pv` (their picture version; 0 = none) makes us ask for a new one,
@@ -2220,7 +2395,7 @@
 
 	/**
 	 * A hidden beep (BeepType PROTO) from a friend: JSON with `sb: 1` and any of `kf` (their key start),
-	 * picture fields (pictureNews), `ping`/`pong` (SlimeBeep check) or `ginv` (group invite).
+	 * picture fields (pictureNews), `ping`/`pong` (SlimeBeep check), `ginv` (group invite) or `music`/`musicEnd` (a shared song).
 	 * Ignored from non-friends; the sender's member number comes from the game server.
 	 * @param {ServerBeep} d
 	 */
@@ -2260,6 +2435,12 @@
 		}
 		if (p.ginv && typeof p.ginv === 'object') {
 			takeInvite(from, d.MemberName, p.ginv);
+		}
+		if (p.music) {
+			takeJam(`n:${from}`, from, nameOf(from), p.music);
+		}
+		if (p.musicEnd === 1) {
+			takeJam(`n:${from}`, from, nameOf(from), null);
 		}
 	}
 	/**
@@ -2335,7 +2516,7 @@
 	/**
 	 * A message from the relay (JSON). Which fields are set depends on `t`; see relay/src/index.js.
 	 * @typedef {object} RelayMessage
-	 * @property {string} t 'hello', 'welcome', 'roster', 'presence', 'msg', 'history', 'pic', 'gpic', 'invite', 'gone', 'error', 'ok', 'mail'
+	 * @property {string} t 'hello', 'welcome', 'roster', 'presence', 'msg', 'history', 'pic', 'gpic', 'invite', 'music', 'gone', 'error', 'ok', 'mail'
 	 * @property {string} [nonce] hello: what to sign
 	 * @property {RelayRoster} [roster] welcome, roster
 	 * @property {number[]} [online] presence
@@ -2348,6 +2529,9 @@
 	 * @property {boolean} [fatal] error: the connection is closed
 	 * @property {string} [ref] ok, error: the id sent with the request
 	 * @property {MailItem[]} [list] mail
+	 * @property {(MusicState & { by: number, name: string }) | null} [music] music: the song shared in the group and its host; null when they stopped
+	 * @property {number} [by] music: who stopped sharing (with music null)
+	 * @property {number} [age] music: ms since it was set
 	 */
 	/**
 	 * A group's roster as the relay sends it.
@@ -2918,6 +3102,14 @@
 				if (isOpen()) {
 					render(true);
 				}
+			}
+			return;
+		}
+		if (p.t === 'music') {
+			if (p.music === null && isNum(p.by)) {
+				takeJam(`g:${gid}`, p.by, '', null);
+			} else if (p.music && isNum(p.music.by) && p.music.by !== me) {
+				takeJam(`g:${gid}`, p.music.by, p.music.name, p.music, p.age);
 			}
 			return;
 		}
@@ -3809,6 +4001,10 @@
 		try {
 			updateNote();
 			gameCheck();
+			if (music || following) {
+				keepInTime();
+				drawMusic();
+			}
 			if (waiting.length && loggedIn() && Date.now() - (friendsAskedAt || 0) > 60000) {
 				friendsAskedAt = Date.now();
 				askFriends();
@@ -4238,6 +4434,8 @@
 			return;
 		}
 		const view = $('sb-view');
+		// The music player's share button follows the chat that is open.
+		setTimeout(drawMusic, 0);
 		// The emoji picker closes when no chat box is left after the redraw.
 		setTimeout(() => {
 			if (!$('sb-text')) {
@@ -4801,6 +4999,89 @@
 		restorePage(`m:${id}`, page);
 	}
 
+	/** Messages that came in below while the open chat was scrolled up (counted on its jump button). */
+	let newBelow = 0;
+	/**
+	 * Where an open chat was scrolled to, taken before a redraw replaces it.
+	 * @typedef {{ chat: string, top: number, atBottom: boolean, count: number }} MsgsPlace
+	 */
+	/**
+	 * Whether a chat is scrolled to its newest message.
+	 * @param {HTMLElement} box #sb-msgs
+	 */
+	const atBottom = (box) => box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+	/** @returns {MsgsPlace | null} where #sb-msgs is now, null when no chat is drawn */
+	const msgsPlace = () => {
+		const box = $('sb-msgs');
+		return box && { chat: box.dataset.chat || '', top: box.scrollTop, atBottom: atBottom(box), count: Number(box.dataset.count) };
+	};
+	/**
+	 * Scrolls a chat that was just drawn and wires its jump button. A chat opens at its newest message and
+	 * follows new ones while you are there; when you scrolled up to read, a redraw leaves you where you were
+	 * and "Jump to present" takes you down.
+	 * @param {string} chat 'n:<member number>' or 'g:<group id>'
+	 * @param {number} count messages in it
+	 * @param {MsgsPlace | null} before where it was before the redraw
+	 * @param {boolean} [keepScroll]
+	 * @returns {HTMLElement} #sb-msgs
+	 */
+	function placeMsgs(chat, count, before, keepScroll) {
+		const box = $('sb-msgs');
+		const jump = $('sb-jump');
+		box.dataset.chat = chat;
+		box.dataset.count = String(count);
+		const kept = keepScroll && before && before.chat === chat && !before.atBottom ? before : null;
+		let follow = !kept;
+		if (kept) {
+			newBelow += Math.max(0, count - kept.count);
+			box.scrollTop = kept.top;
+		} else {
+			newBelow = 0;
+			box.scrollTop = box.scrollHeight;
+		}
+		const showJump = () => {
+			jump.classList.toggle('on', !follow);
+			const label = newBelow ? `${newBelow} new message${newBelow === 1 ? '' : 's'}` : 'Jump to present';
+			setHtml(jump, html`${label} ${ICONS.down}`);
+		};
+		showJump();
+		box.addEventListener('scroll', () => {
+			follow = atBottom(box);
+			if (follow) {
+				newBelow = 0;
+			}
+			showJump();
+		});
+		jump.addEventListener('click', () => box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' }));
+		for (const img of $$(box, '.sb-embed img')) {
+			img.addEventListener('load', () => {
+				const el = /** @type {HTMLImageElement} */ (img);
+				picSizes.set(el.src, { w: el.naturalWidth, h: el.naturalHeight });
+				if (follow) {
+					box.scrollTop = box.scrollHeight;
+				}
+			});
+			// A dead picture leaves only its link.
+			img.addEventListener('error', () => img.parentElement && img.parentElement.remove());
+		}
+		for (const b of $$(box, '[data-play]')) {
+			b.addEventListener('click', () => playLink(b.dataset.play || ''));
+		}
+		for (const b of $$(box, '[data-pic-once]')) {
+			b.addEventListener('click', () => {
+				shownOnce.add(b.dataset.picOnce || '');
+				render(true);
+			});
+		}
+		for (const b of $$(box, '[data-pic-trust]')) {
+			b.addEventListener('click', () => {
+				setOpt('trustedHosts', [...opts.trustedHosts, b.dataset.picTrust || '']);
+				render(true);
+			});
+		}
+		return box;
+	}
+
 	/**
 	 * Draws an open group chat.
 	 * @param {boolean} [keepScroll]
@@ -4822,8 +5103,7 @@
 		for (const h of msgs) {
 			markRead(h);
 		}
-		const old = $('sb-msgs');
-		const atBottom = !old || old.scrollHeight - old.scrollTop - old.clientHeight < 40;
+		const before = msgsPlace();
 		const draft = $input('sb-text') ? $input('sb-text').value : '';
 		const names = g.members.filter((m) => m.n !== Player.MemberNumber).map((m) => memberName(g, m.n));
 		const online = conns[id] && conns[id].ready;
@@ -4844,17 +5124,17 @@
 				<div class="sb-main"><div class="sb-name">${g.name}</div>
 				<div class="sb-sub" title="${names.join(', ')}">${status}${g.members.length} members: You${names.length > 0 && `, ${names.join(', ')}`}</div></div>
 				${muteButton(`g:${id}`)}<button id="sb-members" title="Members and invites">👥</button><button id="sb-leave" title="${g.owner === Player.MemberNumber ? 'Leave or delete the group' : 'Leave the group'}">🚪</button></div>
-			<div class="sb-msgs" id="sb-msgs">${msgs.length ? msgs.map(bubble) : html`<div class="sb-empty">🫧 Say hi to the group!</div>`}</div>
+			${jamLine(`g:${id}`)}
+			<div class="sb-msgwrap"><div class="sb-msgs" id="sb-msgs">${msgs.length ? msgs.map(bubble) : html`<div class="sb-empty">🫧 Say hi to the group!</div>`}</div>
+				<button class="sb-pill sb-jump" id="sb-jump"></button></div>
 			<div class="sb-compose">
 				<button class="pin" id="sb-emo" title="Emoji">😊</button>
 				<textarea id="sb-text" maxlength="${LIMITS.text}" placeholder="Message ${g.name}… (/help)"></textarea>
 				<button id="sb-send" title="Send (Enter)">${ICONS.send}</button>
 			</div>`,
 		);
-		const box = $('sb-msgs');
-		if (!keepScroll || atBottom) {
-			box.scrollTop = box.scrollHeight;
-		}
+		const box = placeMsgs(`g:${id}`, msgs.length, before, keepScroll);
+		wireJamLine(`g:${id}`);
 		const ta = $input('sb-text');
 		ta.value = draft;
 		$('sb-back').addEventListener('click', () => {
@@ -4879,6 +5159,8 @@
 				return;
 			}
 			closeEmoji();
+			// What you send takes you back to the newest messages.
+			box.scrollTop = box.scrollHeight;
 			sendGroup(id, text);
 			ta.value = '';
 		};
@@ -5037,8 +5319,7 @@
 			markRead(b);
 		}
 		const f = friends.find((x) => x.MemberNumber === n);
-		const old = $('sb-msgs');
-		const atBottom = !old || old.scrollHeight - old.scrollTop - old.clientHeight < 40;
+		const before = msgsPlace();
 		const draft = $input('sb-text') ? $input('sb-text').value : '';
 		const room = myRoom();
 		const pinOn = !!room && (threadPin ?? opts.shareRoom);
@@ -5077,7 +5358,9 @@
 			<div class="sb-thead"><button id="sb-back" title="Back">${ICONS.back}</button>${avatar(n, nameOf(n))}
 				<div class="sb-main"><div class="sb-name">${nameOf(n)} <small style="font-weight:normal;color:#c08aaa">#${n}</small></div>
 				<div class="sb-sub">${f && html`<span class="sb-on"></span>`}${where(f)}</div></div>${muteButton(`n:${n}`)}</div>
-			<div class="sb-msgs" id="sb-msgs">${bubbles}${waitingBubbles}</div>
+			${jamLine(`n:${n}`)}
+			<div class="sb-msgwrap"><div class="sb-msgs" id="sb-msgs">${bubbles}${waitingBubbles}</div>
+				<button class="sb-pill sb-jump" id="sb-jump"></button></div>
 			<div class="sb-compose">
 				<button class="pin ${pinOn && 'on'}" id="sb-pin" ${!room && 'disabled'} title="${pinTitle}">📍</button>
 				<button class="pin" id="sb-emo" title="Emoji">😊</button>
@@ -5085,10 +5368,8 @@
 				<button id="sb-send" title="Send (Enter)">${ICONS.send}</button>
 			</div>`,
 		);
-		const box = $('sb-msgs');
-		if (!keepScroll || atBottom) {
-			box.scrollTop = box.scrollHeight;
-		}
+		const box = placeMsgs(`n:${n}`, msgs.length + waitingHere.length, before, keepScroll);
+		wireJamLine(`n:${n}`);
 		const ta = $input('sb-text');
 		ta.value = draft;
 		$('sb-back').addEventListener('click', () => {
@@ -5127,6 +5408,8 @@
 				return;
 			}
 			closeEmoji();
+			// What you send takes you back to the newest messages.
+			box.scrollTop = box.scrollHeight;
 			if (isOffline(n)) {
 				queueBeep(n, text);
 				ta.value = '';
@@ -5205,6 +5488,925 @@
 			}
 		} finally {
 			sendingWaiting = false;
+		}
+	}
+
+	/** Where YouTube songs play from (YouTube's privacy-enhanced embed). */
+	const YT_ORIGIN = 'https://www.youtube-nocookie.com';
+	/** Longest song title kept. */
+	const TITLE_MAX = 100;
+	/** The end of a sound file's name, and the name without it. */
+	const SOUND_FILE = /^(.*)\.(?:mp3|ogg|opus|m4a|aac|flac|wav)$/i;
+	/** Most songs in the queue. */
+	const QUEUE_MAX = 50;
+	/** Seconds a listener may drift from the host before the song is moved back in time. */
+	const DRIFT = 3;
+	/** How long a song shared in a chat stays offered without news from its host, in ms. */
+	const JAM_MAX_AGE = 12 * 36e5;
+	/**
+	 * A song: a YouTube video, or a sound file (SOUND_FILE) on an https site.
+	 * @typedef {object} Track
+	 * @property {string} url the link (a YouTube link is rewritten to its watch address)
+	 * @property {string} yt the YouTube video id; '' for a sound file
+	 * @property {string} title the file's name or "YouTube" until the player tells the real title
+	 */
+	/**
+	 * The song a link plays, if it is one.
+	 * @param {string} link
+	 * @returns {Track | null}
+	 */
+	const trackOf = (link) => {
+		let url;
+		try {
+			url = new URL(link);
+		} catch (e) {
+			return null;
+		}
+		if (url.protocol !== 'https:') {
+			return null;
+		}
+		const host = url.hostname.replace(/^(?:www|m|music)\./, '');
+		let id = '';
+		if (host === 'youtu.be') {
+			id = url.pathname.slice(1);
+		} else if (host === 'youtube.com' || host === 'youtube-nocookie.com') {
+			id =
+				url.pathname === '/watch'
+					? url.searchParams.get('v') || ''
+					: (/^\/(?:shorts|embed|live)\/([^/]+)/.exec(url.pathname) || ['', ''])[1];
+		}
+		if (/^[\w-]{11}$/.test(id)) {
+			return { url: `https://www.youtube.com/watch?v=${id}`, yt: id, title: 'YouTube' };
+		}
+		const file = SOUND_FILE.exec(url.pathname.split('/').pop() || '');
+		if (!file) {
+			return null;
+		}
+		// A Dropbox share link opens Dropbox's page; raw=1 gives the file itself.
+		if (host === 'dropbox.com') {
+			url.searchParams.delete('dl');
+			url.searchParams.set('raw', '1');
+		}
+		let title = file[1];
+		try {
+			title = decodeURIComponent(title);
+		} catch (e) {
+			/* keep it encoded */
+		}
+		return { url: url.href, yt: '', title: title.slice(0, TITLE_MAX) || 'Song' };
+	};
+	/**
+	 * A song's state as its host shares it with a chat (short keys: it rides in a hidden beep).
+	 * @typedef {object} MusicState
+	 * @property {string} u the link
+	 * @property {string} ti the title
+	 * @property {number} p seconds into the song when sent
+	 * @property {boolean} pl playing (false: paused)
+	 * @property {number} d its length in seconds; 0 if not known
+	 */
+	/**
+	 * A song shared in a chat, as last heard from its host.
+	 * @typedef {object} Jam
+	 * @property {number} host the host's member number
+	 * @property {string} hostName
+	 * @property {MusicState} state
+	 * @property {number} at Date.now() when `state` was true
+	 */
+	/** @type {Map<string, Jam>} Songs others share in your chats, by chat key ('n:<member number>' or 'g:<group id>'). */
+	const jams = new Map();
+	/** @type {Track[]} Your queue. */
+	let queue = [];
+	/** Index in `queue` of the song playing; -1 for none, and while listening along. */
+	let queueAt = -1;
+	/**
+	 * The song loaded in the player.
+	 * @typedef {object} Music
+	 * @property {Track} track
+	 * @property {string} author who made it, when YouTube says
+	 * @property {boolean} playing
+	 * @property {number} pos seconds into the song at `at`
+	 * @property {number} at Date.now() when `pos` was read
+	 * @property {number} dur its length in seconds; 0 until known
+	 * @property {HTMLIFrameElement | HTMLAudioElement} el the player
+	 */
+	/** @type {Music | null} */
+	let music = null;
+	/** The chat you share your music with (you are its host); '' when you don't. */
+	let sharing = '';
+	/** The chat whose shared song you listen along to; '' when you don't. */
+	let following = '';
+	/** Until when the seek bar is left alone because it is being dragged. */
+	let seekingUntil = 0;
+	/** The queue as last drawn, so it is only rebuilt when it changed. */
+	let queueDrawn = '';
+
+	/** Seconds into the song now. */
+	const musicPos = () => {
+		if (!music) {
+			return 0;
+		}
+		const p = music.playing ? music.pos + (Date.now() - music.at) / 1000 : music.pos;
+		return Math.max(0, music.dur ? Math.min(p, music.dur) : p);
+	};
+	/**
+	 * Notes where the song is now.
+	 * @param {number} pos
+	 * @param {boolean} [playing]
+	 */
+	const setPos = (pos, playing) => {
+		if (!music) {
+			return;
+		}
+		music.pos = pos;
+		music.at = Date.now();
+		if (playing !== undefined) {
+			music.playing = playing;
+		}
+	};
+	/**
+	 * Where a shared song is now.
+	 * @param {Jam} j
+	 */
+	const jamPos = (j) => {
+		const p = j.state.pl ? j.state.p + (Date.now() - j.at) / 1000 : j.state.p;
+		return j.state.d ? Math.min(p, j.state.d) : p;
+	};
+	/**
+	 * Whether a shared song is still worth offering: not over long ago, and heard from in the last 12 hours.
+	 * @param {Jam | undefined} j
+	 * @returns {j is Jam}
+	 */
+	const jamLive = (j) =>
+		!!j && Date.now() - j.at < JAM_MAX_AGE && !(j.state.d && jamPos(j) >= j.state.d && !j.state.pl && Date.now() - j.at > 60000);
+	/**
+	 * A chat's name for the player.
+	 * @param {string} chat a chat key
+	 */
+	const chatLabel = (chat) => {
+		if (chat.startsWith('g:')) {
+			const g = groups[chat.slice(2)];
+			return g ? g.name : 'a group chat';
+		}
+		return nameOf(Number(chat.slice(2)));
+	};
+	/**
+	 * Whether a chat can listen along: a group chat, or a friend who has SlimeBeep.
+	 * @param {string} chat a chat key
+	 */
+	const canShare = (chat) => (chat.startsWith('g:') ? !!groups[chat.slice(2)] : peers.has(Number(chat.slice(2))));
+	/**
+	 * The chat open now as a chat key; '' on other pages.
+	 * @returns {string}
+	 */
+	const openChatKey = () => {
+		if (thread === null) {
+			return '';
+		}
+		return typeof thread === 'string' ? thread : `n:${thread}`;
+	};
+
+	/**
+	 * Sends a message to the YouTube player.
+	 * @param {HTMLIFrameElement} f
+	 * @param {object} message
+	 */
+	const toYouTube = (f, message) => {
+		if (f.contentWindow) {
+			f.contentWindow.postMessage(JSON.stringify({ ...message, id: 1, channel: 'widget' }), YT_ORIGIN);
+		}
+	};
+	/**
+	 * Sends a command to the YouTube player.
+	 * @param {HTMLIFrameElement} f
+	 * @param {string} func
+	 * @param {unknown[]} [args]
+	 */
+	const ytCommand = (f, func, args = []) => toYouTube(f, { event: 'command', func, args });
+	/**
+	 * Takes what the YouTube player reports: time, length, state, title and channel.
+	 * @param {MessageEvent} e
+	 */
+	function onYouTube(e) {
+		const el = music && music.el;
+		if (!music || !(el instanceof HTMLIFrameElement) || e.origin !== YT_ORIGIN || e.source !== el.contentWindow) {
+			return;
+		}
+		/** @type {{ event?: string, info?: { duration?: unknown, currentTime?: unknown, playerState?: unknown, videoData?: { title?: unknown, author?: unknown } } }} */
+		let d;
+		try {
+			d = JSON.parse(String(e.data));
+		} catch (err) {
+			return;
+		}
+		if (!d || typeof d !== 'object') {
+			return;
+		}
+		if (d.event === 'onReady') {
+			toYouTube(el, { event: 'listening' });
+			applyVolume();
+			return;
+		}
+		const info = d.info;
+		if (!info || typeof info !== 'object') {
+			return;
+		}
+		if (typeof info.duration === 'number' && info.duration > 0) {
+			music.dur = info.duration;
+		}
+		const data = info.videoData;
+		const title = data && typeof data.title === 'string' ? clean(data.title, TITLE_MAX) : '';
+		if (title && title !== music.track.title) {
+			music.track.title = title;
+			shareState();
+		}
+		if (data && typeof data.author === 'string') {
+			music.author = clean(data.author, LIMITS.name);
+		}
+		if (typeof info.currentTime === 'number') {
+			setPos(info.currentTime);
+		}
+		// 0: the video ended.
+		if (info.playerState === 0 && music.playing) {
+			songEnded();
+		}
+		drawMusic();
+	}
+
+	/**
+	 * Loads a song into the player and starts it (or leaves it paused).
+	 * @param {Track} track
+	 * @param {number} [pos] seconds into it
+	 * @param {boolean} [playing]
+	 */
+	function loadSong(track, pos = 0, playing = true) {
+		unloadSong();
+		/** @type {HTMLIFrameElement | HTMLAudioElement} */
+		let el;
+		if (track.yt) {
+			const f = document.createElement('iframe');
+			f.allow = 'autoplay; encrypted-media';
+			f.title = 'YouTube player';
+			const q = `enablejsapi=1&controls=0&playsinline=1&autoplay=${playing ? 1 : 0}&mute=${opts.musicMuted ? 1 : 0}&start=${Math.floor(pos)}`;
+			f.src = `${YT_ORIGIN}/embed/${track.yt}?${q}&origin=${encodeURIComponent(location.origin)}`;
+			f.addEventListener('load', () => toYouTube(f, { event: 'listening' }));
+			el = f;
+		} else {
+			const a = document.createElement('audio');
+			a.preload = 'auto';
+			a.src = track.url;
+			a.addEventListener('loadedmetadata', () => {
+				if (!music || music.el !== a) {
+					return;
+				}
+				music.dur = isFinite(a.duration) ? a.duration : 0;
+				a.currentTime = musicPos();
+				if (music.playing) {
+					a.play().catch(() => setPos(musicPos(), false));
+				}
+				drawMusic();
+			});
+			a.addEventListener('timeupdate', () => {
+				if (music && music.el === a) {
+					setPos(a.currentTime);
+				}
+			});
+			a.addEventListener('ended', () => {
+				if (music && music.el === a) {
+					songEnded();
+				}
+			});
+			a.addEventListener('error', () => {
+				if (music && music.el === a) {
+					notify('⚠ That song could not be played');
+					unloadSong();
+					drawMusic();
+				}
+			});
+			el = a;
+		}
+		music = { track, author: '', playing, pos, at: Date.now(), dur: 0, el };
+		$('sb-mu-art').replaceChildren(el);
+		applyVolume();
+		openMusic(true);
+	}
+	/** Stops and removes the song in the player. */
+	function unloadSong() {
+		if (music) {
+			if (music.el instanceof HTMLAudioElement) {
+				music.el.pause();
+			}
+			music.el.remove();
+		}
+		music = null;
+	}
+	/**
+	 * Makes the player match `music`: playing or paused, and the time. A sound file is moved when it is
+	 * more than 2 s off; YouTube only when `seek` is set, since its time comes in late.
+	 * @param {boolean} [seek]
+	 */
+	function applyMusic(seek = false) {
+		const m = music;
+		if (!m) {
+			return;
+		}
+		const pos = musicPos();
+		if (m.el instanceof HTMLAudioElement) {
+			const a = m.el;
+			if (a.readyState > 0 && (seek || Math.abs(a.currentTime - pos) > 2)) {
+				a.currentTime = pos;
+			}
+			if (m.playing && a.paused && a.readyState > 0) {
+				a.play().catch(() => setPos(musicPos(), false));
+			} else if (!m.playing && !a.paused) {
+				a.pause();
+			}
+			return;
+		}
+		if (seek) {
+			ytCommand(m.el, 'seekTo', [pos, true]);
+		}
+		ytCommand(m.el, m.playing ? 'playVideo' : 'pauseVideo');
+	}
+	/** Sets the player's volume and mute from opts. */
+	function applyVolume() {
+		const el = music && music.el;
+		if (el instanceof HTMLAudioElement) {
+			el.volume = opts.musicVolume / 100;
+			el.muted = opts.musicMuted;
+		} else if (el) {
+			ytCommand(el, 'setVolume', [opts.musicVolume]);
+			ytCommand(el, opts.musicMuted ? 'mute' : 'unMute');
+		}
+	}
+	/** A song came to its end: the next one in your queue plays (a listener waits for the host). */
+	function songEnded() {
+		if (!music) {
+			return;
+		}
+		setPos(music.dur || musicPos(), false);
+		if (!following && queueAt >= 0 && queueAt < queue.length - 1) {
+			playQueued(queueAt + 1);
+			return;
+		}
+		shareState();
+		drawMusic();
+	}
+
+	/**
+	 * Adds a song to your queue; it plays now when `now` is set or nothing is playing. Listening along
+	 * is left first: your own songs never go to someone else's chat.
+	 * @param {Track} track
+	 * @param {boolean} now
+	 */
+	function addSong(track, now) {
+		if (following) {
+			leaveJam(true);
+		}
+		queue = [...queue, track].slice(-QUEUE_MAX);
+		if (now || !music) {
+			playQueued(queue.length - 1);
+		} else {
+			drawMusic();
+		}
+	}
+	/**
+	 * Plays song `i` of the queue.
+	 * @param {number} i
+	 */
+	function playQueued(i) {
+		if (!queue[i]) {
+			return;
+		}
+		queueAt = i;
+		loadSong(queue[i]);
+		shareState();
+		drawMusic();
+	}
+	/**
+	 * Takes song `i` out of the queue (stopping it if it is the one playing).
+	 * @param {number} i
+	 */
+	function removeQueued(i) {
+		if (!queue[i]) {
+			return;
+		}
+		queue = queue.filter((_, k) => k !== i);
+		if (i === queueAt) {
+			unloadSong();
+			queueAt = -1;
+			stopSharing();
+		} else if (i < queueAt) {
+			queueAt -= 1;
+		}
+		drawMusic();
+	}
+
+	/**
+	 * The song's state as sent to the chat you share with.
+	 * @returns {MusicState | null}
+	 */
+	const stateNow = () =>
+		music && {
+			u: music.track.url,
+			ti: music.track.title,
+			p: Math.round(musicPos() * 10) / 10,
+			pl: music.playing,
+			d: Math.round(music.dur),
+		};
+	/** Tells the chat you share with what is playing and where (after every change you make). */
+	function shareState() {
+		const state = stateNow();
+		if (!sharing || !state) {
+			return;
+		}
+		if (sharing.startsWith('g:')) {
+			relaySend(sharing.slice(2), { t: 'music', ...state });
+		} else {
+			sendHidden(Number(sharing.slice(2)), { sb: 1, music: state });
+		}
+	}
+	/**
+	 * Starts sharing your music with a chat: everyone there gets a "Listen along" button. Nothing plays
+	 * for them until they press it.
+	 * @param {string} chat
+	 */
+	function startSharing(chat) {
+		if (!music || !canShare(chat)) {
+			return;
+		}
+		stopSharing();
+		sharing = chat;
+		shareState();
+		notify(`🎧 Sharing your music with ${chatLabel(chat)}`);
+		drawMusic();
+		renderIfOpen(chat);
+	}
+	/** Stops sharing: the chat's "Listen along" goes away and its listeners stop. */
+	function stopSharing() {
+		const chat = sharing;
+		if (!chat) {
+			return;
+		}
+		sharing = '';
+		if (chat.startsWith('g:')) {
+			relaySend(chat.slice(2), { t: 'musicEnd' });
+		} else {
+			sendHidden(Number(chat.slice(2)), { sb: 1, musicEnd: 1 });
+		}
+		drawMusic();
+		renderIfOpen(chat);
+	}
+	/**
+	 * Redraws the panel when a chat's page is the one open (its listen-along line changed).
+	 * @param {string} chat
+	 */
+	function renderIfOpen(chat) {
+		if (isOpen() && openChatKey() === chat) {
+			render(true);
+		}
+	}
+
+	/**
+	 * News of a song shared in a chat (a SlimeBeep friend's hidden beep, or a group's relay): it is
+	 * offered there with "Listen along", and followed if you listen along already. It never plays on its own.
+	 * @param {string} chat a chat key
+	 * @param {number} host who shares it
+	 * @param {string} hostName
+	 * @param {unknown} s a MusicState; null when they stopped sharing
+	 * @param {number} [age] ms since it was sent: a group's song as stored when you connect
+	 */
+	function takeJam(chat, host, hostName, s, age = 0) {
+		const before = jams.get(chat);
+		if (s === null) {
+			if (before && before.host !== host) {
+				return;
+			}
+			jams.delete(chat);
+			if (following === chat) {
+				following = '';
+				unloadSong();
+				notify(`🎧 ${(before && before.hostName) || 'They'} stopped sharing music`);
+				drawMusic();
+			}
+			renderIfOpen(chat);
+			return;
+		}
+		const state = cleanState(s);
+		if (!state) {
+			return;
+		}
+		/** @type {Jam} */
+		const j = { host, hostName: clean(hostName, LIMITS.name) || `#${host}`, state, at: Date.now() - (state.pl ? Math.max(0, age) : 0) };
+		jams.set(chat, j);
+		// Someone else in a group started their own music: yours stops being the one shared there.
+		if (sharing === chat) {
+			sharing = '';
+			notify(`🎧 ${j.hostName} is sharing music in ${chatLabel(chat)} now`);
+		}
+		if (following === chat) {
+			followJam(j);
+		} else if (!age && (!before || before.host !== host)) {
+			card({
+				icon: html`<span class="sb-av sb-gav">🎧</span>`,
+				title: `🎧 ${j.hostName} is listening to music`,
+				text: `${state.ti}${chat.startsWith('g:') ? ` · in ${chatLabel(chat)}` : ''}. Tap to listen along.`,
+				onClick: () => listenAlong(chat),
+			});
+		}
+		drawMusic();
+		renderIfOpen(chat);
+	}
+	/**
+	 * A MusicState from someone else, checked and cleaned; null if it isn't one.
+	 * @param {unknown} s
+	 * @returns {MusicState | null}
+	 */
+	function cleanState(s) {
+		if (!s || typeof s !== 'object') {
+			return null;
+		}
+		const x = /** @type {Partial<MusicState>} */ (s);
+		const track = typeof x.u === 'string' && x.u.length <= 300 ? trackOf(x.u) : null;
+		const p = typeof x.p === 'number' && isFinite(x.p) && x.p >= 0 && x.p <= 86400 ? x.p : -1;
+		if (!track || p < 0 || typeof x.pl !== 'boolean') {
+			return null;
+		}
+		const d = typeof x.d === 'number' && isFinite(x.d) && x.d > 0 && x.d <= 86400 ? x.d : 0;
+		return { u: track.url, ti: clean(x.ti, TITLE_MAX) || track.title, p, pl: x.pl, d };
+	}
+	/**
+	 * Listens along to the song shared in a chat, with sound, from where the host is.
+	 * @param {string} chat
+	 */
+	function listenAlong(chat) {
+		const j = jams.get(chat);
+		if (!jamLive(j)) {
+			notify('🎧 That music has ended');
+			return;
+		}
+		stopSharing();
+		following = chat;
+		queueAt = -1;
+		unloadSong();
+		followJam(j);
+		renderIfOpen(chat);
+	}
+	/**
+	 * Makes the player follow the host: their song, playing or paused, at their time.
+	 * @param {Jam} j
+	 */
+	function followJam(j) {
+		const track = trackOf(j.state.u);
+		if (!track) {
+			return;
+		}
+		const pos = jamPos(j);
+		if (!music || music.track.url !== track.url) {
+			loadSong({ ...track, title: j.state.ti }, pos, j.state.pl);
+			if (music) {
+				music.dur = j.state.d;
+			}
+		} else {
+			music.track.title = j.state.ti;
+			const off = Math.abs(musicPos() - pos) > DRIFT;
+			setPos(off ? pos : musicPos(), j.state.pl);
+			applyMusic(off);
+		}
+		drawMusic();
+	}
+	/**
+	 * Stops listening along.
+	 * @param {boolean} [quiet] no toast (you are starting your own music)
+	 */
+	function leaveJam(quiet = false) {
+		const chat = following;
+		if (!chat) {
+			return;
+		}
+		following = '';
+		unloadSong();
+		if (!quiet) {
+			notify(`🎧 You stopped listening along with ${(jams.get(chat) || { hostName: chatLabel(chat) }).hostName}`);
+		}
+		drawMusic();
+		renderIfOpen(chat);
+	}
+	/** Every second while listening along: a player that drifted from the host is moved back in time. */
+	function keepInTime() {
+		const j = following ? jams.get(following) : undefined;
+		if (!j || !music || !music.playing) {
+			return;
+		}
+		if (Math.abs(musicPos() - jamPos(j)) > DRIFT) {
+			setPos(jamPos(j));
+			applyMusic(true);
+		}
+	}
+
+	/**
+	 * The listen-along line at the top of a chat: what is shared there and the button for it.
+	 * @param {string} chat
+	 * @returns {HtmlValue}
+	 */
+	function jamLine(chat) {
+		if (sharing === chat && music) {
+			return html`<div class="sb-jamline">🎧 You're sharing <b>${music.track.title}</b><button class="sb-pill" data-jam="stop">Stop sharing</button></div>`;
+		}
+		const j = jams.get(chat);
+		if (following === chat && j) {
+			return html`<div class="sb-jamline on">🎧 Listening along with ${j.hostName}: <b>${j.state.ti}</b><button class="sb-pill" data-jam="leave">Leave</button></div>`;
+		}
+		if (jamLive(j)) {
+			return html`<div class="sb-jamline">🎧 ${j.hostName} is listening to <b>${j.state.ti}</b><button class="sb-pill sb-go" data-jam="join">Listen along</button></div>`;
+		}
+		return '';
+	}
+	/**
+	 * Wires the listen-along line of the chat just drawn.
+	 * @param {string} chat
+	 */
+	function wireJamLine(chat) {
+		for (const b of $$($('sb-view'), '[data-jam]')) {
+			b.addEventListener('click', () => {
+				const act = b.dataset.jam;
+				if (act === 'join') {
+					listenAlong(chat);
+				} else if (act === 'leave') {
+					leaveJam();
+				} else {
+					stopSharing();
+				}
+			});
+		}
+	}
+
+	/**
+	 * Shows or hides the music player.
+	 * @param {boolean} on
+	 */
+	function openMusic(on) {
+		const box = $('sb-mu');
+		if (!box) {
+			return;
+		}
+		box.classList.toggle('on', on);
+		if (on) {
+			placeMusic();
+			drawMusic();
+		}
+	}
+	/** Puts the music player where it was left (by default bottom left), inside the window. */
+	function placeMusic() {
+		const box = $('sb-mu');
+		const w = box.offsetWidth || 300;
+		const h = box.offsetHeight || 200;
+		const p = opts.musicPos || { x: 16, y: innerHeight - h - 16 };
+		box.style.left = `${fit(p.x, 8, Math.max(8, innerWidth - w - 8))}px`;
+		box.style.top = `${fit(p.y, 8, Math.max(8, innerHeight - h - 8))}px`;
+	}
+	/** Redraws the music player from `music`, the queue and what is shared. */
+	function drawMusic() {
+		const box = $('sb-mu');
+		if (!box) {
+			return;
+		}
+		const m = music;
+		const j = following ? jams.get(following) : undefined;
+		/** @param {number} s seconds */
+		const clock = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+		box.classList.toggle('yt', !!m && !!m.track.yt);
+		box.classList.toggle('following', !!following);
+		$('sb-mu-title').textContent = m ? m.track.title : 'Nothing playing';
+		$('sb-mu-title').title = m ? m.track.title : '';
+		let status = 'Paste a YouTube or mp3 link below';
+		if (j) {
+			status = `🎧 Listening along with ${j.hostName}`;
+		} else if (sharing) {
+			status = `🎧 Sharing with ${chatLabel(sharing)}`;
+		} else if (m) {
+			status = m.author || 'Only you';
+		}
+		$('sb-mu-status').textContent = status;
+		const pos = musicPos();
+		$('sb-mu-cur').textContent = clock(pos);
+		$('sb-mu-dur').textContent = m && m.dur ? clock(m.dur) : '0:00';
+		const seek = $input('sb-mu-seek');
+		seek.max = String(m ? Math.round(m.dur) : 0);
+		seek.disabled = !m || !m.dur || !!following;
+		if (Date.now() > seekingUntil) {
+			seek.value = String(Math.round(pos));
+		}
+		const play = $input('sb-mu-play');
+		setHtml(play, m && m.playing ? ICONS.pause : ICONS.play);
+		play.title = m && m.playing ? 'Pause' : 'Play';
+		play.disabled = !!following || (!m && !queue.length);
+		$input('sb-mu-prev').disabled = !!following || !m;
+		$input('sb-mu-next').disabled = !!following || queueAt < 0 || queueAt >= queue.length - 1;
+		const mute = $('sb-mu-mute');
+		mute.textContent = opts.musicMuted || !opts.musicVolume ? '🔇' : '🔊';
+		mute.title = opts.musicMuted ? 'Turn the sound on' : 'Mute';
+		$input('sb-mu-vol').value = String(opts.musicVolume);
+		// The share button: for the chat open in SlimeBeep.
+		const chat = openChatKey();
+		const share = $input('sb-mu-share');
+		share.classList.toggle('on', !!sharing || !!following);
+		share.disabled = false;
+		if (following) {
+			share.textContent = `🚪 Stop listening along with ${j ? j.hostName : chatLabel(following)}`;
+		} else if (sharing) {
+			share.textContent = `⏹ Stop sharing with ${chatLabel(sharing)}`;
+		} else if (chat && canShare(chat)) {
+			share.textContent = `🎧 Share with ${chatLabel(chat)}`;
+			share.disabled = !m;
+		} else {
+			share.textContent = chat ? `🎧 ${chatLabel(chat)} doesn't have SlimeBeep` : '🎧 Open a chat to share with it';
+			share.disabled = true;
+		}
+		const drawn = JSON.stringify([queue.map((t) => t.title), queueAt, !!following]);
+		if (drawn !== queueDrawn) {
+			queueDrawn = drawn;
+			setHtml(
+				$('sb-mu-queue'),
+				html`${queue.map(
+					(t, i) =>
+						html`<div class="sb-mu-row${i === queueAt && !following ? ' on' : ''}"><button class="sb-mu-song" data-q="${i}" title="${t.url}">${i === queueAt && !following ? '▶ ' : ''}${t.title}</button><button class="sb-mu-del" data-qdel="${i}" title="Remove">${ICONS.close}</button></div>`,
+				)}`,
+			);
+			// A longer queue makes the player taller: it stays inside the window.
+			placeMusic();
+		}
+	}
+	/** Builds the music player (hidden until 🎵 or a song opens it). */
+	function buildMusic() {
+		const box = document.createElement('div');
+		box.id = 'sb-mu';
+		setHtml(
+			box,
+			html`
+			<div class="sb-head" id="sb-mu-head"><b>🎵 SlimeBeep Music</b>
+				<button id="sb-mu-mini" title="Smaller">${ICONS.down}</button><button id="sb-mu-x" title="Stop the music and close">${ICONS.close}</button></div>
+			<div class="sb-mu-now">
+				<div class="sb-mu-art" id="sb-mu-art"></div>
+				<div class="sb-mu-info"><div class="sb-mu-title" id="sb-mu-title"></div><div class="sb-mu-status" id="sb-mu-status"></div></div>
+			</div>
+			<div class="sb-mu-progress"><span id="sb-mu-cur">0:00</span><input type="range" id="sb-mu-seek" min="0" max="0" step="1" value="0" aria-label="Song position"><span id="sb-mu-dur">0:00</span></div>
+			<div class="sb-mu-controls">
+				<button id="sb-mu-prev" title="Back to the start (twice: the song before)">${ICONS.prev}</button>
+				<button id="sb-mu-play" class="sb-mu-big"></button>
+				<button id="sb-mu-next" title="Next song">${ICONS.next}</button>
+				<span class="sb-mu-vol"><button id="sb-mu-mute"></button><input type="range" id="sb-mu-vol" min="0" max="100" step="1" aria-label="Volume"></span>
+			</div>
+			<div class="sb-mu-more">
+				<div class="sb-mu-add"><input class="sb-search" id="sb-mu-link" placeholder="Paste a YouTube or mp3 link…" aria-label="Song link"><button id="sb-mu-addbtn" title="Add to the queue">＋</button></div>
+				<div class="sb-mu-queue" id="sb-mu-queue"></div>
+				<button class="sb-pill sb-mu-share" id="sb-mu-share"></button>
+			</div>`,
+		);
+		document.body.appendChild(box);
+		wireMusic(box);
+		addEventListener('message', onYouTube);
+	}
+	/**
+	 * Wires the music player's buttons, sliders, link box and dragging.
+	 * @param {HTMLElement} box
+	 */
+	function wireMusic(box) {
+		$('sb-mu-play').addEventListener('click', () => {
+			if (!music) {
+				playQueued(queueAt >= 0 ? queueAt : 0);
+				return;
+			}
+			// Play at the end starts the song again.
+			setPos(music.dur && musicPos() >= music.dur - 0.5 ? 0 : musicPos(), !music.playing);
+			applyMusic(true);
+			shareState();
+			drawMusic();
+		});
+		$('sb-mu-prev').addEventListener('click', () => {
+			if (musicPos() > 3 || queueAt <= 0) {
+				setPos(0);
+				applyMusic(true);
+				shareState();
+				drawMusic();
+			} else {
+				playQueued(queueAt - 1);
+			}
+		});
+		$('sb-mu-next').addEventListener('click', () => playQueued(queueAt + 1));
+		const seek = $input('sb-mu-seek');
+		seek.addEventListener('input', () => {
+			seekingUntil = Date.now() + 1500;
+		});
+		seek.addEventListener('change', () => {
+			seekingUntil = 0;
+			setPos(Number(seek.value));
+			applyMusic(true);
+			shareState();
+			drawMusic();
+		});
+		$('sb-mu-mute').addEventListener('click', () => {
+			setOpt('musicMuted', !opts.musicMuted);
+			applyVolume();
+			drawMusic();
+		});
+		const vol = $input('sb-mu-vol');
+		vol.addEventListener('input', () => {
+			setOpt('musicVolume', Number(vol.value));
+			setOpt('musicMuted', false);
+			applyVolume();
+			drawMusic();
+		});
+		const link = $input('sb-mu-link');
+		const add = () => {
+			const track = trackOf(link.value.trim());
+			if (!track) {
+				notify('⚠ Paste a YouTube link, or a link to a sound file (mp3, ogg, m4a, flac, wav…)');
+				return;
+			}
+			link.value = '';
+			addSong(track, false);
+		};
+		$('sb-mu-addbtn').addEventListener('click', add);
+		link.addEventListener('keydown', (e) => {
+			if (e.key === 'Enter') {
+				e.preventDefault();
+				add();
+			}
+		});
+		$('sb-mu-queue').addEventListener('click', (e) => {
+			const b = /** @type {HTMLElement | null} */ (targetOf(e).closest('button'));
+			if (!b) {
+				return;
+			}
+			if (b.dataset.qdel !== undefined) {
+				removeQueued(Number(b.dataset.qdel));
+			} else if (b.dataset.q !== undefined) {
+				if (following) {
+					leaveJam(true);
+				}
+				playQueued(Number(b.dataset.q));
+			}
+		});
+		$('sb-mu-share').addEventListener('click', () => {
+			if (following) {
+				leaveJam();
+			} else if (sharing) {
+				stopSharing();
+			} else {
+				startSharing(openChatKey());
+			}
+		});
+		$('sb-mu-mini').addEventListener('click', () => {
+			box.classList.toggle('mini');
+			placeMusic();
+		});
+		$('sb-mu-x').addEventListener('click', () => {
+			stopSharing();
+			leaveJam(true);
+			unloadSong();
+			queueAt = -1;
+			openMusic(false);
+		});
+		const head = $('sb-mu-head');
+		/** @type {{ dx: number, dy: number } | null} */
+		let drag = null;
+		head.addEventListener('pointerdown', (e) => {
+			if (e.button !== 0 || targetOf(e).closest('button')) {
+				return;
+			}
+			const r = box.getBoundingClientRect();
+			drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+			try {
+				head.setPointerCapture(e.pointerId);
+			} catch (err) {
+				/* works without capture */
+			}
+		});
+		head.addEventListener('pointermove', (e) => {
+			if (!drag) {
+				return;
+			}
+			if (!(e.buttons & 1)) {
+				drag = null;
+				return;
+			}
+			setOpt('musicPos', { x: e.clientX - drag.dx, y: e.clientY - drag.dy });
+			placeMusic();
+		});
+		const end = () => {
+			drag = null;
+		};
+		head.addEventListener('pointerup', end);
+		head.addEventListener('lostpointercapture', end);
+	}
+	/**
+	 * ▶ on a song link in a chat: it plays now, for you only (sharing goes through the player's share button).
+	 * @param {string} link
+	 */
+	function playLink(link) {
+		const track = trackOf(link);
+		if (track) {
+			addSong(track, true);
 		}
 	}
 
@@ -6079,6 +7281,7 @@
 			<label><input type="checkbox" id="sb-o-desktop" ${checked(opts.desktop)}>🖥 Desktop notification when the game is in the background</label>
 			<label><input type="checkbox" id="sb-o-keep" ${checked(opts.keep)}>🗂 Keep my beeps in this browser after I log out
 				<span class="sb-hint" style="display:block">${hist.length} beeps kept. <button class="sb-pill" id="sb-o-clear">Clear them</button></span></label>
+			${opts.trustedHosts.length > 0 && html`<label>🖼 Pictures show without asking from ${opts.trustedHosts.join(', ')}. <button class="sb-pill" id="sb-o-untrust">Ask again</button></label>`}
 			<label><input type="checkbox" id="sb-o-share" ${checked(opts.shareRoom)}>📍 "Let them join me" starts on</label>
 			<label><input type="checkbox" id="sb-o-remember" ${checked(opts.remember)}>Remember who I picked for WaveBeeps</label>
 			<label>Wait <input type="number" id="sb-o-gap" min="1" max="10" step="0.5" value="${opts.gap}"> seconds between WaveBeeps</label>
@@ -6125,6 +7328,13 @@
 			e.preventDefault();
 			clearKept();
 		});
+		if ($('sb-o-untrust')) {
+			$('sb-o-untrust').addEventListener('click', (e) => {
+				e.preventDefault();
+				setOpt('trustedHosts', []);
+				render();
+			});
+		}
 		$('sb-o-share').addEventListener('change', (e) => setOpt('shareRoom', inputOf(e).checked));
 		$('sb-o-remember').addEventListener('change', (e) => {
 			setOpt('remember', inputOf(e).checked);
