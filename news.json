@@ -226,5 +226,11 @@
     "date": "17 Oct 2026",
     "title": "📢 SlimeBeep 3.0.5",
     "text": "BCT's behind-the-scenes beeps (like \"Friends\" between best friends) no longer show up as messages in your chats."
+  },
+  {
+    "id": "3.0.6",
+    "date": "17 Oct 2026",
+    "title": "📢 SlimeBeep 3.0.6",
+    "text": "Group invites now go as a normal beep with a Join button, so you can see them in your chat too, and they arrive the same way your beeps do. Send invites tells you how it went, and ⚙'s pop-up setting has a clearer name."
   }
 ]

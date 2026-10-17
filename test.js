@@ -687,13 +687,14 @@ const check = (ok, what) => {
 			8000,
 		);
 		check(opened, 'a new group is made on the relay and opens');
-		await wait(600);
-		const inv = await p.evaluate(() => hidden.map((h) => JSON.parse(h.Message)).find((m) => m.ginv));
+		await wait(1500);
+		const annBeep = await p.evaluate(() => beeps.find((b) => b[0] === 11 && /SB-/.test(b[1])));
+		const annCode = annBeep && /SB-[a-z0-9]+-[A-Z2-9]{10}/.exec(annBeep[1]);
 		check(
-			inv && /^SB-[a-z0-9]+-[A-Z2-9]{10}$/.test(inv.ginv.code) && inv.ginv.name === 'Slime Squad',
-			'Ann, a SlimeBeep friend, gets her invite as a hidden beep',
+			!!annCode && /^👥 Join my group chat "Slime Squad": SB-/.test(annBeep[1]) && !/FUSAM/.test(annBeep[1]),
+			`Ann, a SlimeBeep friend, gets her invite in a normal beep, which shows in both chats (${annBeep && annBeep[1]})`,
 		);
-		const [, gid, code] = /^SB-([a-z0-9]+)-([A-Z2-9]+)$/.exec(inv.ginv.code);
+		const [, gid, code] = /^SB-([a-z0-9]+)-([A-Z2-9]+)$/.exec(annCode ? annCode[0] : 'SB-x-x');
 		// Other add-ons inviting: Bea is a friend without SlimeBeep, so a beep with her code (no link);
 		// Cat (has SlimeBeep) gets a card; Zed (#99) is no friend, so the code comes back to pass on.
 		const viaApi = await p.evaluate(async (g) => {
@@ -702,14 +703,13 @@ const check = (ok, what) => {
 			const bea = await SlimeBeep.api.inviteToGroup(g, 12);
 			const zed = await SlimeBeep.api.inviteToGroup(g, 99);
 			const cat = await SlimeBeep.api.inviteToGroup(g, 13);
-			await new Promise((r) => setTimeout(r, 500));
-			const card = hidden.map((h) => JSON.parse(h.Message)).find((m) => m.ginv);
+			await new Promise((r) => setTimeout(r, 4500));
 			return {
 				bea,
 				beaBeep: beeps.find((b) => b[0] === 12),
 				zed,
 				cat,
-				catCard: hidden.some((h) => h.MemberNumber === 13 && /ginv/.test(h.Message)) && !!card,
+				catBeep: beeps.some((b) => b[0] === 13 && cat.code && b[1].includes(cat.code) && /^👥 Join my group chat/.test(b[1])),
 				me: await SlimeBeep.api.inviteToGroup(g, 1),
 				canInvite: SlimeBeep.api.group(g).canInvite,
 			};
@@ -723,7 +723,7 @@ const check = (ok, what) => {
 				!/https?:/.test(viaApi.beaBeep[1]),
 			`a friend without SlimeBeep gets a normal beep with her code, and no link in it (the owner: nothing like an ad) (${viaApi.beaBeep && viaApi.beaBeep[1].slice(0, 90)})`,
 		);
-		check(viaApi.cat.ok && viaApi.cat.sent === 'invite' && viaApi.catCard, 'a SlimeBeep friend gets an invite card');
+		check(viaApi.cat.ok && viaApi.cat.sent === 'invite' && viaApi.catBeep, 'a SlimeBeep friend gets the invite beep (sent: invite)');
 		// Invite beeps to friends without SlimeBeep: 3 a minute, a few seconds apart (Bea's above was the first).
 		const many = await p.evaluate(async (g) => {
 			const out = [];
@@ -759,11 +759,27 @@ const check = (ok, what) => {
 			/Invite Dee/.test(await p.$eval('#sb-body', (e) => e.textContent)) && (await p.$$eval('[data-invite]', (e) => e.length)) === 1,
 			'api.openInvite opens "Invite Dee to…" with each group you can invite to',
 		);
+		// Dee has no SlimeBeep and this minute's 3 invite beeps are used up: she gets nothing, and it says so.
+		const deeBefore = await p.evaluate(() => beeps.filter((b) => b[0] === 14).length);
+		await p.click('[data-invite]');
+		const held = await waitFor(
+			() => p.evaluate(() => /⏳ Dee has no SlimeBeep/.test(document.querySelector('#sb-body').textContent)),
+			4000,
+		);
+		await wait(3500);
+		check(
+			held && (await p.evaluate(() => beeps.filter((b) => b[0] === 14).length)) === deeBefore,
+			'past the limit, pressing Invite there says to try again and sends Dee nothing',
+		);
+		// Cat has SlimeBeep: she gets the invite beep.
+		await p.evaluate(() => SlimeBeep.api.openInvite(13));
+		await wait(200);
 		await p.click('[data-invite]');
 		const shown = await waitFor(() => p.evaluate(() => /Invite sent/.test(document.querySelector('#sb-body').textContent)), 4000);
+		await wait(1500);
 		check(
-			shown && (await p.evaluate(() => beeps.some((b) => b[0] === 14 && /SB-/.test(b[1])))),
-			'pressing Invite there beeps Dee, a friend, her code',
+			shown && (await p.evaluate(() => beeps.some((b) => b[0] === 13 && /^👥 Join my group chat/.test(b[1])))),
+			'pressing Invite there beeps Cat, a SlimeBeep friend, her code',
 		);
 		await p.evaluate((g) => SlimeBeep.api.openGroup(g), gid);
 		await wait(200);
@@ -861,6 +877,32 @@ const check = (ok, what) => {
 			}
 			b.scrollTop = 0;
 		});
+		// "Send invites" really sends: every ticked friend gets an invite card or a beep with a code.
+		const picked = await p.$eval('#sb-body', (b) =>
+			[...b.querySelectorAll('label input[type=checkbox][value]:not(:disabled)')].slice(0, 2).map((x) => {
+				x.checked = true;
+				x.dispatchEvent(new Event('change'));
+				return Number(x.value);
+			}),
+		);
+		const sentBefore = await p.evaluate(() => hidden.length);
+		await tap('#sb-gm-add');
+		await wait(8000);
+		const delivered = await p.evaluate(
+			(from, gid) =>
+				hidden
+					.slice(from)
+					.filter((h) => typeof h.Message === 'string' && h.Message.includes(`SB-${gid}-`))
+					.map((h) => h.MemberNumber),
+			sentBefore,
+			gid,
+		);
+		// Past the limit on beeps to friends without SlimeBeep an invite waits, and says so.
+		const toast = await p.$eval('#sb-toast', (e) => e.textContent);
+		check(
+			picked.length > 0 && picked.every((n) => delivered.includes(n) || /⏳.*try again/.test(toast)),
+			`Send invites reaches every ticked friend or says to try again (ticked ${picked.join(', ')}; delivered to ${delivered.join(', ') || 'nobody'}; "${toast}")`,
+		);
 		await shot('members');
 		z.say('hi, I am a friend of nobody here');
 		await tap('#sb-back');
@@ -927,6 +969,32 @@ const check = (ok, what) => {
 		});
 		await wait(200);
 		check(!/Nia Nook/.test(await p.$eval('#sb-body', (e) => e.textContent)), 'and Dismiss takes it away');
+		// Invites come in normal beeps: a friend's goes to the invitations too, a stranger's only gets a Join button.
+		await p.evaluate(() => {
+			for (const [n, name, group] of [
+				[77, 'Nia', 'Nia\'s "Cosy" Nook'],
+				[78, 'Stranger', 'Stranger Den'],
+			]) {
+				FriendListBeepLog.push({
+					MemberNumber: n,
+					MemberName: name,
+					Sent: false,
+					Read: false,
+					Time: new Date(),
+					Message: `👥 Join my group chat "${group}": SB-${name.toLowerCase()}beep1-ABCDEFGHJK`,
+				});
+			}
+		});
+		await wait(2200);
+		await p.click('[data-tab=groups]');
+		await wait(200);
+		const beepInvites = await p.$eval('#sb-body', (e) => e.textContent);
+		check(
+			/Nia's "Cosy" Nook/.test(beepInvites) && /Invite from Nia/.test(beepInvites) && !/Stranger/.test(beepInvites),
+			`a friend's invite beep is listed with the invitations, a stranger's is not (${beepInvites.slice(0, 160)})`,
+		);
+		await p.$$eval('#sb-body [data-dismiss]', (bs) => bs.forEach((b) => b.click()));
+		await wait(200);
 		// A friend's invite to another group: it waits in 👥 Groups until you join.
 		const gid2 = `owls${Date.now().toString(36)}`;
 		const a2 = await relayJoin(gid2, ann, { create: { name: 'Night Owls', open: false } });

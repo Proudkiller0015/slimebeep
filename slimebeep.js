@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.0.5';
+	const VERSION = '3.0.6';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -2287,8 +2287,9 @@
 	 * @param {number} from
 	 * @param {string} senderName
 	 * @param {{ code?: unknown, name?: unknown }} ginv
+	 * @param {boolean} [quiet] no card or sound (the invite came in a beep, which has its own)
 	 */
-	function takeInvite(from, senderName, ginv) {
+	function takeInvite(from, senderName, ginv, quiet = false) {
 		const m = CODE_RE.exec(typeof ginv.code === 'string' ? ginv.code : '');
 		if (!m || groups[m[1]]) {
 			return;
@@ -2300,6 +2301,12 @@
 			{ code: m[0], name, from, fromName, at: Date.now() },
 		].slice(-20);
 		saveGC();
+		if (quiet) {
+			if (isOpen() && tab === 'groups' && thread === null) {
+				render(true);
+			}
+			return;
+		}
 		if (opts.sound && !isMuted(`n:${from}`)) {
 			chime();
 		}
@@ -3130,9 +3137,7 @@
 		connectGroup(id, {
 			create: { name: clean(name, LIMITS.name) || 'Group chat', open: !!open },
 			onWelcome: () => {
-				for (const n of picked) {
-					inviteFriend(id, n);
-				}
+				inviteAll(id, picked);
 				if (done) {
 					done(id);
 				}
@@ -3192,54 +3197,67 @@
 	}
 
 	/**
-	 * Invites a friend to a group (a code for them, then deliverInvite).
+	 * Invites friends to a group (inviteToGroup each), then says in one note how it went.
 	 * @param {string} id
-	 * @param {number} n
+	 * @param {number[]} picked
 	 */
-	function inviteFriend(id, n) {
-		requestInvite(id, n, (code) => {
-			if (code) {
-				deliverInvite(n, code, groups[id] ? groups[id].name : 'Group chat');
-			}
-		});
+	async function inviteAll(id, picked) {
+		const results = await Promise.all(picked.map((n) => inviteToGroup(id, n)));
+		const sent = picked.filter((n, i) => results[i].ok && results[i].sent && results[i].sent !== 'later');
+		const later = picked.filter((n, i) => results[i].sent === 'later');
+		const failed = picked.filter((n, i) => !results[i].ok);
+		const notes = [];
+		if (sent.length) {
+			notes.push(`📨 ${sent.length} invite${sent.length === 1 ? '' : 's'} sent`);
+		}
+		if (later.length) {
+			notes.push(`⏳ ${later.map(nameOf).join(', ')}: no SlimeBeep, so try again in a minute`);
+		}
+		if (failed.length) {
+			const why = results[picked.indexOf(failed[0])].why;
+			notes.push(`⚠ No invite for ${failed.map(nameOf).join(', ')}${why ? `: ${why}` : ''}`);
+		}
+		if (notes.length) {
+			notify(notes.join(' · '));
+		}
 	}
 	/** Most invite beeps to friends without SlimeBeep per minute. */
 	const PLAIN_MAX = 3;
-	/** Milliseconds between those beeps. */
+	/** Milliseconds between invite beeps to friends without SlimeBeep. */
 	const PLAIN_GAP = 3000;
-	/** @type {number[]} Times of the invite beeps sent in the last minute. */
+	/** Milliseconds between invite beeps to friends with SlimeBeep. */
+	const PEER_GAP = 1000;
+	/** @type {number[]} Times of the invite beeps to friends without SlimeBeep sent in the last minute. */
 	const plainSent = [];
 	/** When the last scheduled invite beep goes out. */
-	let plainAt = 0;
+	let inviteAt = 0;
 	/**
-	 * Delivers a friend's invite code: a hidden invite card if they have SlimeBeep, else a plain beep
-	 * with the code (rate limited by PLAIN_MAX / PLAIN_GAP).
+	 * Delivers a friend's invite code in a beep, which shows in both chats: friends with SlimeBeep get it
+	 * as an invite too (inviteFromBeep), the others get a word on where to find SlimeBeep (at most
+	 * PLAIN_MAX a minute). Invite beeps go out PLAIN_GAP / PEER_GAP apart.
 	 * @param {number} n
 	 * @param {string} code
 	 * @param {string} name the group's name
-	 * @returns {'invite'|'beep'|'later'} 'later': over the limit, nothing sent
+	 * @returns {'invite'|'beep'|'later'} 'invite' to a friend with SlimeBeep; 'later': over the limit, nothing sent
 	 */
 	function deliverInvite(n, code, name) {
-		if (peers.has(n)) {
-			sendHidden(n, { sb: 1, ginv: { code, name } });
-			return 'invite';
-		}
+		const peer = peers.has(n);
 		const now = Date.now();
-		while (plainSent.length && now - plainSent[0] > 60000) {
-			plainSent.shift();
+		if (!peer) {
+			while (plainSent.length && now - plainSent[0] > 60000) {
+				plainSent.shift();
+			}
+			if (plainSent.length >= PLAIN_MAX) {
+				return 'later';
+			}
+			plainSent.push(now);
 		}
-		if (plainSent.length >= PLAIN_MAX) {
-			notify(`⏳ ${nameOf(n)} has no SlimeBeep: invite beeps like that go ${PLAIN_MAX} a minute, try again shortly`);
-			return 'later';
-		}
-		plainSent.push(now);
-		plainAt = Math.max(now, plainAt + PLAIN_GAP);
-		setTimeout(
-			() =>
-				beep(n, `👥 Come join my group chat "${name}" on SlimeBeep (a BC add-on, in FUSAM's Addon Manager). Group code: ${code}`, false),
-			plainAt - now,
-		);
-		return 'beep';
+		inviteAt = Math.max(now, inviteAt + (peer ? PEER_GAP : PLAIN_GAP));
+		const text = peer
+			? `👥 Join my group chat "${name}": ${code}`
+			: `👥 Come join my group chat "${name}" on SlimeBeep (a BC add-on, in FUSAM's Addon Manager). Group code: ${code}`;
+		setTimeout(() => beep(n, text, false), inviteAt - now);
+		return peer ? 'invite' : 'beep';
 	}
 	/**
 	 * Disables pick-list boxes past PLAIN_MAX ticked friends without SlimeBeep (or all unticked ones when `full`).
@@ -3563,6 +3581,7 @@
 					return;
 				}
 				ding([h]);
+				inviteFromBeep(h);
 				announce(h);
 				if (isOpen() && tab !== 'options' && tab !== 'wave') {
 					render(true);
@@ -3818,6 +3837,7 @@
 				return;
 			}
 			ding(fresh);
+			fresh.forEach(inviteFromBeep);
 			for (const h of fresh.slice(-4)) {
 				announce(h);
 			}
@@ -3832,6 +3852,21 @@
 		}
 	}
 
+	/**
+	 * A friend's beep with a group code in it (how SlimeBeep sends invites) is kept with the invitations,
+	 * as an invite card would be. Codes from strangers only get the Join button in the chat.
+	 * @param {HistEntry} h
+	 */
+	function inviteFromBeep(h) {
+		if (h.group || h.Sent || typeof h.Message !== 'string' || !isFriend(h.MemberNumber)) {
+			return;
+		}
+		const text = parseBeep(h.Message).text;
+		const code = (text.match(CODE_IN) || [])[0];
+		if (code) {
+			takeInvite(h.MemberNumber, h.MemberName, { code, name: (/group chat "(.*)"/.exec(text) || [])[1] }, true);
+		}
+	}
 	/**
 	 * Shows a new message: a card (unless that chat is open) and, with opts.desktop, a system notification.
 	 * @param {HistEntry} h
@@ -4753,10 +4788,7 @@
 					.filter((b) => b.checked)
 					.map((b) => Number(b.value))
 					.slice(0, room);
-				for (const n of picked) {
-					inviteFriend(id, n);
-				}
-				notify(`📨 ${picked.length} invite${picked.length === 1 ? '' : 's'} sent`);
+				inviteAll(id, picked);
 				for (const b of boxes()) {
 					b.checked = false;
 				}
@@ -5562,7 +5594,7 @@
 				() => !!themeSource(),
 			],
 			['sound', 'Pop sound for new beeps', () => opts.sound, (on) => setOpt('sound', on)],
-			['popups', 'A card by the slime for each new beep', () => opts.popups, (on) => setOpt('popups', on)],
+			['popups', 'Show new beeps in a pop-up (click to reply)', () => opts.popups, (on) => setOpt('popups', on)],
 			['desktop', 'Desktop notification when the game is in the background', () => opts.desktop, (on) => setDesktop(on)],
 			['share', '"Let them join me" starts on', () => opts.shareRoom, (on) => setOpt('shareRoom', on)],
 			[
@@ -6009,6 +6041,8 @@
 				const r = await inviteToGroup(id, page.n);
 				if (!r.ok) {
 					page.results[id] = `⚠ ${r.why}`;
+				} else if (r.sent === 'later') {
+					page.results[id] = `⏳ ${nameOf(page.n)} has no SlimeBeep: invite beeps like that go ${PLAIN_MAX} a minute, try again in one.`;
 				} else if (r.sent) {
 					page.results[id] = '📨 Invite sent!';
 				} else {
@@ -6038,7 +6072,7 @@
 				<span class="sb-opt-pic-buttons"><button class="sb-pill" id="sb-o-pic">Choose</button>${myPfp() && loadSrc() && html`<button class="sb-pill" id="sb-o-fit">Adjust</button>`}${myPfp() && html`<button class="sb-pill" id="sb-o-nopic">Remove</button>`}</span></div>
 			<label><input type="checkbox" id="sb-o-night" ${checked(opts.night)}>🌙 Night mode (a night blue slime)</label>
 			<label><input type="checkbox" id="sb-o-sound" ${checked(opts.sound)}>Pop sound for new beeps</label>
-			<label><input type="checkbox" id="sb-o-popups" ${checked(opts.popups)}>💌 A card by the slime for each new beep</label>
+			<label><input type="checkbox" id="sb-o-popups" ${checked(opts.popups)}>💌 Show new beeps in a pop-up (click to reply)</label>
 			<label><input type="checkbox" id="sb-o-desktop" ${checked(opts.desktop)}>🖥 Desktop notification when the game is in the background</label>
 			<label><input type="checkbox" id="sb-o-keep" ${checked(opts.keep)}>🗂 Keep my beeps in this browser after I log out
 				<span class="sb-hint" style="display:block">${hist.length} beeps kept. <button class="sb-pill" id="sb-o-clear">Clear them</button></span></label>
