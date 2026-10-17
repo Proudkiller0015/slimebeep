@@ -59,7 +59,7 @@ SlimeBeep runs its own small server on Cloudflare (a Worker with Durable Objects
 
 That's all. Beeps to someone online are ordinary game beeps and never touch the server. In your browser, SlimeBeep keeps your chat history (if **keep** is on), options, friends' pictures and your sign-in key.
 
-Group chats and mailboxes need the game's https address (signing in uses the browser's WebCrypto, which plain http pages don't have); everything else works on either. The server only accepts connections from the Bondage Club sites and enforces every rule itself (roles, sizes, rate limits). Nobody can post as someone else: each SlimeBeep signs in with its own key, and a mailbox beep can only be read by the key it was addressed to.
+Group chats and mailboxes need the game's https address (signing in uses the browser's WebCrypto, which plain http pages don't have); everything else works on either. They also connect to `slimebeep-relay.slimebeep-relay.workers.dev`: if you use NoScript, uMatrix or another strict blocker, allow that address (SlimeBeep tells you when it can't reach it). The server only accepts connections from the Bondage Club sites and enforces every rule itself (roles, sizes, rate limits). Nobody can post as someone else: each SlimeBeep signs in with its own key, and a mailbox beep can only be read by the key it was addressed to.
 
 ## Updates in the room chat
 

@@ -133,6 +133,11 @@ const check = (ok, what) => {
 		return r.continue();
 	});
 	await p.goto('https://example.com/');
+	// The live relay refuses this test page, so SlimeBeep talks to the local one from the start.
+	const relayUp = await fetch(`${RELAY_URL.replace(/^ws/, 'http')}/`)
+		.then((r) => r.ok)
+		.catch(() => false);
+	await p.evaluate((u) => localStorage.setItem('slimebeep.relay', u), RELAY_URL);
 	const stub = () => {
 		// The game's own rule for every canvas (CSS/Styles.css), which SlimeBeep's canvases must survive.
 		if (!document.getElementById('game-css')) {
@@ -702,12 +707,36 @@ const check = (ok, what) => {
 	await wait(400);
 	check((await p.evaluate(() => hidden.length)) === 1, 'but only once a minute, so nobody can bounce beeps off you');
 	// ---- Group chats through the relay (cd relay && npm run dev:test), friends or not.
-	const relayUp = await fetch(`${RELAY_URL.replace(/^ws/, 'http')}/`)
-		.then((r) => r.ok)
-		.catch(() => false);
 	if (!relayUp) {
 		console.log('skip group chats: no relay running (cd relay && npm run dev:test)');
 	} else {
+		// A relay a blocker stops (NoScript, uMatrix...) never opens: the player is told what to allow.
+		await p.evaluate(() => localStorage.setItem('slimebeep.relay', 'ws://localhost:9'));
+		await p.click('#sb-back').catch(() => {});
+		await p.click('[data-tab=groups]');
+		await wait(150);
+		await p.click('#sb-newgc');
+		await wait(150);
+		await p.type('#sb-gc-name', 'Blocked');
+		await p.click('#sb-gc-make');
+		const blockCard = await waitFor(
+			() =>
+				p.evaluate(() =>
+					[...document.querySelectorAll('.sb-card')].some((c) =>
+						/allow slimebeep-relay\.slimebeep-relay\.workers\.dev/.test(c.textContent || ''),
+					),
+				),
+			5000,
+		);
+		check(
+			blockCard && /server/.test(await p.$eval('#sb-toast', (e) => e.textContent)),
+			'a relay that never opens (blocked) tells the player which address to allow',
+		);
+		await p.evaluate(() => {
+			for (const c of document.querySelectorAll('.sb-card')) {
+				c.remove();
+			}
+		});
 		await p.evaluate((u) => localStorage.setItem('slimebeep.relay', u), RELAY_URL);
 		const ann = await relayUser(11, 'Ann'),
 			zed = await relayUser(99, 'Zed'),

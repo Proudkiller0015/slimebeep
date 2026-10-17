@@ -244,5 +244,11 @@
     "date": "17 Oct 2026",
     "title": "📢 SlimeBeep 3.0.8",
     "text": "Closing the music player now just hides it and the music keeps playing; 🎵 glows while a song plays, so you can bring the player back or pause it."
+  },
+  {
+    "id": "3.0.9",
+    "date": "17 Oct 2026",
+    "title": "📢 SlimeBeep 3.0.9",
+    "text": "If something like NoScript or a strict blocker stops group chats from connecting, SlimeBeep now says so and names the address to allow."
   }
 ]

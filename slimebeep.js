@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.0.8';
+	const VERSION = '3.0.9';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -2627,6 +2627,26 @@
 		});
 	}
 
+	/** Whether relayBlocked has shown its card. */
+	let blockTold = false;
+	/**
+	 * A relay connection closed without ever opening: something on the player's side (NoScript, uMatrix,
+	 * a strict blocker or firewall) stops it, or they are offline. Tells them, once per visit, what to allow.
+	 */
+	function relayBlocked() {
+		if (blockTold || !navigator.onLine) {
+			return;
+		}
+		blockTold = true;
+		card({
+			icon: logoIcon(),
+			title: '🛡 SlimeBeep',
+			text: `Group chats can't reach SlimeBeep's server. If you use NoScript, uMatrix or another blocker, allow ${RELAY.replace('wss://', '')} and reload.`,
+			ms: 0,
+			cls: 'news',
+		});
+	}
+
 	/**
 	 * Opens a signed connection to `owner`'s mailbox on the relay. Mailboxes hold beeps for offline
 	 * SlimeBeep friends, addressed to the recipient's key start (peerKeys); see relay/src/index.js.
@@ -2705,7 +2725,16 @@
 					warn(x, 'mail');
 				}
 			};
-			sock.onclose = () => fin('closed');
+			let opened = false;
+			sock.onopen = () => {
+				opened = true;
+			};
+			sock.onclose = () => {
+				if (!opened) {
+					relayBlocked();
+				}
+				fin('closed');
+			};
 		});
 	}
 	/** True while mailWaiting runs. */
@@ -2950,6 +2979,10 @@
 			return c;
 		}
 		c.ws = sock;
+		let opened = false;
+		sock.onopen = () => {
+			opened = true;
+		};
 		sock.onmessage = (e) => {
 			/** @type {RelayMessage} */
 			let p;
@@ -2965,9 +2998,12 @@
 			if (c.dead || conns[gid] !== c) {
 				return;
 			}
+			if (!opened) {
+				relayBlocked();
+			}
 			if (!groups[gid]) {
 				if (c.onFail) {
-					c.onFail('could not reach the group');
+					c.onFail(opened ? 'could not reach the group' : "could not reach SlimeBeep's server");
 				}
 				delete conns[gid];
 				return;
