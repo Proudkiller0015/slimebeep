@@ -370,6 +370,13 @@ const check = (ok, what) => {
 
 	await p.click('#sb-toggle');
 	await wait(200);
+	// "Let them join me" starts off; the room tests below switch it on.
+	await p.click('#sb-gear');
+	await wait(200);
+	check(!(await p.$eval('#sb-o-share', (e) => e.checked)), '"Let them join me" starts off');
+	await p.click('#sb-o-share');
+	await p.click('[data-tab=chats]');
+	await wait(200);
 	const chats = await p.$$eval('#sb-body .sb-row', (rows) =>
 		rows.map((r) => `${r.querySelector('.sb-name').textContent}|${r.querySelector('.sb-sub').textContent}`),
 	);
@@ -1433,6 +1440,19 @@ const check = (ok, what) => {
 		'at 128×128, sharp enough to zoom on',
 	);
 	await shot('mypic');
+	// Your picture at the top: no night tint, and the pointer (a click opens ⚙, it doesn't zoom).
+	const me = await p.evaluate(() => {
+		document.documentElement.classList.add('sb-night');
+		const img = document.querySelector('#sb-me img.sb-pic');
+		const style = img && getComputedStyle(img);
+		const out = style ? { filter: style.filter, cursor: style.cursor } : null;
+		document.documentElement.classList.remove('sb-night');
+		return out;
+	});
+	check(
+		!!me && me.filter === 'none' && me.cursor === 'pointer',
+		`your picture at the top keeps its colours in night mode and has no zoom cursor (${JSON.stringify(me)})`,
+	);
 	const picButtons = await p.evaluate(() => {
 		const panel = document.getElementById('sb-panel').getBoundingClientRect();
 		return ['sb-o-pic', 'sb-o-fit', 'sb-o-nopic'].map((id) => {

@@ -30,7 +30,7 @@
 		/** Seconds between beeps when a WaveBeep goes to several friends. */
 		gap: 1.5,
 		/** Whether 📍 (a join button for your room) starts switched on in a chat. */
-		shareRoom: true,
+		shareRoom: false,
 		/** Whether WaveBeep keeps the ticked friends (`picked`) for next time. */
 		remember: true,
 		/** @type {number[]} Member numbers ticked in WaveBeep. */
@@ -1044,7 +1044,9 @@
 		.sb-bcjoin:hover { background: #e85aa6; }
 		.sb-joinroom { margin-left: 4px; padding: 1px 8px !important; font-size: 11px !important; }
 		#sb-me { display: flex; cursor: pointer; }
-		img.sb-pic { cursor: zoom-in; }
+		/* Pictures in the window zoom when clicked; yours at the top opens ⚙ instead. */
+		#sb-panel img.sb-pic { cursor: zoom-in; }
+		#sb-panel #sb-me img.sb-pic { cursor: pointer; }
 		#sb-zoom { position: absolute; inset: 0; z-index: 5; background: #0008; backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; cursor: zoom-out; }
 		#sb-zoom img { width: 220px; height: 220px; border-radius: 50%; border: 4px solid #fff; box-shadow: 0 10px 40px #000a; background: #fff; }
 		#sb-me .sb-av { width: 28px; height: 28px; border: 2px solid #fff; font-size: 11px; }
@@ -1121,7 +1123,7 @@
 		@keyframes sb-out { to { opacity: 0; transform: translateX(30px); } }
 		/* Night mode (html.sb-night): navy colours and a blue slime. */
 		html.sb-night #sb-toggle { background: #1a2142; border-color: #8fb3ff; box-shadow: 0 3px 12px #3b55c488; }
-		html.sb-night #sb-toggle img, html.sb-night .sb-head img, html.sb-night .sb-card.news > img { filter: hue-rotate(-105deg) saturate(1.15) brightness(.92); }
+		html.sb-night #sb-toggle img, html.sb-night .sb-head > img, html.sb-night .sb-card.news > img { filter: hue-rotate(-105deg) saturate(1.15) brightness(.92); }
 		html.sb-night #sb-badge { background: #5b8cff; border-color: #1a2142; }
 		html.sb-night #sb-panel { background: #141a33; color: #dfe6ff; border-color: #2f3b75; box-shadow: 0 8px 30px #0008; color-scheme: dark; }
 		html.sb-night .sb-head { background: linear-gradient(120deg, #2b3a8f, #4f6bd8 55%, #7a5cd6); text-shadow: 0 1px 2px #0008; }
@@ -1134,7 +1136,8 @@
 		html.sb-night .sb-row:hover { background: #253064; border-color: #5b8cff; }
 		html.sb-night .sb-sub, html.sb-night .sb-hint, html.sb-night .sb-side, html.sb-night .sb-empty { color: #8f9fd6; }
 		html.sb-night .sb-dot { background: #5b8cff; }
-		html.sb-night .sb-av { border-color: #141a33; filter: saturate(.7) brightness(.85); }
+		html.sb-night .sb-av { border-color: #141a33; }
+		html.sb-night .sb-av:not(.sb-pic) { filter: saturate(.7) brightness(.85); }
 		html.sb-night .sb-search, html.sb-night .sb-compose textarea, html.sb-night .sb-group textarea, html.sb-night .sb-opts input[type=number] {
 			background: #10152b; color: #dfe6ff; border-color: #2f3b75; }
 		html.sb-night #sb-panel textarea:focus, html.sb-night #sb-panel input:focus { border-color: #5b8cff !important; box-shadow: 0 0 0 3px #2b3a8f; }
