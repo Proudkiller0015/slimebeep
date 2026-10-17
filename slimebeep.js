@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.0.7';
+	const VERSION = '3.0.8';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -1080,6 +1080,7 @@
 		.sb-head small { opacity: .85; font-weight: normal; font-size: 11px; }
 		.sb-head button { border: none; background: #ffffff55; color: #fff; width: 28px; height: 28px; border-radius: 50%; font-size: 14px; }
 		.sb-head button:hover { background: #ffffff88; }
+		.sb-head #sb-music.playing { background: #fff; box-shadow: 0 0 0 2px #ff4fa3, 0 0 8px #ff4fa3aa; }
 		.sb-head { cursor: move; touch-action: none; user-select: none; }
 		/* Resize edges and corners of the window. */
 		.sb-rs { position: absolute; z-index: 3; touch-action: none; }
@@ -6176,6 +6177,12 @@
 		const clock = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 		box.classList.toggle('yt', !!m && !!m.track.yt);
 		box.classList.toggle('following', !!following);
+		// With the player hidden, 🎵 shows that music is still playing.
+		const btn = $('sb-music');
+		if (btn) {
+			btn.classList.toggle('playing', !!m && m.playing);
+			btn.title = m && m.playing ? `Music player (playing ${m.track.title})` : 'Music player';
+		}
 		$('sb-mu-title').textContent = m ? m.track.title : 'Nothing playing';
 		$('sb-mu-title').title = m ? m.track.title : '';
 		let status = 'Paste a YouTube or mp3 link below';
@@ -6244,7 +6251,7 @@
 			box,
 			html`
 			<div class="sb-head" id="sb-mu-head"><b>🎵 SlimeBeep Music</b>
-				<button id="sb-mu-mini" title="Smaller">${ICONS.down}</button><button id="sb-mu-x" title="Stop the music and close">${ICONS.close}</button></div>
+				<button id="sb-mu-mini" title="Smaller">${ICONS.down}</button><button id="sb-mu-x" title="Hide (the music keeps playing)">${ICONS.close}</button></div>
 			<div class="sb-mu-now">
 				<div class="sb-mu-art" id="sb-mu-art"></div>
 				<div class="sb-mu-info"><div class="sb-mu-title" id="sb-mu-title"></div><div class="sb-mu-status" id="sb-mu-status"></div></div>
@@ -6360,13 +6367,7 @@
 			box.classList.toggle('mini');
 			placeMusic();
 		});
-		$('sb-mu-x').addEventListener('click', () => {
-			stopSharing();
-			leaveJam(true);
-			unloadSong();
-			queueAt = -1;
-			openMusic(false);
-		});
+		$('sb-mu-x').addEventListener('click', () => openMusic(false));
 		const head = $('sb-mu-head');
 		/** @type {{ dx: number, dy: number } | null} */
 		let drag = null;

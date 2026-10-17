@@ -238,5 +238,11 @@
     "date": "17 Oct 2026",
     "title": "📢 SlimeBeep 3.0.7",
     "text": "🎵 A music player: press 🎵, paste a YouTube or mp3 link and listen, with a queue and your own volume. Share it in a chat and friends can listen along in time with you. Picture and GIF links now show the picture (sites SlimeBeep doesn't know ask first), and reading older messages no longer jumps you down: Jump to present takes you back."
+  },
+  {
+    "id": "3.0.8",
+    "date": "17 Oct 2026",
+    "title": "📢 SlimeBeep 3.0.8",
+    "text": "Closing the music player now just hides it and the music keeps playing; 🎵 glows while a song plays, so you can bring the player back or pause it."
   }
 ]

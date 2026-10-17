@@ -1411,9 +1411,25 @@ const check = (ok, what) => {
 		await p.click('#sb-mu-share');
 		await wait(600);
 		check(JSON.stringify((await musicTo(13)).slice(-1)) === '["end"]' && !(await jamLine()), 'Stop sharing tells Cat it ended');
-		// Cat shares: a card and a Listen along line; nothing loads until you press it.
+		// ✕ only hides the player: the music goes on, and 🎵 shows it is playing.
+		await p.click('#sb-mu-play');
+		await wait(300);
 		await p.click('#sb-mu-x');
 		await wait(200);
+		const shut = await player();
+		const glows = () => p.$eval('#sb-music', (e) => e.classList.contains('playing'));
+		check(
+			!shut.open && !!shut.audio && shut.audio.playing && (await glows()),
+			`✕ hides the player and the music keeps playing; 🎵 shows it (${JSON.stringify(shut)})`,
+		);
+		await p.click('#sb-music');
+		await wait(200);
+		await p.click('#sb-mu-play');
+		await wait(200);
+		check((await player()).open && !(await glows()), '🎵 brings the player back, and stops glowing once paused');
+		await p.click('#sb-mu-x');
+		await wait(200);
+		// Cat shares: a card and a Listen along line; nothing loads until you press it.
 		await hide(13, 'Cat', { sb: 1, music: { u: YT, ti: 'Never Gonna', p: 30, pl: true, d: 214 } });
 		await wait(500);
 		const offered = await player();
@@ -1421,7 +1437,11 @@ const check = (ok, what) => {
 			[...document.querySelectorAll('.sb-card')].some((c) => /Cat is listening to music/.test(c.textContent)),
 		);
 		check(
-			!offered.open && !offered.yt && !offered.audio && catCard && /Cat is listening to Never Gonna/.test(await jamLine()),
+			!offered.open &&
+				!offered.yt &&
+				(!offered.audio || (!offered.audio.playing && offered.audio.src === WAV)) &&
+				catCard &&
+				/Cat is listening to Never Gonna/.test(await jamLine()),
 			`Cat's song is offered (card and Listen along), and nothing plays on its own (${JSON.stringify({ offered, catCard })})`,
 		);
 		await shot('music-offered');
