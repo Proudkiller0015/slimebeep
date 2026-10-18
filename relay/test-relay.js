@@ -1,5 +1,6 @@
 // Plays several SlimeBeep users against the relay (npm run dev first, or RELAY=wss://... for the live one).
 //   node test-relay.js
+const { makePeer, groupAuth, keyed, onRelay, sealMail, openMail, b64url } = require('./e2e-peer.js');
 const BASE = process.env.RELAY || 'ws://127.0.0.1:8787';
 const ORIGIN = 'https://www.bondageprojects.elementfx.com';
 let failed = 0;
@@ -17,20 +18,17 @@ const messagesOf = (x) => {
 	}
 	return x.t === 'history' ? x.msgs : [];
 };
-const b64url = (buf) => Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-
-async function keys() {
-	const k = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
-	const jwk = await crypto.subtle.exportKey('jwk', k.publicKey);
-	return { k, pub: { x: jwk.x, y: jwk.y } };
-}
 
 /** One player's connection to one group: everything it receives is kept in `got`. */
 async function connect(gid, who, extra = {}, origin = ORIGIN) {
 	// A group, or a mailbox (gid 'mbox:<member number>').
 	const ws = new WebSocket(`${BASE}/ws?${gid.startsWith('mbox:') ? `m=${gid.slice(5)}` : `g=${gid}`}`, { headers: { Origin: origin } });
 	const c = { ws, got: [], closed: null };
-	ws.onmessage = (e) => c.got.push(JSON.parse(e.data));
+	ws.onmessage = (e) => {
+		const x = JSON.parse(e.data);
+		c.got.push(x);
+		onRelay(c, x);
+	};
 	ws.onclose = (e) => {
 		c.closed = e.code || 'closed';
 	};
@@ -50,34 +48,33 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 	}
 	const hello = c.got.find((x) => x.t === 'hello');
 	const member = extra.as || who.member;
-	const sig = await crypto.subtle.sign(
-		{ name: 'ECDSA', hash: 'SHA-256' },
-		(extra.signWith || who).k.privateKey,
-		new TextEncoder().encode(`${hello.nonce}|${gid}|${member}`),
-	);
-	ws.send(
-		JSON.stringify({
-			t: 'auth',
-			member,
-			name: who.name,
-			pub: who.pub,
-			sig: extra.badSig ? b64url(new Uint8Array(64)) : b64url(sig),
-			...extra.fields,
-		}),
-	);
-	await wait(250);
 	c.send = (x) => ws.send(JSON.stringify(x));
+	if (!gid.startsWith('mbox:')) {
+		keyed(c, who, gid);
+		c.makesKeys = extra.makesKeys !== false;
+	}
+	const auth = await groupAuth(who, gid, hello.nonce, member, extra.signWith || who);
+	if (extra.badSig) {
+		auth.sig = b64url(new Uint8Array(64));
+	}
+	if (extra.oldVersion) {
+		delete auth.ek;
+		delete auth.eks;
+	}
+	ws.send(JSON.stringify({ ...auth, ...extra.fields }));
+	await wait(250);
 	c.last = (t) => [...c.got].reverse().find((x) => x.t === t);
-	c.texts = () => c.got.flatMap(messagesOf).map((m) => m.text);
+	/** The stored form of every message received (as the relay has it). */
+	c.raw = () => c.got.flatMap(messagesOf);
 	return c;
 }
 
 (async () => {
 	const gid = `test${Date.now().toString(36)}`;
-	const ann = { member: 11, name: 'Ann', ...(await keys()) };
-	const cat = { member: 13, name: 'Cat', ...(await keys()) };
-	const zed = { member: 99, name: 'Zed', ...(await keys()) };
-	const eve = { member: 66, name: 'Eve', ...(await keys()) };
+	const ann = await makePeer(11, 'Ann');
+	const cat = await makePeer(13, 'Cat');
+	const zed = await makePeer(99, 'Zed');
+	const eve = await makePeer(66, 'Eve');
 
 	const bad = await connect(gid, ann, {}, 'https://evil.example');
 	// (A relay started with --var ALLOW_ANY_ORIGIN:1 for the add-on's own test lets every page in.)
@@ -87,9 +84,24 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 		check(bad.closed && !bad.got.length, 'another website cannot connect');
 	}
 
+	const old = await connect(gid, ann, { oldVersion: true, fields: { create: { name: 'Old', open: false } } });
+	check(old.closed && /reload the game to update/.test(JSON.stringify(old.got)), 'a SlimeBeep without encryption is asked to update');
 	const a = await connect(gid, ann, { fields: { create: { name: 'Slime Squad', open: false } } });
 	check(a.last('welcome') && a.last('welcome').roster.owner === 11, 'Ann makes a group and is its owner');
-	a.send({ t: 'say', text: 'hi squad <img src=x onerror=alert(1)>' });
+	await wait(300);
+	check(a.epoch === 1 && !!a.keys[1], 'Ann makes the group key (epoch 1); the relay only gets it sealed to her');
+	await a.say('hi squad <img src=x onerror=alert(1)>');
+	a.send({ t: 'say', text: 'plain text is refused' });
+	await wait(200);
+	const sealedMsgs = a.raw().filter((m) => !m.sys);
+	check(
+		sealedMsgs.length === 1 && !('text' in sealedMsgs[0]) && sealedMsgs[0].enc && !/hi squad/.test(JSON.stringify(sealedMsgs[0])),
+		`the relay only stores and sends the sealed message, and refuses plain text (${JSON.stringify(sealedMsgs[0])})`,
+	);
+	check(
+		(await a.texts()).some((t) => /^hi squad/.test(t)),
+		'and Ann can open it with the group key',
+	);
 	a.send({ t: 'invite', member: 13 });
 	a.send({ t: 'invite' });
 	await wait(300);
@@ -121,16 +133,19 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 	await wait(200);
 	const forCat2 = a.last('invite').code;
 	const c2 = await connect(gid, cat, { fields: { invite: forCat2, after: 0 } });
+	await wait(400);
+	check(!!c2.keys[a.epoch], 'Ann gives Cat the group key when she joins (sealed to Cat)');
 	check(
-		c2.last('welcome') && c2.texts().some((t) => /hi squad/.test(t)),
-		'Cat joins with a fresh invite and sees what was said before she joined',
+		c2.last('welcome') && (await c2.texts()).some((t) => /hi squad/.test(t)),
+		'Cat joins with a fresh invite and can read what was said before she joined',
 	);
 	const z = await connect(gid, zed, { fields: { invite: open } });
+	await wait(400);
 	check(z.last('welcome') && z.last('roster').roster.members.length === 3, 'Zed, not a friend of anyone, joins with the open invite');
-	z.send({ t: 'say', text: 'hello from a stranger' });
+	await z.say('hello from a stranger');
 	await wait(300);
 	check(
-		c2.texts().includes('hello from a stranger') && a.texts().includes('hello from a stranger'),
+		(await c2.texts()).includes('hello from a stranger') && (await a.texts()).includes('hello from a stranger'),
 		'everyone gets messages, friends or not',
 	);
 
@@ -139,11 +154,12 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 	c2.ws.close();
 	await wait(200);
 	for (const t of ['one', 'two', 'three']) {
-		a.send({ t: 'say', text: t });
+		await a.say(t);
 	}
 	await wait(300);
 	const c3 = await connect(gid, cat, { fields: { after: lastSeen } });
-	const caught = c3.last('history').msgs.map((m) => m.text);
+	await wait(300);
+	const caught = (await c3.texts()).filter((t) => !/joined/.test(t));
 	check(caught.join() === 'one,two,three', `coming back, Cat gets exactly what she missed (${caught})`);
 
 	// Roles.
@@ -163,15 +179,21 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 		a.last('roster').roster.admins.join() === '11,13' && a.last('roster').roster.owner === 11,
 		"an admin can't demote or remove the owner",
 	);
+	const before = a.epoch;
 	c3.send({ t: 'kick', member: 99 });
-	await wait(300);
+	await wait(800);
 	check(z.last('gone') && z.closed, 'an admin removes a member, whose connection is closed');
 	const z2 = await connect(gid, zed);
 	check(z2.closed && /not a member/.test(JSON.stringify(z2.got)), "and they can't come back without a new invite");
+	check(
+		a.epoch === before + 1 && !!a.keys[a.epoch] && !!c3.keys[a.epoch] && !z.keys[a.epoch],
+		`a new group key is made without Zed, so he could never read what comes next (epoch ${before} -> ${a.epoch})`,
+	);
 
 	// Limits.
+	const spam = a.raw().find((m) => m.enc);
 	for (let i = 0; i < 25; i++) {
-		a.send({ t: 'say', text: `spam ${i}` });
+		a.send({ t: 'say', enc: spam.enc });
 	}
 	await wait(500);
 	check(
@@ -190,7 +212,7 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 	c3.send({ t: 'gpic', pic: png });
 	await wait(300);
 	check(
-		a.last('gpic') && a.last('gpic').data === png && a.texts().some((t) => /changed the group picture/.test(t)),
+		a.last('gpic') && a.last('gpic').data === png && (await a.texts()).some((t) => /changed the group picture/.test(t)),
 		'an admin sets the group picture and everyone gets it',
 	);
 	c3.send({ t: 'gpic', pic: 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=' });
@@ -251,18 +273,28 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 		const box = 'mbox:11';
 		const kf = (who) => who.pub.x.slice(0, 16);
 		const c1 = await connect(box, cat);
-		c1.send({ t: 'put', kf: kf(ann), text: 'miss you <b>x</b>', ref: 'r1' });
+		c1.send({ t: 'put', kf: kf(ann), enc: await sealMail(13, 11, ann.ek, 'miss you <b>x</b>'), ref: 'r1' });
+		c1.send({ t: 'put', kf: kf(ann), text: 'plain text', ref: 'r0' });
 		await wait(300);
-		check(c1.last('ok') && c1.last('ok').ref === 'r1' && /^[A-Z2-9]{10}$/.test(c1.last('ok').id), "Cat leaves a beep in Ann's mailbox");
+		check(
+			c1.last('ok') && c1.last('ok').ref === 'r1' && /^[A-Z2-9]{10}$/.test(c1.last('ok').id),
+			"Cat leaves a sealed beep in Ann's mailbox",
+		);
+		check(
+			c1.got.some((x) => x.t === 'error' && x.ref === 'r0' && /bad beep/.test(x.why)),
+			'a beep in plain text is refused',
+		);
 		const e1 = await connect(box, eve);
-		e1.send({ t: 'put', kf: kf(eve), text: 'for the wrong key' });
-		e1.send({ t: 'put', kf: 'short', text: 'bad' });
+		e1.send({ t: 'put', kf: kf(eve), enc: await sealMail(66, 11, eve.ek, 'for the wrong key') });
+		e1.send({ t: 'put', kf: 'short', enc: await sealMail(66, 11, ann.ek, 'bad') });
 		e1.send({ t: 'ack', ids: [c1.last('ok').id] });
 		await wait(300);
 		check(e1.last('error') && /bad beep/.test(e1.last('error').why), 'a beep without a proper key start is refused');
 		const fake = await connect(box, eve, { as: 11 });
 		check(
-			fake.last('mail') && fake.last('mail').list.length === 1 && fake.last('mail').list[0].text === 'for the wrong key',
+			fake.last('mail') &&
+				fake.last('mail').list.length === 1 &&
+				(await openMail({ ...eve, member: 11 }, 66, fake.last('mail').list[0].enc)) === 'for the wrong key',
 			"signing in as Ann with Eve's key only gets what was addressed to Eve's key, never Ann's beeps",
 		);
 		fake.send({ t: 'ack', ids: [c1.last('ok').id] });
@@ -270,18 +302,33 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 		const a1 = await connect(box, ann);
 		const got = a1.last('mail') ? a1.last('mail').list : [];
 		check(
-			got.length === 1 && got[0].from === 13 && got[0].name === 'Cat' && got[0].fromKf === kf(cat) && got[0].text === 'miss you <b>x</b>',
-			`Ann signs in and gets Cat's beep (Eve's acks of it did nothing), with Cat's key start to check (${JSON.stringify(got)})`,
+			got.length === 1 &&
+				got[0].from === 13 &&
+				got[0].name === 'Cat' &&
+				got[0].fromKf === kf(cat) &&
+				!('text' in got[0]) &&
+				(await openMail(ann, 13, got[0].enc)) === 'miss you <b>x</b>',
+			`Ann signs in and gets Cat's sealed beep (Eve's acks of it did nothing), which only she can open (${JSON.stringify(got)})`,
 		);
-		c1.send({ t: 'put', kf: kf(ann), text: 'and another', ref: 'r2' });
+		let stolen = 'opened';
+		try {
+			await openMail(eve, 13, got[0].enc);
+		} catch (e) {
+			stolen = 'refused';
+		}
+		check(stolen === 'refused', "Eve's key can't open a beep sealed to Ann");
+		c1.send({ t: 'put', kf: kf(ann), enc: await sealMail(13, 11, ann.ek, 'and another'), ref: 'r2' });
 		await wait(300);
-		check(a1.last('mail').list[0].text === 'and another', 'a beep left while Ann is connected reaches her straight away');
+		check(
+			(await openMail(ann, 13, a1.last('mail').list[0].enc)) === 'and another',
+			'a beep left while Ann is connected reaches her straight away',
+		);
 		a1.send({ t: 'ack', ids: [got[0].id, a1.last('mail').list[0].id] });
 		await wait(300);
 		a1.ws.close();
 		const a2 = await connect(box, ann);
 		check(a2.last('mail') && a2.last('mail').list.length === 0, 'read beeps are gone once acked');
-		c1.send({ t: 'put', kf: kf(ann), text: 'x'.repeat(5000) });
+		c1.send({ t: 'put', kf: kf(ann), enc: { ...(await sealMail(13, 11, ann.ek, 'x')), ct: 'A'.repeat(9000) } });
 		await wait(300);
 		check(c1.last('error') && c1.last('error').fatal, 'an oversized message is refused');
 		for (const c of [c1, e1, fake, a2]) {

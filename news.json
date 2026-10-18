@@ -250,5 +250,11 @@
     "date": "17 Oct 2026",
     "title": "📢 SlimeBeep 3.0.9",
     "text": "If something like NoScript or a strict blocker stops group chats from connecting, SlimeBeep now says so and names the address to allow."
+  },
+  {
+    "id": "3.1.0",
+    "date": "17 Oct 2026",
+    "title": "📢 SlimeBeep 3.1",
+    "text": "Increased security, and your profile picture now stays with your own account when you play several in one browser."
   }
 ]

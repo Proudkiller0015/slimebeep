@@ -8,7 +8,13 @@
  *
  * Clients sign in by signing a one-time nonce with their own P-256 key. In a group, a member number is
  * bound to a key when it joins with an invite; an invite made for one member number is the only way to
- * bind a new key. All rules are enforced here; messages are plain text.
+ * bind a new key. All rules are enforced here.
+ *
+ * Messages are end-to-end encrypted by the clients (ECDH P-256, HKDF-SHA-256, AES-GCM), so this relay
+ * only stores and passes on data it cannot read. A mailbox beep is sealed to the recipient's encryption
+ * key. A group message is sealed with the group's key of the current epoch, which members hand to each
+ * other as `wraps`: the key sealed to one member, signed by the member who wrapped it. The relay keeps
+ * the wraps but never the key; a member leaving starts a new epoch (`rekey`).
  *
  * Free-plan limits: sockets hibernate, keep-alive pings get an auto-response without waking the
  * object, and each group takes at most LIMITS.perDay messages a day.
@@ -18,8 +24,6 @@ import { DurableObject } from 'cloudflare:workers';
 
 /** Mailbox limits. */
 const MAIL = {
-	/** Longest beep. */
-	text: 1000,
 	/** Most beeps waiting in one mailbox. */
 	box: 100,
 	/** Most beeps one sender may leave in one mailbox per 24 h. */
@@ -31,6 +35,16 @@ const MAIL = {
 };
 /** A key fingerprint: the first 16 chars of a public key's x. */
 const KF_RE = /^[A-Za-z0-9_-]{16}$/;
+/** An encryption (ECDH P-256) public key: x.y in base64url. */
+const EK_RE = /^[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}$/;
+/** An AES-GCM nonce (12 bytes, base64url). */
+const IV_RE = /^[A-Za-z0-9_-]{16}$/;
+/** Sealed data (base64url), up to `max` characters. */
+const sealed = (x, max) => typeof x === 'string' && x.length >= 22 && x.length <= max && /^[A-Za-z0-9_-]+$/.test(x);
+/** Longest sealed group message or mailbox beep. */
+const CT_MAX = 6000;
+/** Group key epochs kept, so history from before a rekey stays readable. */
+const EPOCHS = 10;
 /** Group limits. */
 const LIMITS = {
 	/** Longest group or member name. */
@@ -143,9 +157,10 @@ export default {
 };
 
 /**
- * One group chat. Storage: 'meta' { name, owner, admins, open, created, pic }, 'members' (member number ->
- * { n, name, pub, joined, pic }), 'invites' (secret -> { member, by, exp, uses }), 'msg:<seq>' messages and
- * 'music' { u, ti, p, pl, d, by, name, at }: the song playing, only its link and where it is, never the sound.
+ * One group chat. Storage: 'meta' { name, owner, admins, open, created, pic, e2e }, 'members' (member
+ * number -> { n, name, pub, ek, eks, joined, pic }), 'invites' (secret -> { member, by, exp, uses }),
+ * 'msg:<seq>' sealed messages, 'keys' { epoch, rekey, eps: epoch -> member -> wrap } and 'music'
+ * { u, ti, p, pl, d, by, name, at }: the song playing, only its link and where it is, never the sound.
  */
 export class Group extends DurableObject {
 	constructor(ctx, env) {
@@ -161,6 +176,17 @@ export class Group extends DurableObject {
 			this.seq = newest.size ? [...newest.values()][0].id : (await ctx.storage.get('seq')) || 0;
 			// Messages today, in memory only (restarts if the object is evicted).
 			this.today = { day: '', n: 0 };
+			this.keys = (await ctx.storage.get('keys')) || { epoch: 0, rekey: false, eps: {} };
+			// Groups from before end-to-end encryption: their stored plain-text messages are deleted.
+			if (this.meta && !this.meta.e2e) {
+				const old = await ctx.storage.list({ prefix: 'msg:' });
+				const ids = [...old.keys()];
+				for (let i = 0; i < ids.length; i += 128) {
+					await ctx.storage.delete(ids.slice(i, i + 128));
+				}
+				this.meta.e2e = 1;
+				await ctx.storage.put({ meta: this.meta, seq: this.seq });
+			}
 		});
 	}
 
@@ -179,7 +205,7 @@ export class Group extends DurableObject {
 	}
 
 	/**
-	 * A client message (JSON with `t`). Before sign-in only 'auth'; then 'say', 'history', 'invite', 'kick',
+	 * A client message (JSON with `t`). Before sign-in only 'auth'; then 'say', 'history', 'gkey', 'invite', 'kick',
 	 * 'admin', 'owner', 'rename', 'open', 'profile', 'gpic', 'music', 'musicEnd', 'leave' and 'disband'. Rate limited per connection.
 	 */
 	async webSocketMessage(ws, raw) {
@@ -220,6 +246,8 @@ export class Group extends DurableObject {
 					return await this.say(att.member, p);
 				case 'history':
 					return this.history(ws, p.after);
+				case 'gkey':
+					return await this.addKeys(att.member, p);
 				case 'invite':
 					return await this.invite(ws, att.member, p);
 				case 'kick':
@@ -299,6 +327,12 @@ export class Group extends DurableObject {
 		if (!ok) {
 			return this.fail(ws, 'bad signature');
 		}
+		// The encryption key, signed with the signing key so members can check it is really this member's.
+		if (!EK_RE.test(p.ek || '') || !B64URL.test(p.eks || '') || !(await verify(pub, p.eks, `ek|${att.gid}|${member}|${p.ek}`))) {
+			return this.fail(ws, 'please reload the game to update SlimeBeep');
+		}
+		const ek = p.ek;
+		const eks = p.eks;
 		const name = clean(p.name, LIMITS.name) || `#${member}`;
 		if (p.create) {
 			if (this.meta) {
@@ -310,8 +344,11 @@ export class Group extends DurableObject {
 				admins: [member],
 				open: p.create.open === true,
 				created: Date.now(),
+				e2e: 1,
 			};
-			this.members = { [member]: { n: member, name, pub, joined: Date.now() } };
+			this.members = { [member]: { n: member, name, pub, ek, eks, joined: Date.now() } };
+			this.keys = { epoch: 0, rekey: false, eps: {} };
+			await this.ctx.storage.put('keys', this.keys);
 			await this.save();
 			await this.note(`${name} made the group`);
 		} else if (!this.meta) {
@@ -331,7 +368,10 @@ export class Group extends DurableObject {
 			if (!known && Object.keys(this.members).length >= LIMITS.members) {
 				return this.fail(ws, 'group is full');
 			}
-			this.members[member] = { ...(known || { joined: Date.now() }), n: member, name, pub };
+			this.members[member] = { ...(known || { joined: Date.now() }), n: member, name, pub, ek, eks };
+			if (known && known.ek !== ek) {
+				await this.dropWraps(member);
+			}
 			if (inv.member || ++inv.uses >= LIMITS.openUses) {
 				delete this.invites[p.invite];
 			}
@@ -344,8 +384,11 @@ export class Group extends DurableObject {
 			if (!known || !samePub(known.pub, pub)) {
 				return this.fail(ws, 'not a member');
 			}
-			if (known.name !== name) {
-				known.name = name;
+			if (known.name !== name || known.ek !== ek) {
+				if (known.ek !== ek) {
+					await this.dropWraps(member);
+				}
+				Object.assign(known, { name, ek, eks });
 				await this.save();
 			}
 		}
@@ -367,12 +410,22 @@ export class Group extends DurableObject {
 		}
 		this.history(ws, p.after);
 		this.broadcast({ t: 'roster', roster: this.roster() });
+		this.sendKeys();
 	}
 
-	/** Posts a message (within LIMITS.perDay). */
+	/** Posts a sealed message (within LIMITS.perDay): `enc` { e: key epoch, iv, ct }. */
 	async say(member, p) {
-		const text = clean(p.text, LIMITS.text);
-		if (!text) {
+		const enc = p.enc;
+		const k = this.keys;
+		if (
+			!enc ||
+			!Number.isInteger(enc.e) ||
+			enc.e < 1 ||
+			enc.e > k.epoch ||
+			!k.eps[enc.e] ||
+			!IV_RE.test(enc.iv || '') ||
+			!sealed(enc.ct, CT_MAX)
+		) {
 			return;
 		}
 		const day = new Date().toISOString().slice(0, 10);
@@ -383,7 +436,12 @@ export class Group extends DurableObject {
 			return this.broadcast({ t: 'error', why: 'this group has sent enough messages for today; back tomorrow' });
 		}
 		const m = this.members[member];
-		await this.append({ from: member, name: m.name, text, ref: typeof p.ref === 'string' ? p.ref.slice(0, 24) : undefined });
+		await this.append({
+			from: member,
+			name: m.name,
+			enc: { e: enc.e, iv: enc.iv, ct: enc.ct },
+			ref: typeof p.ref === 'string' ? p.ref.slice(0, 24) : undefined,
+		});
 	}
 
 	/** Posts a system line ("X joined"). */
@@ -459,6 +517,7 @@ export class Group extends DurableObject {
 		await this.note(`${this.members[by].name} removed ${name}`);
 		this.closeMember(target, 'removed');
 		this.broadcast({ t: 'roster', roster: this.roster() });
+		await this.needRekey();
 	}
 
 	/** Grants admin (any admin) or takes it (owner only). */
@@ -601,6 +660,7 @@ export class Group extends DurableObject {
 			this.meta = null;
 			this.members = {};
 			this.invites = {};
+			this.keys = { epoch: 0, rekey: false, eps: {} };
 			this.seq = 0;
 			return;
 		}
@@ -615,6 +675,7 @@ export class Group extends DurableObject {
 		await this.note(`${name} left`);
 		this.closeMember(member, 'left');
 		this.broadcast({ t: 'roster', roster: this.roster() });
+		await this.needRekey();
 	}
 
 	/** Deletes the group and closes every connection (owner only). */
@@ -634,10 +695,98 @@ export class Group extends DurableObject {
 		this.meta = null;
 		this.members = {};
 		this.invites = {};
+		this.keys = { epoch: 0, rekey: false, eps: {} };
 		this.seq = 0;
 	}
 
-	/** The roster sent to clients; each member's `kf` lets friends compare it with the key they know. */
+	/**
+	 * Takes wraps of a group key from a member: `e` the epoch, `wraps` [{ to, iv, ct, sig }]. With `fresh`,
+	 * a new key starts epoch `e` (only the next one, and only when there is none yet or a member left);
+	 * otherwise the wraps give a kept epoch's key to members who don't have it yet (newcomers get the older
+	 * keys too, so they can read the history).
+	 */
+	async addKeys(member, p) {
+		const k = this.keys;
+		if (!Number.isInteger(p.e) || !Array.isArray(p.wraps) || p.wraps.length > LIMITS.members) {
+			return;
+		}
+		if (p.fresh === true) {
+			if (p.e !== k.epoch + 1 || (k.epoch > 0 && !k.rekey)) {
+				return;
+			}
+			k.epoch = p.e;
+			k.rekey = false;
+			k.eps[p.e] = {};
+			for (const e of Object.keys(k.eps)) {
+				if (Number(e) <= p.e - EPOCHS) {
+					delete k.eps[e];
+				}
+			}
+		} else if (p.e > k.epoch || !k.eps[p.e]) {
+			return;
+		}
+		const ep = k.eps[p.e];
+		for (const w of p.wraps) {
+			const to = w && isNum(w.to) ? this.members[w.to] : null;
+			// A wrap for an encryption key the member no longer uses can be replaced.
+			if (!to || (ep[w.to] && ep[w.to].ek === to.ek) || !IV_RE.test(w.iv || '') || !sealed(w.ct, 200) || !B64URL.test(w.sig || '')) {
+				continue;
+			}
+			ep[w.to] = { to: w.to, by: member, ek: this.members[w.to].ek, iv: w.iv, ct: w.ct, sig: w.sig };
+		}
+		await this.ctx.storage.put('keys', k);
+		this.sendKeys();
+	}
+	/** Forgets the wraps of a member whose encryption key changed, so they get new ones. */
+	async dropWraps(member) {
+		let dropped = false;
+		for (const ep of Object.values(this.keys.eps)) {
+			if (ep[member]) {
+				delete ep[member];
+				dropped = true;
+			}
+		}
+		if (dropped) {
+			await this.ctx.storage.put('keys', this.keys);
+		}
+	}
+	/** A member left or was removed: the next key must be one they never had. */
+	async needRekey() {
+		if (this.keys.epoch > 0) {
+			this.keys.rekey = true;
+			await this.ctx.storage.put('keys', this.keys);
+		}
+		this.sendKeys();
+	}
+	/**
+	 * Sends every signed-in member the key state: the epoch, whether a new key is needed, their own wraps
+	 * (with the wrapping member) and which members still need the current key.
+	 */
+	sendKeys() {
+		const k = this.keys;
+		const ep = k.eps[k.epoch] || {};
+		const needs = k.epoch
+			? Object.values(this.members)
+					.filter((m) => m.ek && (!ep[m.n] || ep[m.n].ek !== m.ek))
+					.map((m) => m.n)
+			: [];
+		for (const ws of this.ctx.getWebSockets()) {
+			const a = ws.deserializeAttachment();
+			if (!a || !a.member || !this.members[a.member]) {
+				continue;
+			}
+			const ek = this.members[a.member].ek;
+			const mine = Object.entries(k.eps)
+				.map(([e, wraps]) => ({ e: Number(e), w: wraps[a.member] }))
+				.filter((x) => x.w && x.w.ek === ek);
+			this.send(ws, { t: 'keys', epoch: k.epoch, rekey: k.rekey, mine, needs });
+		}
+	}
+
+	/**
+	 * The roster sent to clients. Each member's `kf` lets friends compare it with the key they know; `pub`,
+	 * `ek` and `eks` let members check a member's encryption key before sealing the group key to it.
+	 */
 	roster() {
 		const g = this.meta;
 		return {
@@ -646,7 +795,14 @@ export class Group extends DurableObject {
 			admins: g.admins,
 			open: g.open,
 			online: this.online(),
-			members: Object.values(this.members).map((m) => ({ n: m.n, name: m.name, kf: m.pub.x.slice(0, 16) })),
+			members: Object.values(this.members).map((m) => ({
+				n: m.n,
+				name: m.name,
+				kf: m.pub.x.slice(0, 16),
+				pub: m.pub,
+				ek: m.ek,
+				eks: m.eks,
+			})),
 		};
 	}
 	/** Saves meta, members and invites. */
@@ -701,9 +857,10 @@ export class Group extends DurableObject {
 }
 
 /**
- * One player's mailbox. Storage: 'm:<id>' -> { id, from, name, fromKf, kf, text, at }, where `kf` is the
- * recipient key the beep is addressed to and `fromKf` the sender's. Signed in as the box's member number,
- * a connection reads (and acks) the beeps for its own key; any other signed-in connection may leave one.
+ * One player's mailbox. Storage: 'm:<id>' -> { id, from, name, fromKf, kf, enc, at }, where `kf` is the
+ * recipient key the beep is addressed to, `fromKf` the sender's and `enc` { e, iv, ct } the beep sealed to
+ * the recipient's encryption key (`e` the sender's one-time key). Signed in as the box's member number, a
+ * connection reads (and acks) the beeps for its own key; any other signed-in connection may leave one.
  */
 export class Mailbox extends DurableObject {
 	constructor(ctx, env) {
@@ -732,7 +889,7 @@ export class Mailbox extends DurableObject {
 	async webSocketMessage(ws, raw) {
 		const att = ws.deserializeAttachment();
 		try {
-			if (typeof raw !== 'string' || raw.length > 4000) {
+			if (typeof raw !== 'string' || raw.length > 8000) {
 				return this.fail(ws, 'too big');
 			}
 			const now = Date.now();
@@ -786,24 +943,24 @@ export class Mailbox extends DurableObject {
 		}
 	}
 
-	/** All stored beeps, oldest first, after deleting those older than MAIL.days. */
+	/** All stored beeps, oldest first, after deleting those older than MAIL.days and any left unsealed by an older version. */
 	async all() {
 		const rows = [...(await this.ctx.storage.list({ prefix: 'm:' })).entries()];
 		const old = Date.now() - MAIL.days * 864e5;
-		const gone = rows.filter(([, m]) => !m || m.at < old).map(([k]) => k);
+		const gone = rows.filter(([, m]) => !m || m.at < old || !m.enc).map(([k]) => k);
 		if (gone.length) {
 			await this.ctx.storage.delete(gone);
 		}
 		return rows
-			.filter(([, m]) => m && m.at >= old)
+			.filter(([, m]) => m && m.at >= old && m.enc)
 			.map(([, m]) => m)
 			.sort((a, b) => a.at - b.at);
 	}
 	/** The beeps addressed to key `kf`. */
 	async mine(kf) {
 		return (await this.all())
-			.filter((m) => m.kf === kf)
-			.map(({ id, from, name, fromKf, text, at }) => ({ id, from, name, fromKf, text, at }));
+			.filter((m) => m.kf === kf && m.enc)
+			.map(({ id, from, name, fromKf, enc, at }) => ({ id, from, name, fromKf, enc, at }));
 	}
 
 	/** Leaves a beep (not in your own box), within MAIL limits; delivered at once if the owner is connected with that key. */
@@ -811,9 +968,9 @@ export class Mailbox extends DurableObject {
 		if (att.member === att.owner) {
 			return this.send(ws, { t: 'error', why: 'that is your own mailbox' });
 		}
-		const text = clean(p.text, MAIL.text);
+		const enc = p.enc;
 		const ref = typeof p.ref === 'string' ? p.ref.slice(0, 24) : '';
-		if (!text || !KF_RE.test(p.kf || '')) {
+		if (!enc || !EK_RE.test(enc.e || '') || !IV_RE.test(enc.iv || '') || !sealed(enc.ct, CT_MAX) || !KF_RE.test(p.kf || '')) {
 			return this.send(ws, { t: 'error', why: 'bad beep', ref });
 		}
 		const list = await this.all();
@@ -824,13 +981,21 @@ export class Mailbox extends DurableObject {
 		if (list.filter((m) => m.from === att.member && m.at > day).length >= MAIL.perSender) {
 			return this.send(ws, { t: 'error', why: 'enough beeps left for today', ref });
 		}
-		const m = { id: secret(), from: att.member, name: att.name, fromKf: att.kf, kf: p.kf, text, at: Date.now() };
+		const m = {
+			id: secret(),
+			from: att.member,
+			name: att.name,
+			fromKf: att.kf,
+			kf: p.kf,
+			enc: { e: enc.e, iv: enc.iv, ct: enc.ct },
+			at: Date.now(),
+		};
 		await this.ctx.storage.put(`m:${m.id}`, m);
 		this.send(ws, { t: 'ok', ref, id: m.id });
 		for (const o of this.ctx.getWebSockets()) {
 			const a = o.deserializeAttachment();
 			if (a && a.member === a.owner && a.kf === m.kf) {
-				this.send(o, { t: 'mail', list: [{ id: m.id, from: m.from, name: m.name, fromKf: m.fromKf, text: m.text, at: m.at }] });
+				this.send(o, { t: 'mail', list: [{ id: m.id, from: m.from, name: m.name, fromKf: m.fromKf, enc: m.enc, at: m.at }] });
 			}
 		}
 	}

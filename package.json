@@ -3,10 +3,10 @@
 	"private": true,
 	"description": "SlimeBeep: a beep messenger add-on for Bondage Club",
 	"scripts": {
-		"format": "prettier --write slimebeep.js test.js relay/src/index.js relay/test-relay.js types tsconfig.json",
-		"lint": "eslint slimebeep.js test.js relay/src/index.js relay/test-relay.js",
+		"format": "prettier --write slimebeep.js test.js relay/src/index.js relay/test-relay.js relay/e2e-peer.js types tsconfig.json",
+		"lint": "eslint slimebeep.js test.js relay/src/index.js relay/test-relay.js relay/e2e-peer.js",
 		"typecheck": "tsc -p tsconfig.json",
-		"check": "prettier --check slimebeep.js test.js relay/src/index.js relay/test-relay.js types tsconfig.json && eslint slimebeep.js test.js relay/src/index.js relay/test-relay.js && tsc -p tsconfig.json"
+		"check": "prettier --check slimebeep.js test.js relay/src/index.js relay/test-relay.js relay/e2e-peer.js types tsconfig.json && eslint slimebeep.js test.js relay/src/index.js relay/test-relay.js relay/e2e-peer.js && tsc -p tsconfig.json"
 	},
 	"devDependencies": {
 		"@eslint/js": "9.39.4",

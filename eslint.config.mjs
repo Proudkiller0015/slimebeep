@@ -80,7 +80,7 @@ export default [
 		rules,
 	},
 	{
-		files: ['test.js', 'relay/test-relay.js'],
+		files: ['test.js', 'relay/test-relay.js', 'relay/e2e-peer.js'],
 		languageOptions: { ecmaVersion: 2022, sourceType: 'commonjs', globals: { ...globals.node, ...globals.browser, ...gameGlobals, ...testPageGlobals } },
 		// page.evaluate callbacks run inside the test page, not in the scope around them, so reusing a name there is not shadowing.
 		rules: { ...rules, 'no-shadow': 'off' },

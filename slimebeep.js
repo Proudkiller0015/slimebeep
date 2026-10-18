@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.0.9';
+	const VERSION = '3.1.0';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -63,8 +63,6 @@
 		musicMuted: false,
 		/** @type {{ x: number, y: number } | null} Where the music player was dragged to, in px; null for bottom left. */
 		musicPos: null,
-		/** @type {Picture | null} Your profile picture. */
-		pfp: null,
 		/** Version and missing game parts already warned about by gameCheck. */
 		gameWarned: '',
 	};
@@ -181,6 +179,9 @@
 	 * @property {number} n member number
 	 * @property {string} name
 	 * @property {string} kf the first 16 chars of the key they signed in with
+	 * @property {{ x: string, y: string }} [pub] the key they signed in with
+	 * @property {string} [ek] their encryption public key ("x.y")
+	 * @property {string} [eks] `ek` signed with `pub`, so the relay can't swap it
 	 */
 	/**
 	 * A group chat you are in.
@@ -202,6 +203,8 @@
 	let peers = new Set();
 	/** @type {Record<number, string>} Friend -> first 16 chars of their public key, as their own SlimeBeep sent it. */
 	let peerKeys = {};
+	/** @type {Record<number, string>} Friend -> their encryption public key ("x.y"), as their own SlimeBeep sent it. */
+	let peerEks = {};
 	/**
 	 * A group invite from a friend, not joined yet.
 	 * @typedef {object} Invitation
@@ -241,6 +244,8 @@
 	};
 	/** A group invite code: SB-<group id>-<invite secret>. */
 	const CODE_RE = /^SB-([a-z0-9]{8,24})-([A-Z2-9]{10})$/;
+	/** An encryption (ECDH P-256) public key: x.y in base64url. */
+	const EK_RE = /^[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}$/;
 	/**
 	 * Whether `x` is an id made by newId (also group ids).
 	 * @param {unknown} x
@@ -349,10 +354,15 @@
 		}
 		peers = new Set();
 		peerKeys = {};
+		peerEks = {};
 		invitations = [];
+		groupKeys = loadGroupKeys();
+		keyCache.clear();
+		// Your own picture is this account's (and takes over one an older version kept for every account).
+		myPfp();
 		relayPics = {};
 		try {
-			/** @type {{ groups?: Record<string, Partial<Group>>, peers?: unknown[], peerKeys?: Record<string, unknown>, invitations?: Partial<Invitation>[] }} */
+			/** @type {{ groups?: Record<string, Partial<Group>>, peers?: unknown[], peerKeys?: Record<string, unknown>, peerEks?: Record<string, unknown>, invitations?: Partial<Invitation>[] }} */
 			const saved = JSON.parse(localStorage.getItem(gcKey()) || '{}');
 			for (const g of Object.values(saved.groups || {})) {
 				if (!g || !isId(g.id) || !Array.isArray(g.members)) {
@@ -366,7 +376,12 @@
 					open: g.open === true,
 					members: g.members
 						.filter((m) => m && isNum(m.n))
-						.map((m) => ({ n: m.n, name: clean(m.name, LIMITS.name), kf: typeof m.kf === 'string' ? m.kf.slice(0, 16) : '' })),
+						.map((m) => ({
+							n: m.n,
+							name: clean(m.name, LIMITS.name),
+							kf: typeof m.kf === 'string' ? m.kf.slice(0, 16) : '',
+							...memberKeys(m),
+						})),
 					last: Number.isInteger(g.last) ? Number(g.last) : 0,
 					picv: typeof g.picv === 'string' ? g.picv : undefined,
 					pic: typeof g.pic === 'string' && g.pic.length <= PFP_MAX && PFP_RE.test(g.pic) ? g.pic : undefined,
@@ -380,6 +395,11 @@
 			for (const [k, v] of Object.entries(saved.peerKeys || {})) {
 				if (isNum(Number(k)) && typeof v === 'string') {
 					peerKeys[Number(k)] = v.slice(0, 16);
+				}
+			}
+			for (const [k, v] of Object.entries(saved.peerEks || {})) {
+				if (isNum(Number(k)) && typeof v === 'string' && EK_RE.test(v)) {
+					peerEks[Number(k)] = v;
 				}
 			}
 			for (const i of saved.invitations || []) {
@@ -405,10 +425,10 @@
 			/* unreadable: start fresh */
 		}
 	}
-	/** Saves groups, peers, peer keys and invitations for the logged-in account. */
+	/** Saves groups, peers, peer keys, their encryption keys and invitations for the logged-in account. */
 	function saveGC() {
 		try {
-			localStorage.setItem(gcKey(), JSON.stringify({ groups, peers: [...peers], peerKeys, invitations: invitations.slice(-20) }));
+			localStorage.setItem(gcKey(), JSON.stringify({ groups, peers: [...peers], peerKeys, peerEks, invitations: invitations.slice(-20) }));
 		} catch (e) {
 			/* the browser won't keep it */
 		}
@@ -999,11 +1019,63 @@
 			/* the browser won't keep it */
 		}
 	}
+	/** localStorage key of the logged-in account's own picture. */
+	const pfpKey = () => `slimebeep.pfp.${Player.MemberNumber}`;
+	/** @type {{ owner: number, pic: Picture | null } | null} Cached result of myPfp, for one account. */
+	let myPic = null;
 	/**
-	 * Your own picture, or null.
+	 * The logged-in account's own picture, or null. A picture saved by an older version in the shared
+	 * options moves to the first account that logs in afterwards.
 	 * @returns {Picture | null}
 	 */
-	const myPfp = () => (opts.pfp && isId(opts.pfp.v) && typeof opts.pfp.data === 'string' && PFP_RE.test(opts.pfp.data) ? opts.pfp : null);
+	function myPfp() {
+		if (!loggedIn()) {
+			return null;
+		}
+		const me = Player.MemberNumber;
+		if (myPic && myPic.owner === me) {
+			return myPic.pic;
+		}
+		/** @type {Partial<Picture> | null} */
+		let x = null;
+		try {
+			x = JSON.parse(localStorage.getItem(pfpKey()) || 'null');
+		} catch (e) {
+			x = null;
+		}
+		const legacy = /** @type {{ pfp?: Partial<Picture> | null }} */ (/** @type {unknown} */ (opts));
+		if ('pfp' in legacy) {
+			if (!x && legacy.pfp) {
+				x = legacy.pfp;
+				try {
+					localStorage.setItem(pfpKey(), JSON.stringify(x));
+				} catch (e) {
+					/* this visit only */
+				}
+			}
+			delete legacy.pfp;
+			saveOpts();
+		}
+		const pic = x && isId(x.v) && typeof x.data === 'string' && PFP_RE.test(x.data) ? { v: x.v, data: x.data } : null;
+		myPic = { owner: me, pic };
+		return pic;
+	}
+	/**
+	 * Sets (or with null removes) the logged-in account's own picture.
+	 * @param {Picture | null} pic
+	 */
+	function setMyPfp(pic) {
+		myPic = { owner: Player.MemberNumber, pic };
+		try {
+			if (pic) {
+				localStorage.setItem(pfpKey(), JSON.stringify(pic));
+			} else {
+				localStorage.removeItem(pfpKey());
+			}
+		} catch (e) {
+			/* this visit only */
+		}
+	}
 	/**
 	 * A member's picture: yours, a friend's from `pfps`, or one a group shared (`relayPics`).
 	 * @param {number} n
@@ -2015,10 +2087,12 @@
 	/** @type {Map<number, { v: string, n: number, parts: string[] }>} Member number -> a picture being received in pieces. */
 	const pieces = new Map();
 	/**
-	 * A hidden beep's content (JSON). Every one has `sb: 1`, your picture version `pv` and key start `kf`.
+	 * A hidden beep's content (JSON). Every one has `sb: 1`, your picture version `pv`, key start `kf` and,
+	 * except picture pieces, your encryption key `ek`.
 	 * @typedef {object} HiddenPayload
 	 * @property {number} sb always 1
 	 * @property {string} [kf] the sender's key start
+	 * @property {string} [ek] the sender's encryption public key ("x.y")
 	 * @property {string | 0} [pv] the sender's picture version; 0 = no picture
 	 * @property {1} [pfreq] asks for your picture
 	 * @property {{ v: string, i: number, n: number, d: string }} [pf] piece `i` of `n` of picture version `v`
@@ -2307,7 +2381,7 @@
 					onSave(data);
 					return;
 				}
-				setOpt('pfp', { v: newId(), data });
+				setMyPfp({ v: newId(), data });
 				pushPicture();
 				showMe();
 				notify('✓ New profile picture');
@@ -2430,6 +2504,10 @@
 			peerKeys[from] = p.kf;
 			saveGC();
 		}
+		if (typeof p.ek === 'string' && EK_RE.test(p.ek) && peerEks[from] !== p.ek) {
+			peerEks[from] = p.ek;
+			saveGC();
+		}
 		pictureNews(from, p);
 		if (p.ping === 1) {
 			answerPing(from);
@@ -2517,7 +2595,7 @@
 	/**
 	 * A message from the relay (JSON). Which fields are set depends on `t`; see relay/src/index.js.
 	 * @typedef {object} RelayMessage
-	 * @property {string} t 'hello', 'welcome', 'roster', 'presence', 'msg', 'history', 'pic', 'gpic', 'invite', 'music', 'gone', 'error', 'ok', 'mail'
+	 * @property {string} t 'hello', 'welcome', 'roster', 'presence', 'msg', 'history', 'keys', 'pic', 'gpic', 'invite', 'music', 'gone', 'error', 'ok', 'mail'
 	 * @property {string} [nonce] hello: what to sign
 	 * @property {RelayRoster} [roster] welcome, roster
 	 * @property {number[]} [online] presence
@@ -2533,6 +2611,10 @@
 	 * @property {(MusicState & { by: number, name: string }) | null} [music] music: the song shared in the group and its host; null when they stopped
 	 * @property {number} [by] music: who stopped sharing (with music null)
 	 * @property {number} [age] music: ms since it was set
+	 * @property {number} [epoch] keys: the group key's current epoch (0: none yet)
+	 * @property {boolean} [rekey] keys: a member left, so a new key is needed
+	 * @property {{ e: number, w: { to: number, by: number, ek: string, iv: string, ct: string, sig: string } }[]} [mine] keys: the wraps sent to you
+	 * @property {number[]} [needs] keys: members who don't have the current key yet
 	 */
 	/**
 	 * A group's roster as the relay sends it.
@@ -2551,7 +2633,8 @@
 	 * @property {number} at
 	 * @property {number} [from]
 	 * @property {string} [name]
-	 * @property {string} text
+	 * @property {string} [text] a system line's text, or a sealed message's once opened
+	 * @property {Sealed & { e: number }} [enc] the sealed message and the epoch of its key
 	 * @property {boolean} [sys] a system line ("X joined")
 	 */
 	/**
@@ -2561,7 +2644,7 @@
 	 * @property {number} from
 	 * @property {string} name
 	 * @property {string} fromKf the start of the key the sender signed in with
-	 * @property {string} text
+	 * @property {Sealed & { e: string }} enc the beep sealed to your encryption key (see sealMail)
 	 * @property {number} at
 	 */
 	/**
@@ -2584,12 +2667,14 @@
 	/** @type {Record<number, string>} Member number -> picture shared in a group (for members who aren't friends). */
 	let relayPics = {};
 	/**
-	 * This account's signing key in this browser.
+	 * This account's keys in this browser: one for signing in (ECDSA) and one for end-to-end encryption (ECDH).
 	 * @typedef {object} KeyPair
 	 * @property {number} owner member number
 	 * @property {CryptoKey} priv
 	 * @property {{ x: string, y: string }} pub
 	 * @property {string} kf the first 16 chars of pub.x
+	 * @property {CryptoKey} epriv the encryption private key
+	 * @property {string} ek the encryption public key ("x.y")
 	 */
 	/** @type {KeyPair | null} Cached result of getKey. */
 	let myKey = null;
@@ -2602,6 +2687,415 @@
 			.replace(/\+/g, '-')
 			.replace(/\//g, '_')
 			.replace(/=+$/, '');
+	/**
+	 * base64url (no padding) as bytes.
+	 * @param {string} s
+	 */
+	const unb64url = (s) =>
+		Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
+
+	// ---- End-to-end encryption, with WebCrypto only: ECDH P-256 agrees a secret, HKDF-SHA-256 turns it into
+	// an AES-GCM-256 key bound to what it is for (`info`), and AES-GCM seals the data together with `aad`.
+	// The relay stores and passes on sealed data it cannot read.
+
+	/**
+	 * A sealed message: `iv` the 12-byte nonce and `ct` the ciphertext with its tag, both base64url.
+	 * @typedef {object} Sealed
+	 * @property {string} iv
+	 * @property {string} ct
+	 */
+	/**
+	 * An encryption public key "x.y" as a CryptoKey.
+	 * @param {string} ek
+	 */
+	const ecdhPub = (ek) => {
+		const [x, y] = ek.split('.');
+		return crypto.subtle.importKey('jwk', { kty: 'EC', crv: 'P-256', x, y, ext: true }, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
+	};
+	/**
+	 * The AES-GCM key that `priv` and the holder of `ek` both arrive at, for the purpose `info`.
+	 * @param {CryptoKey} priv an ECDH private key
+	 * @param {string} ek the other side's encryption public key
+	 * @param {string} info what the key is for (both sides must use the same)
+	 */
+	async function agree(priv, ek, info) {
+		const bits = await crypto.subtle.deriveBits({ name: 'ECDH', public: await ecdhPub(ek) }, priv, 256);
+		const hkdf = await crypto.subtle.importKey('raw', bits, 'HKDF', false, ['deriveKey']);
+		return crypto.subtle.deriveKey(
+			{ name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(32), info: new TextEncoder().encode(info) },
+			hkdf,
+			{ name: 'AES-GCM', length: 256 },
+			false,
+			['encrypt', 'decrypt'],
+		);
+	}
+	/**
+	 * Seals bytes with an AES-GCM key; `aad` is checked on opening but not stored.
+	 * @param {CryptoKey} key
+	 * @param {BufferSource} data
+	 * @param {string} aad
+	 * @returns {Promise<Sealed>}
+	 */
+	async function seal(key, data, aad) {
+		const iv = crypto.getRandomValues(new Uint8Array(12));
+		const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: new TextEncoder().encode(aad) }, key, data);
+		return { iv: b64url(iv.buffer), ct: b64url(ct) };
+	}
+	/**
+	 * Opens what `seal` made; throws if it was changed or the key or `aad` differ.
+	 * @param {CryptoKey} key
+	 * @param {Sealed} box
+	 * @param {string} aad
+	 */
+	async function unseal(key, box, aad) {
+		const plain = await crypto.subtle.decrypt(
+			{ name: 'AES-GCM', iv: unb64url(box.iv), additionalData: new TextEncoder().encode(aad) },
+			key,
+			unb64url(box.ct),
+		);
+		return new Uint8Array(plain);
+	}
+	/**
+	 * Verifies an ECDSA P-256 signature (base64url) of `text` with a member's signing key.
+	 * @param {{ x: string, y: string }} pub
+	 * @param {string} sig
+	 * @param {string} text
+	 */
+	async function verifySig(pub, sig, text) {
+		try {
+			const key = await crypto.subtle.importKey(
+				'jwk',
+				{ kty: 'EC', crv: 'P-256', x: pub.x, y: pub.y, ext: true },
+				{ name: 'ECDSA', namedCurve: 'P-256' },
+				false,
+				['verify'],
+			);
+			return await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, unb64url(sig), new TextEncoder().encode(text));
+		} catch (e) {
+			return false;
+		}
+	}
+	/**
+	 * Signs `text` with this account's signing key (base64url).
+	 * @param {string} text
+	 */
+	async function signText(text) {
+		const k = await getKey();
+		return b64url(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, k.priv, new TextEncoder().encode(text)));
+	}
+	/**
+	 * Seals a mailbox beep to friend `to`: a one-time key pair agrees a key with their encryption key, so only
+	 * they can open it; the sender and recipient numbers are bound in, so the relay can't pass it off as another's.
+	 * @param {number} to
+	 * @param {string} text
+	 */
+	async function sealMail(to, text) {
+		const me = Player.MemberNumber;
+		const once = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+		const jwk = await crypto.subtle.exportKey('jwk', once.publicKey);
+		const key = await agree(once.privateKey, peerEks[to], `slimebeep mail v1|${me}|${to}`);
+		return { e: `${jwk.x}.${jwk.y}`, ...(await seal(key, new TextEncoder().encode(text), `${me}|${to}`)) };
+	}
+	/**
+	 * Opens a mailbox beep from `from` sealed with sealMail; throws if it isn't for us or was changed.
+	 * @param {number} from
+	 * @param {Sealed & { e: string }} enc
+	 */
+	async function openMail(from, enc) {
+		const me = Player.MemberNumber;
+		const k = await getKey();
+		const key = await agree(k.epriv, enc.e, `slimebeep mail v1|${from}|${me}`);
+		return new TextDecoder().decode(await unseal(key, enc, `${from}|${me}`));
+	}
+
+	// ---- Group keys. Each group has one AES key per epoch, made by a member and given to the others as
+	// wraps: the key sealed to one member's encryption key and signed by the member who wrapped it. Keys
+	// are kept per account in localStorage (slimebeep.gk.<member number>), raw and base64url.
+
+	/** @type {Record<string, Record<number, string>>} Group id -> epoch -> the group key (raw, base64url). */
+	let groupKeys = {};
+	/** @type {Map<string, CryptoKey>} "<group id>|<epoch>" -> the imported group key. */
+	const keyCache = new Map();
+	/** @type {Record<string, { epoch: number, rekey: boolean, needs: number[] }>} The latest key state the relay sent per group. */
+	const keyState = {};
+	/** @type {Map<string, RelayGroupMessage[]>} Group id -> messages waiting for a key we don't have yet. */
+	const waitingKey = new Map();
+	/** localStorage key of the group keys of the logged-in account. */
+	const gkKey = () => `slimebeep.gk.${Player.MemberNumber}`;
+	/** The logged-in account's saved group keys. */
+	function loadGroupKeys() {
+		/** @type {Record<string, Record<number, string>>} */
+		const out = {};
+		try {
+			/** @type {Record<string, Record<string, unknown>>} */
+			const saved = JSON.parse(localStorage.getItem(gkKey()) || '{}');
+			for (const [gid, eps] of Object.entries(saved)) {
+				if (!isId(gid) || !eps || typeof eps !== 'object') {
+					continue;
+				}
+				for (const [e, raw] of Object.entries(eps)) {
+					if (Number.isInteger(Number(e)) && typeof raw === 'string' && /^[A-Za-z0-9_-]{43}$/.test(raw)) {
+						(out[gid] = out[gid] || {})[Number(e)] = raw;
+					}
+				}
+			}
+		} catch (e) {
+			/* none */
+		}
+		return out;
+	}
+	/** Saves the group keys of the logged-in account. */
+	function saveGroupKeys() {
+		try {
+			localStorage.setItem(gkKey(), JSON.stringify(groupKeys));
+		} catch (e) {
+			/* this visit only */
+		}
+	}
+	/**
+	 * A group's key for an epoch, or null if we don't have it.
+	 * @param {string} gid
+	 * @param {number} e
+	 * @returns {Promise<CryptoKey | null>}
+	 */
+	async function groupKey(gid, e) {
+		const id = `${gid}|${e}`;
+		const cached = keyCache.get(id);
+		if (cached) {
+			return cached;
+		}
+		const raw = groupKeys[gid] && groupKeys[gid][e];
+		if (!raw) {
+			return null;
+		}
+		const key = await crypto.subtle.importKey('raw', unb64url(raw), 'AES-GCM', false, ['encrypt', 'decrypt']);
+		keyCache.set(id, key);
+		return key;
+	}
+	/**
+	 * Whether a member's encryption key is really theirs: signed with the key they signed in with, and for a
+	 * friend, that key is the one their own SlimeBeep told us.
+	 * @param {string} gid
+	 * @param {GroupMember | undefined} m
+	 */
+	async function trustedEk(gid, m) {
+		if (!m || !m.pub || !m.ek || !m.eks || !EK_RE.test(m.ek)) {
+			return false;
+		}
+		if (peerKeys[m.n] && peerKeys[m.n] !== m.pub.x.slice(0, 16)) {
+			return false;
+		}
+		return verifySig(m.pub, m.eks, `ek|${gid}|${m.n}|${m.ek}`);
+	}
+	/**
+	 * Seals a group key to a member and signs the result.
+	 * @param {string} gid
+	 * @param {number} e epoch
+	 * @param {Uint8Array<ArrayBuffer>} raw the group key
+	 * @param {GroupMember} m
+	 */
+	async function wrapFor(gid, e, raw, m) {
+		const me = Player.MemberNumber;
+		const k = await getKey();
+		const key = await agree(k.epriv, m.ek || '', `slimebeep group v1|${gid}|${e}|${me}|${m.n}`);
+		const box = await seal(key, raw, `${gid}|${e}|${m.n}`);
+		return { to: m.n, ...box, sig: await signText(`wrap|${gid}|${e}|${m.n}|${box.iv}|${box.ct}`) };
+	}
+	/**
+	 * Opens a wrap of a group key sent to us, after checking the member who made it signed it; keeps the key.
+	 * @param {string} gid
+	 * @param {number} e epoch
+	 * @param {{ to: number, by: number, ek: string, iv: string, ct: string, sig: string }} w
+	 */
+	async function unwrap(gid, e, w) {
+		const g = groups[gid];
+		const me = Player.MemberNumber;
+		const k = await getKey();
+		const by = g && g.members.find((m) => m.n === w.by);
+		if (!g || w.to !== me || w.ek !== k.ek || !by || !by.pub || !(await trustedEk(gid, by))) {
+			return false;
+		}
+		if (!(await verifySig(by.pub, w.sig, `wrap|${gid}|${e}|${me}|${w.iv}|${w.ct}`))) {
+			return false;
+		}
+		const key = await agree(k.epriv, by.ek || '', `slimebeep group v1|${gid}|${e}|${w.by}|${me}`);
+		const raw = await unseal(key, w, `${gid}|${e}|${me}`);
+		if (raw.length !== 32) {
+			return false;
+		}
+		(groupKeys[gid] = groupKeys[gid] || {})[e] = b64url(raw.buffer);
+		saveGroupKeys();
+		return true;
+	}
+	/**
+	 * Wraps a group key for members (those whose encryption key checks out) and sends the wraps to the relay.
+	 * @param {string} gid
+	 * @param {number} e epoch
+	 * @param {Uint8Array<ArrayBuffer>} raw
+	 * @param {GroupMember[]} members
+	 * @param {boolean} fresh this key starts epoch `e`
+	 */
+	async function sendWraps(gid, e, raw, members, fresh) {
+		const wraps = [];
+		for (const m of members) {
+			if (await trustedEk(gid, m)) {
+				wraps.push(await wrapFor(gid, e, raw, m));
+			}
+		}
+		if (wraps.length) {
+			relaySend(gid, { t: 'gkey', e, wraps, ...(fresh ? { fresh: true } : {}) });
+		}
+	}
+	/**
+	 * The relay's key state for a group: opens our wraps, makes the first key (or a new one after someone
+	 * left), and gives the current key to members who don't have it yet. Members online at the same time
+	 * may all try; the relay keeps the first, after a random wait to make that rare.
+	 * @param {string} gid
+	 * @param {RelayMessage} p
+	 */
+	async function takeKeys(gid, p) {
+		const g = groups[gid];
+		if (!g || !Number.isInteger(p.epoch)) {
+			return;
+		}
+		const epoch = Number(p.epoch);
+		const state = { epoch, rekey: p.rekey === true, needs: Array.isArray(p.needs) ? p.needs.filter(isNum) : [] };
+		keyState[gid] = state;
+		let got = false;
+		for (const x of Array.isArray(p.mine) ? p.mine.slice(0, 20) : []) {
+			if (!x || !Number.isInteger(x.e) || !x.w || (groupKeys[gid] && groupKeys[gid][x.e])) {
+				continue;
+			}
+			try {
+				got = (await unwrap(gid, x.e, x.w)) || got;
+			} catch (e) {
+				warn(e, 'key');
+			}
+		}
+		if (got) {
+			retryWaiting(gid);
+		}
+		const mine = groupKeys[gid] && groupKeys[gid][epoch];
+		if (epoch === 0 || state.rekey || (mine && state.needs.length)) {
+			await new Promise((r) => setTimeout(r, 300 + Math.random() * 1700));
+			if (keyState[gid] !== state || !groups[gid]) {
+				return;
+			}
+			if (epoch === 0 || state.rekey) {
+				const raw = crypto.getRandomValues(new Uint8Array(32));
+				await sendWraps(gid, epoch + 1, raw, groups[gid].members, true);
+			} else if (mine) {
+				// Newcomers get the older keys we hold too, so they can read the history.
+				const needy = groups[gid].members.filter((m) => state.needs.includes(m.n));
+				const held = Object.keys(groupKeys[gid] || {})
+					.map(Number)
+					.filter((e) => e <= epoch)
+					.sort((a, b) => b - a);
+				for (const e of held) {
+					await sendWraps(gid, e, unb64url(groupKeys[gid][e]), needy, false);
+				}
+			}
+		}
+	}
+	/**
+	 * Opens group messages: sealed ones with the key of their epoch (kept waiting if we don't have it yet);
+	 * system lines ("X joined") come from the relay as they are.
+	 * @param {string} gid
+	 * @param {RelayGroupMessage[]} msgs
+	 */
+	async function openMsgs(gid, msgs) {
+		/** @type {RelayGroupMessage[]} */
+		const out = [];
+		/** @type {RelayGroupMessage[]} */
+		const later = [];
+		for (const m of msgs.slice(-200)) {
+			if (!m || typeof m !== 'object') {
+				continue;
+			}
+			if (m.sys === true) {
+				out.push(m);
+				continue;
+			}
+			const enc = m.enc;
+			if (!enc || !Number.isInteger(enc.e) || typeof enc.iv !== 'string' || typeof enc.ct !== 'string' || !isNum(m.from)) {
+				continue;
+			}
+			const key = await groupKey(gid, enc.e);
+			if (!key) {
+				later.push(m);
+				continue;
+			}
+			try {
+				const text = new TextDecoder().decode(await unseal(key, enc, `${gid}|${enc.e}|${m.from}`));
+				out.push({ ...m, text });
+			} catch (e) {
+				/* changed or not for this key: dropped */
+			}
+		}
+		if (later.length) {
+			const all = [...(waitingKey.get(gid) || []), ...later];
+			waitingKey.set(gid, all.slice(-200));
+		}
+		return out;
+	}
+	/**
+	 * Adds group messages to the chat once they are opened.
+	 * @param {string} gid
+	 * @param {RelayGroupMessage[] | undefined} msgs
+	 * @param {boolean} isLive
+	 */
+	async function takeSealed(gid, msgs, isLive) {
+		if (!Array.isArray(msgs)) {
+			return;
+		}
+		takeMsgs(gid, await openMsgs(gid, msgs), isLive);
+		// Messages still waiting for a key are fetched again after a reconnect.
+		const waits = waitingKey.get(gid);
+		const g = groups[gid];
+		if (g && waits && waits.length) {
+			g.last = Math.min(g.last || 0, Math.min(...waits.map((m) => m.id)) - 1);
+			saveGC();
+		}
+	}
+	/**
+	 * Opens the messages that were waiting for a group key we now have.
+	 * @param {string} gid
+	 */
+	function retryWaiting(gid) {
+		const waits = waitingKey.get(gid);
+		if (!waits || !waits.length) {
+			return;
+		}
+		waitingKey.delete(gid);
+		takeSealed(gid, waits, false).catch((e) => warn(e, 'key'));
+	}
+	/**
+	 * Seals a message with the group's current key and sends it; waits up to 20 s for the key.
+	 * @param {string} gid
+	 * @param {string} text
+	 */
+	async function sendGroup(gid, text) {
+		const t0 = Date.now();
+		let told = false;
+		for (;;) {
+			const st = keyState[gid];
+			const key = st && st.epoch > 0 && !st.rekey ? await groupKey(gid, st.epoch) : null;
+			if (st && key) {
+				const enc = { e: st.epoch, ...(await seal(key, new TextEncoder().encode(text), `${gid}|${st.epoch}|${Player.MemberNumber}`)) };
+				relaySend(gid, { t: 'say', enc });
+				return;
+			}
+			if (Date.now() - t0 > 20000 || !groups[gid]) {
+				notify("🔒 Not sent: the group key hasn't reached you yet. It comes when another member is online.");
+				return;
+			}
+			if (!told) {
+				told = true;
+				notify('🔒 Getting the group key…');
+			}
+			await new Promise((r) => setTimeout(r, 500));
+		}
+	}
 
 	/** Whether this page can sign in to the relay: WebCrypto (crypto.subtle) exists only on https pages. */
 	const secure = () => typeof crypto !== 'undefined' && !!crypto.subtle;
@@ -2748,7 +3242,7 @@
 		if (mailing || stopped || !loggedIn() || !waiting.length || !secure()) {
 			return;
 		}
-		const due = waiting.filter((w) => peers.has(w.n) && peerKeys[w.n] && (now || Date.now() - (w.tried || 0) > 600000));
+		const due = waiting.filter((w) => peers.has(w.n) && peerKeys[w.n] && peerEks[w.n] && (now || Date.now() - (w.tried || 0) > 600000));
 		if (!due.length) {
 			return;
 		}
@@ -2772,7 +3266,7 @@
 					continue;
 				}
 				for (const w of mine) {
-					ws.send(JSON.stringify({ t: 'put', kf: peerKeys[n], text: w.text, ref: w.id }));
+					ws.send(JSON.stringify({ t: 'put', kf: peerKeys[n], enc: await sealMail(n, w.text), ref: w.id }));
 				}
 				const t0 = Date.now();
 				while (Date.now() - t0 < 8000 && mine.some((w) => !answers.has(w.id))) {
@@ -2822,7 +3316,7 @@
 		try {
 			const ws = await mailOpen(Player.MemberNumber, (p, sock) => {
 				if (p.t === 'mail') {
-					takeMail(p.list, sock);
+					takeMail(p.list, sock).catch((e) => warn(e, 'mail'));
 				}
 			});
 			setTimeout(() => {
@@ -2839,11 +3333,12 @@
 		}
 	}
 	/**
-	 * Adds mailbox beeps to `hist` and acks them. Beeps from non-friends or with a wrong sender key are dropped.
+	 * Opens mailbox beeps, adds them to `hist` and acks them. Beeps from non-friends, with a wrong sender key or
+	 * that don't open with our encryption key are dropped.
 	 * @param {MailItem[] | undefined} list
 	 * @param {WebSocket} sock
 	 */
-	function takeMail(list, sock) {
+	async function takeMail(list, sock) {
 		if (!Array.isArray(list) || !list.length) {
 			return;
 		}
@@ -2865,7 +3360,12 @@
 			if (known && known !== m.fromKf) {
 				continue;
 			}
-			const text = typeof m.text === 'string' ? m.text.slice(0, 1000) : '';
+			let text = '';
+			try {
+				text = m.enc && EK_RE.test(m.enc.e) ? (await openMail(from, m.enc)).slice(0, 1000) : '';
+			} catch (e) {
+				text = '';
+			}
 			const k = `mail:${m.id}`;
 			if (!text.trim() || histKeys.has(k)) {
 				continue;
@@ -2906,8 +3406,9 @@
 	}
 
 	/**
-	 * This account's signing key in this browser, stored as JWK fields under slimebeep.key.<member number>;
-	 * made on first use. `kf` is the first 16 chars of the public x, the fingerprint friends compare.
+	 * This account's keys in this browser, stored as JWK fields under slimebeep.key.<member number> (x, y, d
+	 * for signing; ex, ey, ed for encryption); made on first use. `kf` is the first 16 chars of the signing
+	 * key's public x, the fingerprint friends compare.
 	 */
 	async function getKey() {
 		const me = Player.MemberNumber;
@@ -2918,31 +3419,50 @@
 		if (!secure()) {
 			throw new Error('no WebCrypto on this page (http)');
 		}
+		/** @type {{ x?: string, y?: string, d?: string, ex?: string, ey?: string, ed?: string } | null} */
+		let saved = null;
 		try {
-			const saved = JSON.parse(localStorage.getItem(k) || 'null');
-			if (saved && saved.d && saved.x && saved.y) {
-				const priv = await crypto.subtle.importKey(
-					'jwk',
-					{ kty: 'EC', crv: 'P-256', x: saved.x, y: saved.y, d: saved.d, ext: true },
-					{ name: 'ECDSA', namedCurve: 'P-256' },
-					false,
-					['sign'],
-				);
-				return (myKey = { owner: me, priv, pub: { x: saved.x, y: saved.y }, kf: saved.x.slice(0, 16) });
+			saved = JSON.parse(localStorage.getItem(k) || 'null');
+		} catch (e) {
+			saved = null;
+		}
+		/** @type {{ x: string, y: string, d: string, ex: string, ey: string, ed: string }} */
+		let all;
+		if (saved && saved.x && saved.y && saved.d) {
+			all = { x: saved.x, y: saved.y, d: saved.d, ex: saved.ex || '', ey: saved.ey || '', ed: saved.ed || '' };
+		} else {
+			const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+			const jwk = await crypto.subtle.exportKey('jwk', pair.privateKey);
+			all = { x: jwk.x || '', y: jwk.y || '', d: jwk.d || '', ex: '', ey: '', ed: '' };
+		}
+		// Keys made before end-to-end encryption get their encryption key now.
+		if (!all.ex || !all.ey || !all.ed) {
+			const pair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+			const jwk = await crypto.subtle.exportKey('jwk', pair.privateKey);
+			Object.assign(all, { ex: jwk.x || '', ey: jwk.y || '', ed: jwk.d || '' });
+		}
+		if (!saved || saved.ed !== all.ed || saved.d !== all.d) {
+			try {
+				localStorage.setItem(k, JSON.stringify(all));
+			} catch (e) {
+				/* this visit only */
 			}
-		} catch (e) {
-			/* make a new one */
 		}
-		const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
-		const jwk = await crypto.subtle.exportKey('jwk', pair.privateKey);
-		try {
-			localStorage.setItem(k, JSON.stringify({ x: jwk.x, y: jwk.y, d: jwk.d }));
-		} catch (e) {
-			/* this visit only */
-		}
-		const x = jwk.x || '';
-		const y = jwk.y || '';
-		return (myKey = { owner: me, priv: pair.privateKey, pub: { x, y }, kf: x.slice(0, 16) });
+		const priv = await crypto.subtle.importKey(
+			'jwk',
+			{ kty: 'EC', crv: 'P-256', x: all.x, y: all.y, d: all.d, ext: true },
+			{ name: 'ECDSA', namedCurve: 'P-256' },
+			false,
+			['sign'],
+		);
+		const epriv = await crypto.subtle.importKey(
+			'jwk',
+			{ kty: 'EC', crv: 'P-256', x: all.ex, y: all.ey, d: all.ed, ext: true },
+			{ name: 'ECDH', namedCurve: 'P-256' },
+			false,
+			['deriveBits'],
+		);
+		return (myKey = { owner: me, priv, pub: { x: all.x, y: all.y }, kf: all.x.slice(0, 16), epriv, ek: `${all.ex}.${all.ey}` });
 	}
 
 	/**
@@ -3060,6 +3580,8 @@
 					name: myName(),
 					pub: k.pub,
 					sig: b64url(sig),
+					ek: k.ek,
+					eks: await signText(`ek|${gid}|${me}|${k.ek}`),
 					after: g ? g.last || 0 : 0,
 					...(c.create ? { create: c.create } : {}),
 					...(c.invite ? { invite: c.invite } : {}),
@@ -3106,12 +3628,15 @@
 		}
 		if (p.t === 'msg') {
 			if (p.m) {
-				takeMsgs(gid, [p.m], true);
+				await takeSealed(gid, [p.m], true);
 			}
 			return;
 		}
 		if (p.t === 'history') {
-			return takeMsgs(gid, p.msgs, false);
+			return takeSealed(gid, p.msgs, false);
+		}
+		if (p.t === 'keys') {
+			return takeKeys(gid, p);
 		}
 		if (p.t === 'pic') {
 			if (isNum(p.n) && (p.data === null || (typeof p.data === 'string' && p.data.length <= PFP_MAX && PFP_RE.test(p.data)))) {
@@ -3186,6 +3711,25 @@
 	}
 
 	/**
+	 * A roster member's keys, kept only if well formed.
+	 * @param {Partial<GroupMember>} m
+	 * @returns {Partial<GroupMember>}
+	 */
+	function memberKeys(m) {
+		const b64 = /^[A-Za-z0-9_-]{16,128}$/;
+		if (
+			!m.pub ||
+			!b64.test(m.pub.x || '') ||
+			!b64.test(m.pub.y || '') ||
+			typeof m.ek !== 'string' ||
+			!EK_RE.test(m.ek) ||
+			!b64.test(m.eks || '')
+		) {
+			return {};
+		}
+		return { pub: { x: m.pub.x, y: m.pub.y }, ek: m.ek, eks: m.eks };
+	}
+	/**
 	 * Stores a group's roster from the relay (cleaned); ignored if you are not in it.
 	 * @param {string} gid
 	 * @param {Partial<RelayRoster> | undefined} r
@@ -3198,7 +3742,12 @@
 		const members = r.members
 			.slice(0, LIMITS.members)
 			.filter((m) => m && isNum(m.n))
-			.map((m) => ({ n: m.n, name: clean(m.name, LIMITS.name) || `#${m.n}`, kf: typeof m.kf === 'string' ? m.kf.slice(0, 16) : '' }));
+			.map((m) => ({
+				n: m.n,
+				name: clean(m.name, LIMITS.name) || `#${m.n}`,
+				kf: typeof m.kf === 'string' ? m.kf.slice(0, 16) : '',
+				...memberKeys(m),
+			}));
 		const rosterOnline = r.online;
 		if (!members.some((m) => m.n === Player.MemberNumber)) {
 			return;
@@ -3314,6 +3863,10 @@
 	function dropGroup(gid, note) {
 		const g = groups[gid];
 		delete groups[gid];
+		delete groupKeys[gid];
+		delete keyState[gid];
+		waitingKey.delete(gid);
+		saveGroupKeys();
 		const c = conns[gid];
 		if (c) {
 			c.dead = true;
@@ -3352,7 +3905,6 @@
 	 * @param {string} id
 	 * @param {string} text
 	 */
-	const sendGroup = (id, text) => relaySend(id, { t: 'say', text });
 	/**
 	 * Makes a group on the relay and invites the `picked` friends.
 	 * @param {string} name
@@ -3678,7 +4230,9 @@
 		if (!secure()) {
 			return;
 		}
-		getKey().catch((e) => warn(e, 'key'));
+		getKey()
+			.then(askEks)
+			.catch((e) => warn(e, 'key'));
 		for (const id of Object.keys(groups)) {
 			if (!conns[id]) {
 				connectGroup(id);
@@ -3712,7 +4266,8 @@
 	/** @type {[number, string][]} Hidden beeps waiting to go out, sent 250 ms apart by drain: [member number, message]. */
 	const outbox = [];
 	/**
-	 * Queues a hidden beep to a friend; every one also carries your picture version (`pv`) and key start (`kf`).
+	 * Queues a hidden beep to a friend; every one also carries your picture version (`pv`), key start (`kf`)
+	 * and, except picture pieces, your encryption key (`ek`).
 	 * @param {number} n
 	 * @param {HiddenPayload} payload
 	 */
@@ -3721,8 +4276,16 @@
 			return;
 		}
 		const pic = myPfp();
-		const kf = myKey && myKey.owner === Player.MemberNumber ? myKey.kf : undefined;
-		outbox.push([n, JSON.stringify({ ...payload, pv: pic ? pic.v : 0, ...(kf ? { kf } : {}) })]);
+		const k = myKey && myKey.owner === Player.MemberNumber ? myKey : null;
+		/** @type {{ kf?: string, ek?: string }} */
+		const keys = {};
+		if (k) {
+			keys.kf = k.kf;
+			if (!payload.pf) {
+				keys.ek = k.ek;
+			}
+		}
+		outbox.push([n, JSON.stringify({ ...payload, pv: pic ? pic.v : 0, ...keys })]);
 		if (outbox.length === 1) {
 			drain();
 		}
@@ -3744,6 +4307,18 @@
 		}, 250);
 	}
 
+	/** @type {Set<number>} SlimeBeep friends asked for their encryption key this visit. */
+	const askedEk = new Set();
+	/** Pings online SlimeBeep friends whose encryption key we don't have yet; their pong carries it. */
+	function askEks() {
+		for (const f of friends) {
+			const n = f.MemberNumber;
+			if (peers.has(n) && !peerEks[n] && !askedEk.has(n) && askedEk.size < 200) {
+				askedEk.add(n);
+				sendHidden(n, { sb: 1, ping: 1 });
+			}
+		}
+	}
 	/** Asks online friends not yet known to have SlimeBeep whether they do (hidden, answered by their SlimeBeep). */
 	function findPeers() {
 		const ask = friends.filter((f) => !peers.has(f.MemberNumber)).slice(0, 40);
@@ -5198,7 +5773,7 @@
 			closeEmoji();
 			// What you send takes you back to the newest messages.
 			box.scrollTop = box.scrollHeight;
-			sendGroup(id, text);
+			sendGroup(id, text).catch((e) => warn(e, 'send'));
 			ta.value = '';
 		};
 		$('sb-send').addEventListener('click', send);
@@ -6960,7 +7535,7 @@
 						pickPicture();
 					}
 					if (myPfp() && mouse(NOPIC)) {
-						setOpt('pfp', null);
+						setMyPfp(null);
 						try {
 							localStorage.removeItem(srcKey());
 						} catch (err) {
@@ -7345,7 +7920,7 @@
 		if ($('sb-o-nopic')) {
 			$('sb-o-nopic').addEventListener('click', (e) => {
 				e.preventDefault();
-				setOpt('pfp', null);
+				setMyPfp(null);
 				try {
 					localStorage.removeItem(srcKey());
 				} catch (err) {

@@ -54,10 +54,12 @@ SlimeBeep has an API at `window.SlimeBeep.api` (groups, friends with SlimeBeep, 
 
 SlimeBeep runs its own small server on Cloudflare (a Worker with Durable Objects, free plan; the code is in the `relay/` folder). It stores:
 
-- **Group chats:** each group's name, members and roles, open invite codes (7 days), the last 200 messages, the group's and members' pictures, and the song the group is listening to (its link and where it is, kept 12 hours; never the sound).
-- **Mailboxes:** beeps left for a SlimeBeep friend who was offline, until they read them (at most 14 days).
+- **Group chats:** each group's name, members and roles, open invite codes (7 days), the last 200 messages (end-to-end encrypted), the group's and members' pictures, and the song the group is listening to (its link and where it is, kept 12 hours; never the sound).
+- **Mailboxes:** beeps left for a SlimeBeep friend who was offline (end-to-end encrypted), until they read them (at most 14 days).
 
-That's all. Beeps to someone online are ordinary game beeps and never touch the server. In your browser, SlimeBeep keeps your chat history (if **keep** is on), options, friends' pictures and your sign-in key.
+That's all. Beeps to someone online are ordinary game beeps and never touch the server. In your browser, SlimeBeep keeps your chat history (if **keep** is on), options, friends' pictures, your keys and your groups' keys.
+
+**End-to-end encryption:** group messages and mailbox beeps are encrypted in your browser and only opened by the people they are for, so the server stores data it cannot read. It uses the browser's own WebCrypto: each SlimeBeep has an encryption key (ECDH P-256) next to its sign-in key, keys are agreed with HKDF-SHA-256 and messages sealed with AES-GCM. A mailbox beep is sealed to the friend's key. A group has a shared key that members pass to each other sealed and signed; when someone leaves or is removed, a new key is made that they never get. Group names, member names, pictures and songs are not encrypted.
 
 Group chats and mailboxes need the game's https address (signing in uses the browser's WebCrypto, which plain http pages don't have); everything else works on either. They also connect to `slimebeep-relay.slimebeep-relay.workers.dev`: if you use NoScript, uMatrix or another strict blocker, allow that address (SlimeBeep tells you when it can't reach it). The server only accepts connections from the Bondage Club sites and enforces every rule itself (roles, sizes, rate limits). Nobody can post as someone else: each SlimeBeep signs in with its own key, and a mailbox beep can only be read by the key it was addressed to.
 

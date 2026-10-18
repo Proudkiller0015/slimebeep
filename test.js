@@ -6,23 +6,17 @@ const SHOTS = process.argv.includes('--shots');
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 // Other SlimeBeep users, played from here against the relay.
 const RELAY_URL = process.env.RELAY || 'ws://localhost:8787';
-const b64url = (buf) => Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-/** The messages in a relay reply: one for 'msg', all of a 'history', none otherwise. */
-const messagesOf = (x) => {
-	if (x.t === 'msg') {
-		return [x.m];
-	}
-	return x.t === 'history' ? x.msgs : [];
-};
-async function relayUser(member, name) {
-	const k = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
-	const jwk = await crypto.subtle.exportKey('jwk', k.publicKey);
-	return { member, name, k, pub: { x: jwk.x, y: jwk.y } };
-}
+const { makePeer, groupAuth, keyed, onRelay, sealMail, openMail } = require('./relay/e2e-peer.js');
+/** A simulated SlimeBeep user, with the same end-to-end encryption as the add-on. */
+const relayUser = (member, name) => makePeer(member, name);
 async function relayJoin(gid, who, fields = {}) {
 	const ws = new WebSocket(`${RELAY_URL}/ws?g=${gid}`, { headers: { Origin: 'https://www.bondageprojects.elementfx.com' } });
 	const c = { ws, got: [], closed: null };
-	ws.onmessage = (e) => c.got.push(JSON.parse(e.data));
+	ws.onmessage = (e) => {
+		const x = JSON.parse(e.data);
+		c.got.push(x);
+		onRelay(c, x);
+	};
 	ws.onclose = () => {
 		c.closed = true;
 	};
@@ -35,17 +29,11 @@ async function relayJoin(gid, who, fields = {}) {
 		}, 20);
 	});
 	const hello = c.got.find((x) => x.t === 'hello');
-	const sig = await crypto.subtle.sign(
-		{ name: 'ECDSA', hash: 'SHA-256' },
-		who.k.privateKey,
-		new TextEncoder().encode(`${hello.nonce}|${gid}|${who.member}`),
-	);
-	ws.send(JSON.stringify({ t: 'auth', member: who.member, name: who.name, pub: who.pub, sig: b64url(sig), ...fields }));
-	await new Promise((r) => setTimeout(r, 400));
 	c.send = (x) => ws.send(JSON.stringify(x));
-	c.say = (text) => c.send({ t: 'say', text });
+	keyed(c, who, gid);
+	ws.send(JSON.stringify({ ...(await groupAuth(who, gid, hello.nonce)), ...fields }));
+	await new Promise((r) => setTimeout(r, 400));
 	c.last = (t) => [...c.got].reverse().find((x) => x.t === t);
-	c.texts = () => c.got.flatMap(messagesOf).map((m) => m.text);
 	c.welcome = c.last('welcome');
 	return c;
 }
@@ -742,7 +730,7 @@ const check = (ok, what) => {
 			zed = await relayUser(99, 'Zed'),
 			cat = await relayUser(13, 'Cat');
 		// Ann's own SlimeBeep told us her key; Cat's told us one the "Cat" who joins below doesn't have.
-		await hide(11, 'Ann', { sb: 1, pong: 1, kf: ann.pub.x.slice(0, 16) });
+		await hide(11, 'Ann', { sb: 1, pong: 1, kf: ann.pub.x.slice(0, 16), ek: ann.ek });
 		await hide(13, 'Cat', { sb: 1, pong: 1, kf: 'AAAAAAAAAAAAAAAA' });
 		await p.click('#sb-back').catch(() => {});
 		await p.click('[data-tab=groups]');
@@ -858,7 +846,7 @@ const check = (ok, what) => {
 		await wait(200);
 		const a = await relayJoin(gid, ann, { invite: code });
 		check(!!a.welcome, 'Ann joins with it');
-		a.say('hi from Ann <img src=x onerror="window.pwned=1">');
+		await a.say('hi from Ann <img src=x onerror="window.pwned=1">');
 		await wait(700);
 		const t1 = await p.$eval('#sb-msgs', (e) => e.textContent);
 		check(
@@ -870,7 +858,7 @@ const check = (ok, what) => {
 		await p.type('#sb-text', 'hello group');
 		await p.keyboard.press('Enter');
 		await wait(700);
-		check(a.texts().includes('hello group'), 'my message reaches Ann');
+		check((await a.texts()).includes('hello group'), 'my message reaches Ann, sealed with the group key');
 		// A code for anyone: Zed, nobody's friend, joins with it.
 		await p.click('#sb-members');
 		await wait(200);
@@ -928,7 +916,7 @@ const check = (ok, what) => {
 			b.scrollTop = b.scrollHeight;
 			return { top: b.scrollTop, ticked: box ? box.value : null };
 		});
-		z.say('a message while you scroll');
+		await z.say('a message while you scroll');
 		await wait(700);
 		const after = await p.$eval('#sb-body', (b) => ({
 			redrawn: !b.dataset.probe,
@@ -977,7 +965,7 @@ const check = (ok, what) => {
 			`Send invites reaches every ticked friend or says to try again (ticked ${picked.join(', ')}; delivered to ${delivered.join(', ') || 'nobody'}; "${toast}")`,
 		);
 		await shot('members');
-		z.say('hi, I am a friend of nobody here');
+		await z.say('hi, I am a friend of nobody here');
 		await tap('#sb-back');
 		await wait(500);
 		check(/friend of nobody/.test(await p.$eval('#sb-msgs', (e) => e.textContent)), "Zed's message arrives");
@@ -995,8 +983,8 @@ const check = (ok, what) => {
 		// Away: two messages while the page is gone, and SlimeBeep catches up when it's back.
 		await tap('#sb-back');
 		await p.reload();
-		a.say('while you were away 1');
-		a.say('while you were away 2');
+		await a.say('while you were away 1');
+		await a.say('while you were away 2');
 		await wait(300);
 		await p.evaluate(stub);
 		await p.evaluate(() => makeLog());
@@ -1093,7 +1081,7 @@ const check = (ok, what) => {
 		await p.click('#sb-members');
 		await wait(200);
 		// The group picture: picked, placed in the circle, and everyone in the group gets it.
-		const myPicBefore = await p.evaluate(() => JSON.stringify(JSON.parse(localStorage.getItem('slimebeep.options') || '{}').pfp || null));
+		const myPicBefore = await p.evaluate(() => localStorage.getItem('slimebeep.pfp.1'));
 		const [chooser] = await Promise.all([p.waitForFileChooser(), p.click('#sb-gm-pic')]);
 		await chooser.accept([`${__dirname}/icon-128.png`]);
 		await waitFor(() => p.evaluate(() => !!document.querySelector('#sb-crop [data-act=save]')), 4000);
@@ -1106,7 +1094,7 @@ const check = (ok, what) => {
 			(g) => ({
 				head: !!document.querySelector('.sb-thead img.sb-pic'),
 				api: /^data:image/.test(SlimeBeep.api.group(g).picture || ''),
-				mine: JSON.stringify(JSON.parse(localStorage.getItem('slimebeep.options') || '{}').pfp || null),
+				mine: localStorage.getItem('slimebeep.pfp.1'),
 			}),
 			gid,
 		);
@@ -1799,7 +1787,7 @@ const check = (ok, what) => {
 		"Ann's picture shows in place of her initials",
 	);
 	await shot('pfp');
-	// Mine: Cat asks, and gets it in pieces.
+	// Mine: Cat asks, and gets it in pieces. (Saved the way older versions did, in the options every account shares.)
 	await p.evaluate((d) => {
 		const o = JSON.parse(localStorage.getItem('slimebeep.options'));
 		o.pfp = { v: 'mypic00001', data: d };
@@ -1809,6 +1797,15 @@ const check = (ok, what) => {
 	await p.evaluate(stub);
 	await p.addScriptTag({ content: src });
 	await wait(1200);
+	check(
+		await p.evaluate(
+			() =>
+				JSON.parse(localStorage.getItem('slimebeep.pfp.1') || '{}').v === 'mypic00001' &&
+				!('pfp' in JSON.parse(localStorage.getItem('slimebeep.options'))) &&
+				localStorage.getItem('slimebeep.pfp.2') === null,
+		),
+		'your picture belongs to your account only (an older shared one moves to the first account that logs in)',
+	);
 	await p.evaluate(() => {
 		hidden.length = 0;
 	});
@@ -1853,7 +1850,7 @@ const check = (ok, what) => {
 		}),
 		'and it stays inside the SlimeBeep panel, not over the game',
 	);
-	const before = await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.options')).pfp.v);
+	const before = await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.pfp.1')).v);
 	const ring = await (await p.$('#sb-crop canvas')).boundingBox();
 	await p.evaluate(() => {
 		const r = document.querySelector('#sb-crop input');
@@ -1868,7 +1865,7 @@ const check = (ok, what) => {
 	await p.click('#sb-crop [data-act=save]');
 	await wait(300);
 	check(
-		!(await p.$('#sb-crop')) && (await p.evaluate((v) => JSON.parse(localStorage.getItem('slimebeep.options')).pfp.v !== v, before)),
+		!(await p.$('#sb-crop')) && (await p.evaluate((v) => JSON.parse(localStorage.getItem('slimebeep.pfp.1')).v !== v, before)),
 		'zooming, dragging and Save make it the picture',
 	);
 	check(await p.$eval('#sb-me', (e) => !!e.querySelector('img.sb-pic')), 'my own picture shows in the SlimeBeep header');
@@ -1891,7 +1888,7 @@ const check = (ok, what) => {
 	await wait(300);
 	await p.click('#sb-crop .sb-crop-x');
 	check(!(await p.$('#sb-crop')), 'and so does its ✕');
-	const chosen = await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.options')).pfp);
+	const chosen = await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.pfp.1')));
 	check(
 		chosen && chosen.v !== 'mypic00001' && /^data:image\/(webp|jpeg);base64,/.test(chosen.data) && chosen.data.length <= 12000,
 		`choosing a picture shrinks it to send (${chosen && chosen.data.length} characters)`,
@@ -2252,7 +2249,7 @@ const check = (ok, what) => {
 		const cat = await relayUser(13, 'Cat'),
 			eve = await relayUser(66, 'Eve');
 		// Cat has SlimeBeep (her key start came with a hidden beep) and is offline.
-		await hide(13, 'Cat', { sb: 1, pong: 1, kf: cat.pub.x.slice(0, 16) });
+		await hide(13, 'Cat', { sb: 1, pong: 1, kf: cat.pub.x.slice(0, 16), ek: cat.ek });
 		await p.evaluate(() => {
 			beeps.length = 0;
 			fire('AccountQueryResult', { Query: 'OnlineFriends', Result: [{ MemberNumber: 11, MemberName: 'Ann', Type: 'Friend' }] });
@@ -2283,8 +2280,12 @@ const check = (ok, what) => {
 		const catBox = await mailConnect(13, cat);
 		const inbox = catBox.last('mail') ? catBox.last('mail').list : [];
 		check(
-			inbox.length === 1 && inbox[0].text === 'left for you' && inbox[0].from === 1 && inbox[0].fromKf === myKf,
-			`Cat's SlimeBeep finds it in her mailbox (${JSON.stringify(inbox)})`,
+			inbox.length === 1 &&
+				!('text' in inbox[0]) &&
+				(await openMail(cat, 1, inbox[0].enc)) === 'left for you' &&
+				inbox[0].from === 1 &&
+				inbox[0].fromKf === myKf,
+			`Cat's SlimeBeep finds it in her mailbox, sealed so only she can open it (${JSON.stringify(inbox)})`,
 		);
 		catBox.send = (x) => catBox.ws.send(JSON.stringify(x));
 		catBox.send({ t: 'ack', ids: inbox.map((m) => m.id) });
@@ -2294,10 +2295,14 @@ const check = (ok, what) => {
 		await p.reload();
 		await p.evaluate(stub);
 		await p.evaluate(() => makeLog());
+		const myEk = await p.evaluate(() => {
+			const k = JSON.parse(localStorage.getItem('slimebeep.key.1'));
+			return `${k.ex}.${k.ey}`;
+		});
 		const toMe = await mailConnect(1, cat);
-		toMe.ws.send(JSON.stringify({ t: 'put', kf: myKf, text: 'hello from your mailbox', ref: 'm1' }));
+		toMe.ws.send(JSON.stringify({ t: 'put', kf: myKf, enc: await sealMail(13, 1, myEk, 'hello from your mailbox'), ref: 'm1' }));
 		const fake = await mailConnect(1, eve, 13);
-		fake.ws.send(JSON.stringify({ t: 'put', kf: myKf, text: 'I am totally Cat', ref: 'm2' }));
+		fake.ws.send(JSON.stringify({ t: 'put', kf: myKf, enc: await sealMail(13, 1, myEk, 'I am totally Cat'), ref: 'm2' }));
 		await wait(500);
 		check(toMe.last('ok') && fake.last('ok'), 'both are left in my mailbox');
 		for (const c of [catBox, toMe, fake]) {
