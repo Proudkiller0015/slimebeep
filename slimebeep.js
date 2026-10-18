@@ -2212,6 +2212,8 @@
 	];
 	/** Seconds in a room with the Slime Queen for Royal Audience. */
 	const ROYAL_SECONDS = 300;
+	/** Members the Slime Queen gave Long Live the Queen to. */
+	const QUEEN_GIFTS = [217488];
 	/**
 	 * Your achievements, for the account logged in.
 	 * @typedef {object} Achievements
@@ -2840,6 +2842,9 @@
 		}
 		if (opts.night && new Date().getHours() < 4) {
 			unlock('no');
+		}
+		if (QUEEN_GIFTS.includes(me)) {
+			unlock('lq');
 		}
 		const a = loadAch();
 		const withQueen =
