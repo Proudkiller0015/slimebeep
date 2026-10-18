@@ -280,5 +280,11 @@
     "date": "18 Oct 2026",
     "title": "📢 SlimeBeep 3.2.1",
     "text": "🎧 Listen along stays in time with the host much more closely, and starts where they are. Everyone listening can add songs to the host's queue and skip their own, and small pictures show who is listening. 💬 Tap your picture at the top to set a status, like on Discord; it can show the song you're listening to."
+  },
+  {
+    "id": "3.2.2",
+    "date": "18 Oct 2026",
+    "title": "📢 SlimeBeep 3.2.2",
+    "text": "🏆 Achievements! Slime someone, keep the Slime Queen company, start a jam… (and a few secrets). Your friends see your trophies. 🌐 Translate any message with a tap, or a whole chat by itself (it follows CATS if you have it). Chats now show who is offline with a grey dot."
   }
 ]

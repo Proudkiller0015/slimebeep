@@ -81,6 +81,8 @@ const LIMITS = {
 	queueTitle: 40,
 	/** Longest status line (each part). */
 	status: 60,
+	/** Most achievements a status lists. */
+	achievements: 40,
 };
 /** A group id. */
 const ID_RE = /^[a-z0-9]{8,24}$/;
@@ -778,11 +780,16 @@ export class Group extends DurableObject {
 		return [...list].map(([n, s]) => ({ n, s }));
 	}
 
-	/** A member's status: a short line of their own and the song they listen to (null: none). */
+	/** A member's status: a short line of their own, the song they listen to and their achievements' ids (null: none). */
 	setStatus(ws, att, s) {
-		const t = s && typeof s === 'object' ? clean(s.t, LIMITS.status) : '';
-		const l = s && typeof s === 'object' ? clean(s.l, LIMITS.status) : '';
-		const status = t || l ? { t, l } : null;
+		const ok = s && typeof s === 'object';
+		const t = ok ? clean(s.t, LIMITS.status) : '';
+		const l = ok ? clean(s.l, LIMITS.status) : '';
+		const a =
+			ok && Array.isArray(s.a)
+				? [...new Set(s.a.filter((x) => typeof x === 'string' && /^[a-z]{2}$/.test(x)))].slice(0, LIMITS.achievements)
+				: [];
+		const status = t || l || a.length ? { t, l, a } : null;
 		if (JSON.stringify(status) === JSON.stringify(att.status || null)) {
 			return;
 		}

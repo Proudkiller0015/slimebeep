@@ -295,13 +295,13 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 	check(JSON.stringify(c3.last('musicListeners').list) === '[]', 'when her connection closes, she no longer listens');
 	// Statuses live on connections: everyone sees them, newcomers get them, and they go with the connection.
 	const ann3 = await connect(gid, ann);
-	ann3.send({ t: 'status', s: { t: 'king of the swamp', l: '' } });
+	ann3.send({ t: 'status', s: { t: 'king of the swamp', l: '', a: ['sl', 'ra', 'sl', 'BAD', '<b>'] } });
 	await wait(300);
 	const c9 = await connect(gid, cat);
 	check(
-		JSON.stringify(c3.last('status')) === '{"t":"status","n":11,"s":{"t":"king of the swamp","l":""}}' &&
-			JSON.stringify(c9.last('statuses').list) === '[{"n":11,"s":{"t":"king of the swamp","l":""}}]',
-		'a status goes to everyone, and signing in brings all of them',
+		JSON.stringify(c3.last('status')) === '{"t":"status","n":11,"s":{"t":"king of the swamp","l":"","a":["sl","ra"]}}' &&
+			JSON.stringify(c9.last('statuses').list) === '[{"n":11,"s":{"t":"king of the swamp","l":"","a":["sl","ra"]}}]',
+		'a status (with its achievements, each once, odd ones dropped) goes to everyone, and signing in brings all of them',
 	);
 	c9.ws.close();
 	ann3.ws.close();

@@ -86,6 +86,8 @@ const check = (ok, what) => {
 	let newsBody = '[]';
 	// What GitHub Pages answers for slimebeep.js (null: not found, so the copy under test just starts).
 	let pagesBody = null;
+	/** @type {{ text: string, to: string }[]} What SlimeBeep asked Google Translate. */
+	const trAsked = [];
 	await p.setRequestInterception(true);
 	// GitHub Pages (slimebeep.js, news.json) is served from the test; everything else goes through.
 	const cors = { 'Access-Control-Allow-Origin': '*' };
@@ -113,6 +115,24 @@ const check = (ok, what) => {
 		}
 		if (r.url() === 'https://example.com/music/song.wav') {
 			return r.respond({ status: 200, contentType: 'audio/wav', headers: cors, body: SILENCE });
+		}
+		// Google Translate is played by the test: French and Japanese become English ("fail" fails), the rest is marked.
+		if (r.url().startsWith('https://translate-pa.googleapis.com/v1/translate?')) {
+			const q = new URL(r.url()).searchParams;
+			const text = q.get('query.text') || '';
+			const to = q.get('query.targetLanguage') || '';
+			trAsked.push({ text, to });
+			if (text === 'fail') {
+				return r.respond({ status: 500, headers: cors, body: '' });
+			}
+			const known = { 'Bonjour mon amie': ['fr', 'Hello my friend'], こんにちは: ['ja', 'Hello'], 'see you tonight': ['en', 'à ce soir'] };
+			const [from, translation] = known[text] || ['en', `${to}: ${text}`];
+			return r.respond({
+				status: 200,
+				contentType: 'application/json',
+				headers: cors,
+				body: JSON.stringify({ translation, sourceLanguage: from }),
+			});
 		}
 		// The YouTube player is left out: the tests check what SlimeBeep asks of it (the page echoes it back).
 		if (r.url().startsWith('https://www.youtube-nocookie.com/')) {
@@ -521,7 +541,9 @@ const check = (ok, what) => {
 		await p.$$eval('.sb-b.them', (e) => e.map((x) => x.firstChild.textContent)).then((t) => t.includes('yay!')),
 		'a new beep appears in the open chat',
 	);
-	check((await p.$$eval('.sb-card', (e) => e.length)) === 0, 'no card for a beep in the chat you are reading');
+	/** Message cards (achievement cards left out). */
+	const beepCards = () => p.$$eval('.sb-card', (e) => e.map((x) => x.textContent).filter((t) => !/Achievement unlocked/.test(t)));
+	check((await beepCards()).length === 0, 'no card for a beep in the chat you are reading');
 	await p.type('#sb-text', 'second');
 	await p.keyboard.press('Enter');
 	await wait(300);
@@ -543,7 +565,7 @@ const check = (ok, what) => {
 		FriendListBeepLog.push({ MemberNumber: 11, MemberName: 'Ann', Sent: false, Read: false, Time: new Date(), Message: 'psst, over here' }),
 	);
 	await wait(1300);
-	const cardText = await p.$$eval('.sb-card', (e) => e.map((x) => x.textContent));
+	const cardText = await beepCards();
 	await shot('card');
 	check(cardText.length === 1 && /Ann.*psst/.test(cardText[0]), `a new beep pops a card (${cardText})`);
 	await p.click('.sb-card');
@@ -1809,15 +1831,179 @@ const check = (ok, what) => {
 		await wait(200);
 		await p.click('#sb-ask [data-act=clear]');
 		await wait(8000);
-		check(
-			(await p.evaluate(() =>
-				hidden
-					.filter((h) => h.MemberNumber === 13)
-					.map((h) => JSON.parse(h.Message).st)
-					.pop(),
-			)) === 0 && a.last('status').s === null,
-			'Clear takes it away for everyone',
+		const cleared = await p.evaluate(() =>
+			hidden
+				.filter((h) => h.MemberNumber === 13)
+				.map((h) => JSON.parse(h.Message).st)
+				.pop(),
 		);
+		check(
+			(cleared === 0 || cleared.t === '') && (a.last('status').s === null || a.last('status').s.t === ''),
+			`Clear takes it away for everyone (${JSON.stringify(cleared)})`,
+		);
+		// Achievements: Slime in the room, unlocked once, shown to friends with your status.
+		/** @param {number} from @param {number} to */
+		const slime = (from, to) =>
+			p.evaluate(
+				(f, t) =>
+					fire('ChatRoomMessage', {
+						Sender: f,
+						Type: 'Action',
+						Content: 'ActionUse',
+						Dictionary: [{ SourceCharacter: f }, { TargetCharacter: t }, { Tag: 'NextAsset', AssetName: 'Slime', GroupName: 'ItemArms' }],
+					}),
+				from,
+				to,
+			);
+		await p.evaluate(() => {
+			const slimed = ['ItemArms', 'ItemLegs', 'ItemFeet', 'ItemHead'].map(() => ({ Asset: { Name: 'Slime' } }));
+			window.ChatRoomCharacter = [
+				{ MemberNumber: 1, Name: 'Me' },
+				{ MemberNumber: 11, Name: 'Ann', Appearance: slimed },
+				{ MemberNumber: 255659, Name: 'Samantha' },
+			];
+		});
+		await slime(11, 1);
+		await wait(300);
+		/** Achievements unlocked, from the 🏆 list. */
+		const unlocked = async () => {
+			while (!(await p.$('[data-tab=friends]'))) {
+				await p.click('#sb-back');
+				await wait(200);
+			}
+			await p.click('[data-tab=friends]');
+			await wait(300);
+			await p.click('#sb-achbtn');
+			await wait(200);
+			const names = await p.$$eval('#sb-ask .sb-ach.on .sb-name', (e) => e.map((x) => x.textContent));
+			await p.click('#sb-ask [data-act=close]');
+			await wait(100);
+			return names;
+		};
+		check(!(await unlocked()).includes('Slimed!'), "Slime from someone else isn't yours");
+		await slime(1, 11);
+		await slime(255659, 1);
+		await wait(1000);
+		const got = await unlocked();
+		check(
+			['Slimed!', 'Slime Bath', 'Slimed by Royalty'].every((x) => got.includes(x)),
+			`Slime on Ann (in 4 places) and Slime from the Slime Queen unlock their achievements (${JSON.stringify(got)})`,
+		);
+		await p.click('#sb-achbtn');
+		await wait(200);
+		await shot('achievements');
+		const secret = await p.$$eval('#sb-ask .sb-ach:not(.on) .sb-name', (e) => e.map((x) => x.textContent));
+		await p.click('#sb-ask [data-act=close]');
+		check(secret.includes('???') && !secret.includes('All Hail'), 'secret achievements stay ??? until unlocked');
+		await wait(6000);
+		const sentA = await p.evaluate(() =>
+			hidden
+				.filter((h) => h.MemberNumber === 13)
+				.map((h) => JSON.parse(h.Message).st)
+				.pop(),
+		);
+		check(
+			!!sentA && sentA.a.includes('sl') && sentA.a.includes('rs'),
+			`friends get your achievements with your status (${JSON.stringify(sentA)})`,
+		);
+		await hide(13, 'Cat', { sb: 1, st: { t: '', l: '', a: ['sl', 'ra', 'zz'] } });
+		await wait(300);
+		const catTrophy = await p.$eval('[data-open="13"] .sb-trophy', (e) => [e.textContent, e.closest('.sb-status').title]);
+		check(
+			catTrophy[0] === '🏆 2' && /Slimed!/.test(catTrophy[1]) && /Royal Audience/.test(catTrophy[1]),
+			`a friend's achievements show as 🏆 and a count, the names on hover; unknown ones are left out (${JSON.stringify(catTrophy)})`,
+		);
+		// Royal Audience counts seconds in a room with the Slime Queen.
+		await wait(11000);
+		const royal = await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.ach.1') || '{}').royal);
+		check(royal >= 10, `time in a room with the Slime Queen counts toward Royal Audience (${royal} s)`);
+		await p.evaluate(() => {
+			window.ChatRoomCharacter = [];
+		});
+		await p.click('[data-tab=chats]');
+		await wait(300);
+		const dots = await p.$$eval('#sb-body .sb-row[data-open]', (rows) =>
+			rows.map((r) => [
+				r.querySelector('.sb-name').textContent.trim(),
+				(r.querySelector('.sb-on') && 'on') || (r.querySelector('.sb-off') && 'off') || '',
+			]),
+		);
+		check(
+			dots.length > 0 && dots.every((d) => d[1]) && dots.some((d) => d[1] === 'on') && dots.some((d) => d[1] === 'off'),
+			`chats show a green dot for people online and a grey one for people offline (${JSON.stringify(dots)})`,
+		);
+		// 🌐 Translate: one message on a tap, a whole chat by itself, and what you write.
+		await p.evaluate(() => {
+			FriendListBeepLog.push({
+				MemberNumber: 13,
+				MemberName: 'Cat',
+				Sent: false,
+				Read: false,
+				Time: new Date(),
+				Message: 'Bonjour mon amie',
+			});
+		});
+		await wait(1300);
+		await p.evaluate(() => SlimeBeep.api.openChat(13));
+		await wait(300);
+		check(trAsked.length === 0, 'nothing is translated (or sent to Google) until you ask');
+		const lastTr = () =>
+			p.$$eval('#sb-msgs .sb-b.them', (e) => (e[e.length - 1].querySelector('.sb-tr') || { textContent: '' }).textContent);
+		await p.$$eval('#sb-msgs .sb-b.them [data-tr]', (e) => e[e.length - 1].click());
+		await wait(400);
+		check(
+			(await lastTr()) === '🌐 Hello my friend · from Français' && trAsked.slice(-1)[0].to === 'en',
+			`🌐 under a message translates it into your language (${await lastTr()})`,
+		);
+		await shot('translate');
+		await p.$$eval('#sb-msgs .sb-b.them [data-tr]', (e) => e[e.length - 1].click());
+		await wait(200);
+		check((await lastTr()) === '', 'and tapping 🌐 again hides it');
+		// CATS installed: its language is the one picked by itself.
+		await p.evaluate(() => {
+			Player.CATS = { TranslatorModule: { google: { incomingTargetLang: 'ja' } } };
+		});
+		await p.click('#sb-trset');
+		await wait(200);
+		const catsOption = await p.$eval('#sb-tr-to option[value=""]', (e) => e.textContent);
+		check(catsOption === 'Same as CATS (日本語)', `with CATS, translating follows its language (${catsOption})`);
+		await p.click('#sb-tr-auto');
+		await p.select('#sb-tr-to', 'en');
+		await p.select('#sb-tr-write', 'fr');
+		await p.click('#sb-ask [data-act=save]');
+		await wait(200);
+		await p.evaluate(() => {
+			FriendListBeepLog.push({ MemberNumber: 13, MemberName: 'Cat', Sent: false, Read: false, Time: new Date(), Message: 'こんにちは' });
+		});
+		await wait(1600);
+		check(
+			(await lastTr()) === '🌐 Hello · from 日本語',
+			`with the chat set to translate by itself, new messages come translated (${await lastTr()})`,
+		);
+		await p.type('#sb-text', 'see you tonight');
+		await p.click('#sb-trw');
+		await wait(400);
+		check(
+			(await p.$eval('#sb-text', (e) => e.value)) === 'à ce soir' && trAsked.slice(-1)[0].to === 'fr',
+			'with "I write in Français", 🌐 by the send button turns what you wrote into French, to check before sending',
+		);
+		await p.$eval('#sb-text', (e) => {
+			e.value = '';
+		});
+		await p.evaluate(() => {
+			FriendListBeepLog.push({ MemberNumber: 13, MemberName: 'Cat', Sent: false, Read: false, Time: new Date(), Message: 'fail' });
+		});
+		await wait(1600);
+		check((await lastTr()) === "🌐 Couldn't translate right now", 'when Google Translate fails, the message says so and nothing breaks');
+		await p.click('#sb-trset');
+		await wait(200);
+		await p.click('#sb-tr-auto');
+		await p.select('#sb-tr-write', '');
+		await p.click('#sb-ask [data-act=save]');
+		await p.evaluate(() => {
+			delete Player.CATS;
+		});
+		await wait(200);
 		// Songs on file hosts play too: catbox, file.garden, Discord, and a Dropbox share link (as its file).
 		const HOSTED = [
 			'https://files.catbox.moe/ab12cd.wav',
@@ -3177,12 +3363,13 @@ const check = (ok, what) => {
 			crown: document.getElementById('sb-toggle').classList.contains('sb-crowned'),
 			confetti: document.querySelectorAll('.sb-confetti i').length,
 			toast: toasts.some((t) => t.category === 'SlimeBeep-crown' && t.title === '👑 SlimeBeep'),
+			achievement: toasts.some((t) => t.category === 'SlimeBeep-ach' && /All Hail/.test(t.msg)),
 			tada: window.dings,
 		}));
 		check(!crownedBefore && !nine, 'nine clicks on the slime do nothing special');
 		check(
-			crowned.crown && crowned.confetti === 40 && crowned.toast && crowned.tada === 4,
-			`the tenth click crowns the slime, with a tada, confetti and a toast (${JSON.stringify(crowned)})`,
+			crowned.crown && crowned.confetti === 40 && crowned.toast && crowned.achievement && crowned.tada === 6,
+			`the tenth click crowns the slime, with a tada, confetti, a toast and the All Hail achievement (4 + 2 notes) (${JSON.stringify(crowned)})`,
 		);
 		await shot('crown');
 		await wait(1800);

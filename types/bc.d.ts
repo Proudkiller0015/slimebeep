@@ -14,6 +14,8 @@ interface BcPlayer {
 	/** Every friend's member number. */
 	FriendList?: number[];
 	IsSlow(): boolean;
+	/** The CATS add-on's settings, when it is installed (SlimeBeep reads its translation language). */
+	CATS?: { TranslatorModule?: { google?: { incomingTargetLang?: unknown } } };
 }
 
 /** A beep in the game's beep log, as FriendListBeepLog keeps it. */
@@ -66,8 +68,10 @@ declare var ServerSocket: BcSocket;
 declare var FriendListBeepLog: BcBeepLogEntry[];
 declare var ChatRoomData: { Name: string } | null;
 /** The characters in the chat room you are in. */
-declare var ChatRoomCharacter: { MemberNumber?: number; Name: string; Nickname?: string }[];
+declare var ChatRoomCharacter: { MemberNumber?: number; Name: string; Nickname?: string; Appearance?: { Asset?: { Name: string } }[] }[];
 declare var CurrentScreen: string;
+/** The game's language: EN, DE, FR, RU, CN, TW or UA. */
+declare var TranslationLanguage: string;
 declare var GameVersion: string;
 declare var MainCanvas: CanvasRenderingContext2D;
 declare var PreferenceExtensionsSettings: Record<string, BcExtensionSetting>;

@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.2.1';
+	const VERSION = '3.2.2';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -71,6 +71,12 @@
 		status: '',
 		/** Whether your status also says what you listen to in the music player. */
 		showListening: true,
+		/** Language messages are translated into; '' follows CATS, then the game's language. */
+		translateTo: '',
+		/** @type {string[]} Chats that translate others' messages by themselves: 'n:<member number>' or 'g:<group id>'. */
+		autoTranslate: [],
+		/** @type {Record<string, string>} Chat key -> the language 🌐 by the send button translates your message into. */
+		writeIn: {},
 	};
 	/** @typedef {typeof DEFAULTS} Options */
 	/** Release notes, shown as cards and in update notes. */
@@ -1251,6 +1257,24 @@
 		.sb-mu-song { flex: 1; min-width: 0; border: 0; background: none; color: inherit; padding: 4px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
 		.sb-status { font-size: 11px; font-style: italic; color: #b0628f; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 		.sb-merow { margin-bottom: 6px; }
+		.sb-tr { margin-top: 4px; padding-top: 4px; border-top: 1px dashed #ff9ccf88; font-style: italic; }
+		.sb-tr small { opacity: .7; font-style: normal; }
+		.sb-trbtn { text-decoration: none; opacity: .65; }
+		.sb-trbtn:hover { opacity: 1; }
+		.sb-thead > button#sb-trset { flex: none; font-size: 13px; }
+		.sb-thead > button#sb-trset.on { box-shadow: 0 0 0 2px #ff4fa3; }
+		.sb-tr-pick { display: flex; align-items: center; gap: 6px; }
+		.sb-tr-pick select { flex: 1; min-width: 0; font: inherit; border: 2px solid #ffb3d9; border-radius: 10px; padding: 3px 6px; background: #fff; color: inherit; }
+		.sb-achbtn { flex: none; font-size: 11px; padding: 2px 8px; }
+		.sb-trophy { font-style: normal; margin-right: 4px; }
+		.sb-ach-card { width: 300px; align-items: stretch; max-height: calc(100% - 90px); }
+		.sb-ach-list { overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+		.sb-ach { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 12px; background: #f6eef3; opacity: .55; }
+		.sb-ach.on { background: linear-gradient(135deg, #fff4c2, #ffe6f3); opacity: 1; }
+		.sb-ach .sb-sub { display: block; white-space: normal; }
+		.sb-ach-emoji { font-size: 20px; width: 26px; text-align: center; }
+		html.sb-night .sb-ach { background: #1d2550; }
+		html.sb-night .sb-ach.on { background: linear-gradient(135deg, #3a2f0c, #253064); }
 		.sb-status-card { width: 280px; align-items: stretch; }
 		.sb-status-card .sb-search { margin: 0; }
 		.sb-status-card label { display: flex; align-items: center; gap: 6px; }
@@ -1483,12 +1507,12 @@
 		.toast.sb-toast .toast-icon { border-radius: 50%; box-shadow: 0 0 0 2px #fff, 0 0 0 3px #ff9ccf; }
 		.toast.sb-toast .toast-title { color: #d6247f; }
 		.toast.sb-toast[data-category="SlimeBeep-note"] { border-width: 1px; }
-		.toast.sb-toast[data-category="SlimeBeep-crown"] { --progress-color: #e6b422; background: linear-gradient(135deg, #fff4c2, #ffe08a 45%, #ffd1ec); border-color: #e6b422; box-shadow: 0 0 18px #ffd23f99; }
-		.toast.sb-toast[data-category="SlimeBeep-crown"] .toast-title { color: #a8740a; }
+		.toast.sb-toast[data-category="SlimeBeep-crown"], .toast.sb-toast[data-category="SlimeBeep-ach"] { --progress-color: #e6b422; background: linear-gradient(135deg, #fff4c2, #ffe08a 45%, #ffd1ec); border-color: #e6b422; box-shadow: 0 0 18px #ffd23f99; }
+		.toast.sb-toast[data-category="SlimeBeep-crown"] .toast-title, .toast.sb-toast[data-category="SlimeBeep-ach"] .toast-title { color: #a8740a; }
 		html.sb-night .toast.sb-toast { --progress-color: #5b8cff; --background-color: #141a33; --accent-color: #dfe6ff; background: linear-gradient(135deg, #1d2550, #141a33); border-color: #5b8cff; }
 		html.sb-night .toast.sb-toast .toast-title { color: #8fb3ff; }
-		html.sb-night .toast.sb-toast[data-category="SlimeBeep-crown"] { --progress-color: #e6b422; background: linear-gradient(135deg, #3a2f0c, #1d2550); border-color: #e6b422; }
-		html.sb-night .toast.sb-toast[data-category="SlimeBeep-crown"] .toast-title { color: #ffd23f; }
+		html.sb-night .toast.sb-toast[data-category="SlimeBeep-crown"], html.sb-night .toast.sb-toast[data-category="SlimeBeep-ach"] { --progress-color: #e6b422; background: linear-gradient(135deg, #3a2f0c, #1d2550); border-color: #e6b422; }
+		html.sb-night .toast.sb-toast[data-category="SlimeBeep-crown"] .toast-title, html.sb-night .toast.sb-toast[data-category="SlimeBeep-ach"] .toast-title { color: #ffd23f; }
 		html.sb-themed .toast.sb-toast { --progress-color: var(--sb-t-accent); --background-color: var(--sb-t-main); --accent-color: var(--sb-t-text); background: var(--sb-t-main); border-color: var(--sb-t-accent); }
 		html.sb-themed .toast.sb-toast .toast-title { color: var(--sb-t-accent); }
 		#sb-toggle.sb-crowned::before { content: '👑'; position: absolute; z-index: 1; left: 0; right: 0; top: -24px; text-align: center; font-size: 28px; line-height: 1; pointer-events: none; animation: sb-crown .6s ease-out; filter: drop-shadow(0 2px 2px #0005); }
@@ -1742,9 +1766,12 @@
 	function onServer(event, data) {
 		try {
 			if (event === 'ChatRoomMessage') {
-				const m = /** @type {{ Type?: string, Sender?: number, Content?: unknown } | null} */ (data);
+				const m = /** @type {{ Type?: string, Sender?: number, Content?: unknown, Dictionary?: unknown } | null} */ (data);
 				if (m && m.Type === 'Whisper' && isNum(m.Sender)) {
 					takeWhisper(Number(m.Sender), m.Content, false);
+				}
+				if (m && m.Type === 'Action') {
+					slimeNews(m);
 				}
 				return;
 			}
@@ -2145,7 +2172,42 @@
 	 * @typedef {object} Status
 	 * @property {string} t a short line of their own
 	 * @property {string} l the song they listen to; '' for none
+	 * @property {string[]} a the ids of their achievements
 	 */
+	/**
+	 * An achievement: id (two letters, since every status carries them), emoji, name, how to get it, and
+	 * whether it stays a secret until unlocked.
+	 * @typedef {[string, string, string, string, boolean]} Achievement
+	 */
+	/** @type {Achievement[]} */
+	const ACHIEVEMENTS = [
+		['sl', '🫧', 'Slimed!', 'Put Slime on someone', false],
+		['sb', '🟢', 'Slime Bath', 'Cover someone in Slime in 4 places', false],
+		['ra', '👑', 'Royal Audience', 'Spend 5 minutes in a room with the Slime Queen', false],
+		['rs', '💚', 'Slimed by Royalty', 'Get Slime from the Slime Queen herself', false],
+		['fb', '💌', 'First Beep', 'Send a beep with SlimeBeep', false],
+		['ps', '👥', 'Party Starter', 'Make a group chat', false],
+		['bw', '🌊', 'Big Wave', 'WaveBeep 10 friends at once', false],
+		['gu', '🎨', 'Glow Up', 'Choose a profile picture', false],
+		['st', '💬', "What's Up", 'Set a status', false],
+		['js', '🎧', 'Jam Session', 'Listen along with someone', false],
+		['dj', '🎶', 'DJ', 'Have 3 people listen along to your music at once', false],
+		['rl', '🎵', 'Request Line', "Hear a song you added play in someone else's listen-along", false],
+		['ah', '👑', 'All Hail', 'Crown the slime (click it 10 times fast)', true],
+		['no', '🌙', 'Night Owl', 'Use night mode between midnight and 4 am', true],
+		['lq', '✨', 'Long Live the Queen', 'Be the Slime Queen', true],
+	];
+	/** Seconds in a room with the Slime Queen for Royal Audience. */
+	const ROYAL_SECONDS = 300;
+	/**
+	 * Your achievements, for the account logged in.
+	 * @typedef {object} Achievements
+	 * @property {number} owner the account they belong to
+	 * @property {Record<string, number>} got achievement id -> Date.now() when unlocked
+	 * @property {number} royal seconds spent in a room with the Slime Queen so far
+	 */
+	/** @type {Achievements | null} */
+	let ach = null;
 	/** Longest part of a status. */
 	const STATUS_MAX = 60;
 	/** Ms a changed status waits before it goes out (songs skipped in a row, typing). */
@@ -2470,6 +2532,7 @@
 					return;
 				}
 				setMyPfp({ v: newId(), data });
+				unlock('gu');
 				pushPicture();
 				showMe();
 				notify('✓ New profile picture');
@@ -2649,12 +2712,178 @@
 		ponged.set(n, Date.now());
 		sendHidden(n, { sb: 1, pong: 1 });
 	}
-	/** Your status now: your own line, and the song playing unless you hide it. */
+	/** Your status now: your own line, the song playing unless you hide it, and your achievements. */
 	const myStatus = () => {
 		const m = music;
 		const l = opts.showListening && m && m.playing && m.started ? m.track.title.slice(0, STATUS_MAX) : '';
-		return { t: String(opts.status || '').slice(0, STATUS_MAX), l };
+		const got = loggedIn() ? loadAch().got : {};
+		return { t: String(opts.status || '').slice(0, STATUS_MAX), l, a: ACHIEVEMENTS.map((x) => x[0]).filter((id) => got[id]) };
 	};
+	/** Your achievements (loaded for the account logged in). */
+	function loadAch() {
+		const me = Player.MemberNumber;
+		if (ach && ach.owner === me) {
+			return ach;
+		}
+		/** @type {Achievements} */
+		const fresh = { owner: me, got: {}, royal: 0 };
+		try {
+			const saved = JSON.parse(localStorage.getItem(`slimebeep.ach.${me}`) || 'null');
+			if (saved && typeof saved === 'object') {
+				for (const [id] of ACHIEVEMENTS) {
+					if (typeof saved.got?.[id] === 'number') {
+						fresh.got[id] = saved.got[id];
+					}
+				}
+				fresh.royal = typeof saved.royal === 'number' && saved.royal >= 0 ? saved.royal : 0;
+			}
+		} catch (e) {
+			/* starts empty */
+		}
+		ach = fresh;
+		return ach;
+	}
+	/** Saves your achievements for your account. */
+	function saveAch() {
+		if (!ach) {
+			return;
+		}
+		try {
+			localStorage.setItem(`slimebeep.ach.${ach.owner}`, JSON.stringify({ got: ach.got, royal: ach.royal }));
+		} catch (e) {
+			/* private window: kept this visit */
+		}
+	}
+	/**
+	 * Unlocks an achievement (once): a gold pop-up and a chime, quiet in Do not disturb. Friends see it with your status.
+	 * @param {string} id
+	 */
+	function unlock(id) {
+		const a = ACHIEVEMENTS.find((x) => x[0] === id);
+		if (!a || !loggedIn() || loadAch().got[id]) {
+			return;
+		}
+		loadAch().got[id] = Date.now();
+		saveAch();
+		if (isOpen()) {
+			render(true);
+		}
+		if (opts.dnd) {
+			return;
+		}
+		fanfare(CHIME);
+		const [, emoji, name, how] = a;
+		if (gameToasts()) {
+			gameToast({ title: '🏆 Achievement unlocked', text: `${emoji} ${name}\n${how}`, ms: 7000, category: 'SlimeBeep-ach' });
+		} else {
+			card({ icon: html`<span class="sb-av sb-gav">🏆</span>`, title: '🏆 Achievement unlocked', text: `${emoji} ${name}`, sub: how });
+		}
+	}
+	/**
+	 * An item used in the room: Slime on someone counts toward achievements.
+	 * @param {{ Sender?: number, Dictionary?: unknown }} m the game's chat message
+	 */
+	function slimeNews(m) {
+		if (!Array.isArray(m.Dictionary) || !loggedIn()) {
+			return;
+		}
+		const dict = /** @type {({ Tag?: unknown, AssetName?: unknown, TargetCharacter?: unknown } | null)[]} */ (m.Dictionary);
+		const next = dict.find((x) => x && x.Tag === 'NextAsset');
+		const target = dict.find((x) => x && isNum(x.TargetCharacter));
+		if (!next || next.AssetName !== 'Slime' || !target) {
+			return;
+		}
+		const to = Number(target.TargetCharacter);
+		const me = Player.MemberNumber;
+		if (m.Sender === me && to !== me) {
+			unlock('sl');
+			// Your own game shows the item on them already; the moment's wait is for slower updates.
+			setTimeout(() => {
+				if (slimeOn(to) >= 4) {
+					unlock('sb');
+				}
+			}, 500);
+		} else if (m.Sender === OWNER && to === me) {
+			unlock('rs');
+		}
+	}
+	/**
+	 * How many places someone in your room has Slime on.
+	 * @param {number} n
+	 */
+	const slimeOn = (n) => {
+		const c =
+			typeof ChatRoomCharacter === 'object' && Array.isArray(ChatRoomCharacter)
+				? ChatRoomCharacter.find((x) => x && x.MemberNumber === n)
+				: undefined;
+		return c && Array.isArray(c.Appearance) ? c.Appearance.filter((x) => x && x.Asset && x.Asset.Name === 'Slime').length : 0;
+	};
+	/** Every second: achievements that come with time (near the Slime Queen, at night, being her). */
+	function achTick() {
+		const me = Player.MemberNumber;
+		if (me === OWNER) {
+			unlock('lq');
+		}
+		if (opts.night && new Date().getHours() < 4) {
+			unlock('no');
+		}
+		const a = loadAch();
+		const withQueen =
+			me !== OWNER &&
+			typeof ChatRoomCharacter === 'object' &&
+			Array.isArray(ChatRoomCharacter) &&
+			ServerPlayerIsInChatRoom() &&
+			ChatRoomCharacter.some((c) => c && c.MemberNumber === OWNER);
+		if (withQueen && !a.got.ra) {
+			a.royal += 1;
+			if (a.royal >= ROYAL_SECONDS) {
+				unlock('ra');
+			} else if (a.royal % 10 === 0) {
+				saveAch();
+			}
+		}
+	}
+	/** Your achievements, unlocked ones first; secrets stay ??? until you have them. */
+	function openAchievements() {
+		if ($('sb-ask')) {
+			return;
+		}
+		const got = loadAch().got;
+		const list = [...ACHIEVEMENTS].sort((x, y) => Number(!!got[y[0]]) - Number(!!got[x[0]]));
+		const box = document.createElement('div');
+		box.id = 'sb-ask';
+		setHtml(
+			box,
+			html`<div class="sb-crop-card sb-ach-card">
+			<b>🏆 Achievements · ${Object.keys(got).length} / ${ACHIEVEMENTS.length}</b>
+			<div class="sb-ach-list">${list.map(([id, emoji, name, how, secret]) => {
+				const when = got[id];
+				const hidden = secret && !when;
+				return html`<div class="sb-ach${when ? ' on' : ''}"><span class="sb-ach-emoji">${hidden ? '❔' : emoji}</span><span class="sb-main"><span class="sb-name">${hidden ? '???' : name}</span><span class="sb-sub">${hidden ? 'A secret' : how}${!!when && ` · ${new Date(when).toLocaleDateString()}`}</span></span></div>`;
+			})}</div>
+			<span class="sb-hint" style="text-align:center">SlimeBeep friends and your group chats see how many you have.</span>
+			<button class="sb-go" data-act="close">Close</button>
+		</div>`,
+		);
+		const close = () => {
+			box.remove();
+			document.removeEventListener('keydown', onKey, true);
+		};
+		/** @param {KeyboardEvent} e */
+		const onKey = (e) => {
+			if (e.key === 'Escape') {
+				e.stopPropagation();
+				close();
+			}
+		};
+		box.addEventListener('click', (e) => {
+			if (targetOf(e) === box || targetOf(e).dataset.act === 'close') {
+				close();
+			}
+		});
+		document.addEventListener('keydown', onKey, true);
+		$('sb-panel').appendChild(box);
+	}
 	/**
 	 * Someone's status, from a hidden beep or a group's relay.
 	 * @param {number} n
@@ -2664,9 +2893,12 @@
 		const x = /** @type {Partial<Status> | null} */ (s && typeof s === 'object' ? s : null);
 		const t = x ? clean(x.t, STATUS_MAX) : '';
 		const l = x ? clean(x.l, STATUS_MAX) : '';
+		const known = x && Array.isArray(x.a) ? x.a : [];
+		// Only achievements this version knows, once each.
+		const a = ACHIEVEMENTS.map((y) => y[0]).filter((id) => known.includes(id));
 		const before = JSON.stringify(statuses.get(n) || null);
-		if (t || l) {
-			statuses.set(n, { t, l });
+		if (t || l || a.length) {
+			statuses.set(n, { t, l, a });
 		} else {
 			statuses.delete(n);
 		}
@@ -2691,7 +2923,7 @@
 		statusChanged = 0;
 		const st = myStatus();
 		for (const id of Object.keys(groups)) {
-			relaySend(id, { t: 'status', s: st.t || st.l ? st : null });
+			relaySend(id, { t: 'status', s: st.t || st.l || st.a.length ? st : null });
 		}
 		// Every hidden beep carries the status: a bare one is enough.
 		for (const f of friends.filter((x) => peers.has(x.MemberNumber)).slice(0, STATUS_FRIENDS)) {
@@ -2720,7 +2952,8 @@
 			return '';
 		}
 		const text = [s.t, s.l && `🎵 ${s.l}`].filter(Boolean).join(' · ');
-		return html`<div class="sb-status" title="${text}">${text}</div>`;
+		const names = ACHIEVEMENTS.filter((x) => s.a.includes(x[0])).map((x) => `${x[1]} ${x[2]}`);
+		return html`<div class="sb-status" title="${[text, ...names].filter(Boolean).join('\n')}">${!!names.length && html`<span class="sb-trophy">🏆 ${names.length}</span>`}${text}</div>`;
 	}
 	/** Your own row at the top of 💖, like Discord's: your picture, name and status (tap it to change the status). */
 	function meRow() {
@@ -2728,7 +2961,8 @@
 		const text = [st.t, st.l && `🎵 ${st.l}`].filter(Boolean).join(' · ');
 		return html`<div class="sb-row sb-merow" id="sb-merow" title="Set your status">${avatar(Player.MemberNumber, myName())}
 			<div class="sb-main"><div class="sb-name">${myName()} <small class="sb-hint">(you)</small></div>
-			${text ? html`<div class="sb-status" title="${text}">${text}</div>` : html`<div class="sb-sub">💬 Set a status…</div>`}</div></div>`;
+			${text ? html`<div class="sb-status" title="${text}">${text}</div>` : html`<div class="sb-sub">💬 Set a status…</div>`}</div>
+			<button class="sb-pill sb-achbtn" id="sb-achbtn" title="Your achievements">🏆 ${st.a.length}/${ACHIEVEMENTS.length}</button></div>`;
 	}
 	/** The box for your status (your picture at the top, or your row in 💖, opens it). */
 	function openStatus() {
@@ -2758,6 +2992,9 @@
 		const save = () => {
 			setOpt('status', clean(text.value, STATUS_MAX));
 			setOpt('showListening', showSong.checked);
+			if (opts.status) {
+				unlock('st');
+			}
 			close();
 			notify(opts.status ? `💬 Status set: ${opts.status}` : '💬 Status cleared');
 			render(true);
@@ -3854,7 +4091,7 @@
 				saveGC();
 			}
 			const st = myStatus();
-			if (st.t || st.l) {
+			if (st.t || st.l || st.a.length) {
 				ws.send(JSON.stringify({ t: 'status', s: st }));
 			}
 			const done = c.onWelcome;
@@ -4215,6 +4452,7 @@
 		connectGroup(id, {
 			create: { name: clean(name, LIMITS.name) || 'Group chat', open: !!open },
 			onWelcome: () => {
+				unlock('ps');
 				inviteAll(id, picked);
 				if (done) {
 					done(id);
@@ -4589,7 +4827,7 @@
 		}
 		const st = myStatus();
 		// Picture pieces fill the beep already.
-		const status = payload.pf ? {} : { st: st.t || st.l ? st : 0 };
+		const status = payload.pf ? {} : { st: st.t || st.l || st.a.length ? st : 0 };
 		return JSON.stringify({ ...payload, pv: pic ? pic.v : 0, ...keys, ...status });
 	}
 	/** Sends the next hidden beep in `outbox`. */
@@ -4929,6 +5167,7 @@
 				drawMusic();
 			}
 			if (loggedIn() && histOwner === Player.MemberNumber) {
+				achTick();
 				statusTick();
 			}
 			if (waiting.length && loggedIn() && Date.now() - (friendsAskedAt || 0) > 60000) {
@@ -5507,7 +5746,13 @@
 			});
 		}
 		if ($('sb-merow')) {
-			$('sb-merow').addEventListener('click', openStatus);
+			$('sb-merow').addEventListener('click', (e) => {
+				if (targetOf(e).closest('#sb-achbtn')) {
+					openAchievements();
+				} else {
+					openStatus();
+				}
+			});
 		}
 		if ($('sb-newgc')) {
 			$('sb-newgc').addEventListener('click', () => {
@@ -5587,7 +5832,7 @@
 				return {
 					time: new Date(c.last.Time).getTime(),
 					html: html`<div class="sb-row" data-open="${c.n}">${avatar(c.n, c.name)}
-				<div class="sb-main"><div class="sb-name">${online && html`<span class="sb-on"></span>`}${c.name}</div>
+				<div class="sb-main"><div class="sb-name">${online ? html`<span class="sb-on" title="Online"></span>` : html`<span class="sb-off" title="Offline"></span>`}${c.name}</div>
 				<div class="sb-sub">${c.last.Sent && 'You: '}${text}</div></div>
 				<div class="sb-side">${timeOf(c.last.Time)}${c.unread > 0 && html`<br><span class="sb-dot">${c.unread}</span>`}</div></div>`,
 				};
@@ -6041,6 +6286,12 @@
 		for (const b of $$(box, '[data-play]')) {
 			b.addEventListener('click', () => playLink(b.dataset.play || ''));
 		}
+		for (const b of $$(box, '[data-tr]')) {
+			b.addEventListener('click', (e) => {
+				e.preventDefault();
+				toggleTr(b.dataset.tr || '');
+			});
+		}
 		for (const b of $$(box, '[data-pic-once]')) {
 			b.addEventListener('click', () => {
 				shownOnce.add(b.dataset.picOnce || '');
@@ -6083,15 +6334,19 @@
 		const online = conns[id] && conns[id].ready;
 		const here = new Set([...(g.online || []), Player.MemberNumber]).size;
 		const status = online ? html`<span class="sb-on"></span>${here} online · ` : '⏳ connecting… · ';
-		/** @param {HistEntry} h */
-		const bubble = (h) => {
+		/**
+		 * @param {HistEntry} h
+		 * @param {number} i
+		 */
+		const bubble = (h, i) => {
 			if (h.sys) {
 				return html`<div class="sb-sys">${textOf(h)}</div>`;
 			}
 			const name = h.Sent ? myName() : memberName(g, h.MemberNumber) || h.MemberName;
 			const act = asAction(textOf(h), name);
 			const from = !h.Sent && !act && html`<span class="sb-from">${name}</span>`;
-			return html`<div class="sb-b ${h.Sent ? 'me' : 'them'}${act && ' sb-act'}">${from}${rich(act ?? textOf(h))}<em>${timeOf(h.Time)}</em></div>`;
+			const tr = !h.Sent && trLine(textOf(h), `g:${id}`, i >= msgs.length - AUTO_RECENT);
+			return html`<div class="sb-b ${h.Sent ? 'me' : 'them'}${act && ' sb-act'}">${from}${rich(act ?? textOf(h))}${tr}<em>${!h.Sent && trButton(textOf(h))}${timeOf(h.Time)}</em></div>`;
 		};
 		setHtml(
 			view,
@@ -6099,12 +6354,12 @@
 			<div class="sb-thead"><button id="sb-back" title="Back">${ICONS.back}</button>${groupAv(g)}
 				<div class="sb-main"><div class="sb-name">${g.name}</div>
 				<div class="sb-sub" title="${names.join(', ')}">${status}${g.members.length} members: You${names.length > 0 && `, ${names.join(', ')}`}</div></div>
-				${muteButton(`g:${id}`)}<button id="sb-members" title="Members and invites">👥</button><button id="sb-leave" title="${g.owner === Player.MemberNumber ? 'Leave or delete the group' : 'Leave the group'}">🚪</button></div>
+				${trSettingsButton(`g:${id}`)}${muteButton(`g:${id}`)}<button id="sb-members" title="Members and invites">👥</button><button id="sb-leave" title="${g.owner === Player.MemberNumber ? 'Leave or delete the group' : 'Leave the group'}">🚪</button></div>
 			${jamLine(`g:${id}`)}
 			<div class="sb-msgwrap"><div class="sb-msgs" id="sb-msgs">${msgs.length ? msgs.map(bubble) : html`<div class="sb-empty">🫧 Say hi to the group!</div>`}</div>
 				<button class="sb-pill sb-jump" id="sb-jump"></button></div>
 			<div class="sb-compose">
-				<button class="pin" id="sb-emo" title="Emoji">😊</button>
+				<button class="pin" id="sb-emo" title="Emoji">😊</button>${trWriteButton(`g:${id}`)}
 				<textarea id="sb-text" maxlength="${LIMITS.text}" placeholder="Message ${g.name}…"></textarea>
 				<button id="sb-send" title="Send (Enter)">${ICONS.send}</button>
 			</div>`,
@@ -6122,6 +6377,10 @@
 			render();
 		});
 		$('sb-mute').addEventListener('click', () => toggleMute(`g:${id}`, g.name));
+		$('sb-trset').addEventListener('click', () => openTranslate(`g:${id}`));
+		if ($('sb-trw')) {
+			$('sb-trw').addEventListener('click', () => translateDraft(`g:${id}`));
+		}
 		$('sb-leave').addEventListener('click', () => askGroup(id));
 		$('sb-emo').addEventListener('click', () => toggleEmoji());
 		const send = () => {
@@ -6330,7 +6589,8 @@
 		if (msgs.length) {
 			bubbles = msgs.map((b, i) => {
 				const act = actionOf(b);
-				return html`<div class="sb-b ${b.Sent ? 'me' : 'them'}${act && ' sb-act'}">${rich(act ?? textOf(b))}${roomLine(b, msgs, i)}<em>${mailMark(b)}${whisperMark(b)}${uncheckedMark(b)}${timeOf(b.Time)}</em></div>`;
+				const tr = !b.Sent && trLine(textOf(b), `n:${n}`, i >= msgs.length - AUTO_RECENT);
+				return html`<div class="sb-b ${b.Sent ? 'me' : 'them'}${act && ' sb-act'}">${rich(act ?? textOf(b))}${tr}${roomLine(b, msgs, i)}<em>${!b.Sent && trButton(textOf(b))}${mailMark(b)}${whisperMark(b)}${uncheckedMark(b)}${timeOf(b.Time)}</em></div>`;
 			});
 		}
 		const waitingBubbles = waitingHere.map(
@@ -6350,13 +6610,13 @@
 			html`
 			<div class="sb-thead"><button id="sb-back" title="Back">${ICONS.back}</button>${avatar(n, nameOf(n))}
 				<div class="sb-main"><div class="sb-name">${nameOf(n)} <small style="font-weight:normal;color:#c08aaa">#${n}</small></div>
-				<div class="sb-sub">${f && html`<span class="sb-on"></span>`}${where(f)}</div>${!!f && statusLine(n)}</div>${muteButton(`n:${n}`)}</div>
+				<div class="sb-sub">${f && html`<span class="sb-on"></span>`}${where(f)}</div>${!!f && statusLine(n)}</div>${trSettingsButton(`n:${n}`)}${muteButton(`n:${n}`)}</div>
 			${jamLine(`n:${n}`)}
 			<div class="sb-msgwrap"><div class="sb-msgs" id="sb-msgs">${bubbles}${waitingBubbles}</div>
 				<button class="sb-pill sb-jump" id="sb-jump"></button></div>
 			<div class="sb-compose">
 				<button class="pin ${pinOn && 'on'}" id="sb-pin" ${!room && 'disabled'} title="${pinTitle}">📍</button>
-				<button class="pin" id="sb-emo" title="Emoji">😊</button>
+				<button class="pin" id="sb-emo" title="Emoji">😊</button>${trWriteButton(`n:${n}`)}
 				<textarea id="sb-text" maxlength="1000" placeholder="${placeholder}"></textarea>
 				<button id="sb-send" title="Send (Enter)">${ICONS.send}</button>
 			</div>`,
@@ -6375,6 +6635,10 @@
 			render(true);
 		});
 		$('sb-mute').addEventListener('click', () => toggleMute(`n:${n}`, nameOf(n)));
+		$('sb-trset').addEventListener('click', () => openTranslate(`n:${n}`));
+		if ($('sb-trw')) {
+			$('sb-trw').addEventListener('click', () => translateDraft(`n:${n}`));
+		}
 		for (const b of $$(view, '.sb-joinroom')) {
 			b.addEventListener('click', (e) => {
 				e.preventDefault();
@@ -6416,6 +6680,7 @@
 			// Read at send time so a quick second Enter doesn't add the room again.
 			const invite = !!myRoom() && (threadPin ?? opts.shareRoom);
 			beep(n, text, invite);
+			unlock('fb');
 			// 📍 applies to one beep.
 			threadPin = false;
 			sync();
@@ -6496,6 +6761,289 @@
 		} finally {
 			sendingWaiting = false;
 		}
+	}
+
+	/** Google Translate's address for one text (the one the CATS add-on uses too). */
+	const TRANSLATE_URL = 'https://translate-pa.googleapis.com/v1/translate';
+	/** The public key of Google's own translate page; if Google changes it, translating just says it can't right now. */
+	const TRANSLATE_KEY = 'AIzaSyDLEeFI5OtFBwYBIoK_jj5m32rZK5CkCXA';
+	/** Only the newest messages of a chat translate by themselves (older ones on a tap). */
+	const AUTO_RECENT = 30;
+	/** Languages to translate into: Google's code -> the language's own name. */
+	const LANGS = {
+		en: 'English',
+		es: 'Español',
+		fr: 'Français',
+		de: 'Deutsch',
+		it: 'Italiano',
+		pt: 'Português',
+		nl: 'Nederlands',
+		pl: 'Polski',
+		cs: 'Čeština',
+		sv: 'Svenska',
+		no: 'Norsk',
+		da: 'Dansk',
+		fi: 'Suomi',
+		hu: 'Magyar',
+		ro: 'Română',
+		el: 'Ελληνικά',
+		tr: 'Türkçe',
+		ru: 'Русский',
+		uk: 'Українська',
+		ar: 'العربية',
+		he: 'עברית',
+		hi: 'हिन्दी',
+		id: 'Bahasa Indonesia',
+		ms: 'Bahasa Melayu',
+		tl: 'Filipino',
+		vi: 'Tiếng Việt',
+		th: 'ไทย',
+		ja: '日本語',
+		ko: '한국어',
+		'zh-CN': '中文 (简体)',
+		'zh-TW': '中文 (繁體)',
+	};
+	/** The game's languages as Google's codes. */
+	const GAME_LANGS = { EN: 'en', DE: 'de', FR: 'fr', RU: 'ru', CN: 'zh-CN', TW: 'zh-TW', UA: 'uk' };
+	/**
+	 * A language's name, or its code when it isn't one of LANGS.
+	 * @param {string} code
+	 */
+	const langName = (code) => /** @type {Record<string, string>} */ (LANGS)[code] || code;
+	/** Whether a code is one of LANGS. */
+	const isLang = (/** @type {unknown} */ code) => typeof code === 'string' && Object.hasOwn(LANGS, code);
+	/** The language CATS translates the room chat into, when it is installed; '' otherwise. */
+	const catsLang = () => {
+		try {
+			const c = Player.CATS && Player.CATS.TranslatorModule && Player.CATS.TranslatorModule.google;
+			return c && isLang(c.incomingTargetLang) ? String(c.incomingTargetLang) : '';
+		} catch (e) {
+			return '';
+		}
+	};
+	/** The language picked by itself: CATS's, the game's, the browser's, or English. */
+	const autoLang = () => {
+		const game = typeof TranslationLanguage === 'string' ? /** @type {Record<string, string>} */ (GAME_LANGS)[TranslationLanguage] : '';
+		const browser = (navigator.language || '').split('-')[0];
+		return catsLang() || game || (isLang(browser) ? browser : 'en');
+	};
+	/** The language messages are translated into. */
+	const trLang = () => (isLang(opts.translateTo) ? opts.translateTo : autoLang());
+	/**
+	 * A translation: its text and the language it came from; 'wait' while asked, 'fail' if it couldn't be done.
+	 * @typedef {{ text: string, from: string } | 'wait' | 'fail'} Translation
+	 */
+	/** @type {Map<string, Translation>} Translations this visit, by `${language}|${text}`. */
+	const translations = new Map();
+	/** @type {Set<string>} Translations shown because their 🌐 was tapped (same keys). */
+	const trShown = new Set();
+	/** @type {[string, string][]} Translations waiting to be asked for, one at a time: [key, text]. */
+	const trWaiting = [];
+	/** Whether a translation is being asked for now. */
+	let trBusy = false;
+	/**
+	 * Asks Google Translate for a text in another language.
+	 * @param {string} text
+	 * @param {string} to
+	 * @param {string} [from] 'auto' to let Google tell
+	 * @returns {Promise<{ text: string, from: string }>}
+	 */
+	async function translate(text, to, from = 'auto') {
+		const query = new URLSearchParams({
+			'params.client': 'gtx',
+			dataTypes: 'TRANSLATION',
+			key: TRANSLATE_KEY,
+			'query.sourceLanguage': from,
+			'query.targetLanguage': to,
+			'query.text': text,
+		});
+		const r = await fetch(`${TRANSLATE_URL}?${query}`, { signal: AbortSignal.timeout(10000), credentials: 'omit' });
+		if (!r.ok) {
+			throw new Error(`translate: ${r.status}`);
+		}
+		const d = /** @type {{ translation?: unknown, sourceLanguage?: unknown } | null} */ (await r.json());
+		if (!d || typeof d.translation !== 'string') {
+			throw new Error('translate: no translation');
+		}
+		return { text: d.translation.slice(0, 2000), from: typeof d.sourceLanguage === 'string' ? d.sourceLanguage : '' };
+	}
+	/** Asks for the waiting translations one by one, and redraws as each arrives. */
+	async function trPump() {
+		if (trBusy) {
+			return;
+		}
+		trBusy = true;
+		while (trWaiting.length) {
+			const [key, text] = /** @type {[string, string]} */ (trWaiting.shift());
+			const to = key.slice(0, key.indexOf('|'));
+			try {
+				translations.set(key, await translate(text, to));
+			} catch (e) {
+				translations.set(key, 'fail');
+			}
+			if (isOpen() && thread !== null) {
+				render(true);
+			}
+		}
+		trBusy = false;
+	}
+	/**
+	 * A message's translation, shown under it when its 🌐 was tapped or the chat translates by itself.
+	 * @param {string} text
+	 * @param {string} chat
+	 * @param {boolean} recent among the chat's newest AUTO_RECENT messages
+	 * @returns {HtmlValue}
+	 */
+	function trLine(text, chat, recent) {
+		const key = `${trLang()}|${text}`;
+		const tapped = trShown.has(key);
+		if (!text.trim() || (!tapped && !(recent && opts.autoTranslate.includes(chat)))) {
+			return '';
+		}
+		const t = translations.get(key);
+		if (!t) {
+			translations.set(key, 'wait');
+			trWaiting.push([key, text]);
+			trPump();
+			return html`<div class="sb-tr">🌐 Translating…</div>`;
+		}
+		if (t === 'wait') {
+			return html`<div class="sb-tr">🌐 Translating…</div>`;
+		}
+		if (t === 'fail') {
+			return html`<div class="sb-tr">🌐 Couldn't translate right now</div>`;
+		}
+		if (t.from === trLang() || t.text === text) {
+			// Already in your language: only a tap says so.
+			return tapped && html`<div class="sb-tr">🌐 Already in ${langName(trLang())}</div>`;
+		}
+		return html`<div class="sb-tr">🌐 ${t.text}<small> · from ${langName(t.from)}</small></div>`;
+	}
+	/**
+	 * The 🌐 under someone's message: translates it (tap again to hide).
+	 * @param {string} text
+	 * @returns {HtmlValue}
+	 */
+	const trButton = (text) =>
+		!!text.trim() && html`<a href="#" class="sb-trbtn" data-tr="${text}" title="Translate (the text goes to Google Translate)">🌐</a> `;
+	/**
+	 * A tapped 🌐: shows or hides that message's translation; one that failed is asked for again.
+	 * @param {string} text
+	 */
+	function toggleTr(text) {
+		const key = `${trLang()}|${text}`;
+		if (translations.get(key) === 'fail') {
+			translations.delete(key);
+			trShown.add(key);
+		} else if (trShown.has(key)) {
+			trShown.delete(key);
+		} else {
+			trShown.add(key);
+		}
+		render(true);
+	}
+	/**
+	 * The 🌐 in a chat's top bar.
+	 * @param {string} chat
+	 * @returns {HtmlValue}
+	 */
+	const trSettingsButton = (chat) =>
+		html`<button id="sb-trset" class="${opts.autoTranslate.includes(chat) && 'on'}" title="Translate">🌐</button>`;
+	/**
+	 * The 🌐 by the send button, when you write this chat in another language.
+	 * @param {string} chat
+	 * @returns {HtmlValue}
+	 */
+	const trWriteButton = (chat) =>
+		isLang(opts.writeIn[chat]) &&
+		html`<button class="pin" id="sb-trw" title="Translate what you wrote into ${langName(opts.writeIn[chat])}, to check before sending">🌐</button>`;
+	/**
+	 * 🌐 by the send button: what you wrote becomes the chat's language, for you to check and send.
+	 * @param {string} chat
+	 */
+	async function translateDraft(chat) {
+		const ta = $input('sb-text');
+		const to = opts.writeIn[chat];
+		const text = ta ? ta.value.trim() : '';
+		if (!text || !isLang(to) || text.startsWith('/')) {
+			return;
+		}
+		try {
+			const t = await translate(text, to);
+			const now = $input('sb-text');
+			if (now && now.value.trim() === text) {
+				now.value = t.text;
+				now.focus();
+				notify(`🌐 In ${langName(to)} now: check it, then send`);
+			}
+		} catch (e) {
+			notify("⚠ Couldn't translate right now");
+		}
+	}
+	/**
+	 * The 🌐 box of a chat: translate it by itself, into which language, and the language you write it in.
+	 * @param {string} chat
+	 */
+	function openTranslate(chat) {
+		if ($('sb-ask')) {
+			return;
+		}
+		const cats = catsLang();
+		const box = document.createElement('div');
+		box.id = 'sb-ask';
+		/**
+		 * The language options, with the picked one selected.
+		 * @param {string} picked
+		 */
+		const options = (picked) =>
+			Object.entries(LANGS).map(([code, name]) => html`<option value="${code}" ${code === picked && 'selected'}>${name}</option>`);
+		setHtml(
+			box,
+			html`<div class="sb-crop-card sb-status-card">
+			<b>🌐 Translate ${chatLabel(chat)}</b>
+			<label class="sb-hint"><input type="checkbox" id="sb-tr-auto"> Translate their messages by themselves</label>
+			<label class="sb-hint sb-tr-pick">Into <select id="sb-tr-to"><option value="">${cats ? `Same as CATS (${langName(cats)})` : `Automatic (${langName(autoLang())})`}</option>${options(opts.translateTo)}</select></label>
+			<label class="sb-hint sb-tr-pick">I write in <select id="sb-tr-write"><option value="">My own words (no 🌐)</option>${options(opts.writeIn[chat] || '')}</select></label>
+			<span class="sb-hint" style="text-align:center">Tap 🌐 under a message to translate just that one. Text you translate goes to Google Translate.</span>
+			<div class="sb-crop-btns" style="justify-content:center"><button class="sb-pill" data-act="cancel">Cancel</button><button class="sb-go" data-act="save">Save</button></div>
+		</div>`,
+		);
+		const auto = /** @type {HTMLInputElement} */ (box.querySelector('#sb-tr-auto'));
+		const into = /** @type {HTMLSelectElement} */ (box.querySelector('#sb-tr-to'));
+		const write = /** @type {HTMLSelectElement} */ (box.querySelector('#sb-tr-write'));
+		auto.checked = opts.autoTranslate.includes(chat);
+		const close = () => {
+			box.remove();
+			document.removeEventListener('keydown', onKey, true);
+		};
+		/** @param {KeyboardEvent} e */
+		const onKey = (e) => {
+			if (e.key === 'Escape') {
+				e.stopPropagation();
+				close();
+			}
+		};
+		box.addEventListener('click', (e) => {
+			const act = targetOf(e).dataset.act;
+			if (targetOf(e) === box || act === 'cancel') {
+				close();
+			} else if (act === 'save') {
+				setOpt('autoTranslate', [...opts.autoTranslate.filter((c) => c !== chat), ...(auto.checked ? [chat] : [])]);
+				setOpt('translateTo', isLang(into.value) ? into.value : '');
+				/** @type {Record<string, string>} */
+				const writeIn = { ...opts.writeIn };
+				if (isLang(write.value)) {
+					writeIn[chat] = write.value;
+				} else {
+					delete writeIn[chat];
+				}
+				setOpt('writeIn', writeIn);
+				close();
+				render(true);
+			}
+		});
+		document.addEventListener('keydown', onKey, true);
+		$('sb-panel').appendChild(box);
 	}
 
 	/** Where YouTube songs play from (YouTube's privacy-enhanced embed). */
@@ -7122,7 +7670,7 @@
 				return null;
 			}
 			// A hidden beep holds 1000 characters, keys included.
-			while (q.length && JSON.stringify(q).length > 600) {
+			while (q.length && JSON.stringify(q).length > 500) {
 				q.pop();
 			}
 			return { sb: 1, mq: q };
@@ -7399,6 +7947,7 @@
 		unloadSong();
 		followJam(j);
 		tellListening(chat, true);
+		unlock('js');
 		renderIfOpen(chat);
 	}
 	/**
@@ -7431,6 +7980,9 @@
 			for (const n of ears.filter((x) => !before.includes(x))) {
 				notify(`🎧 ${adderName(chat, n)} is listening along`);
 			}
+			if (ears.length >= 3) {
+				unlock('dj');
+			}
 		}
 		drawMusic();
 	}
@@ -7444,6 +7996,9 @@
 			return;
 		}
 		const pos = jamPos(j);
+		if (j.state.pl && j.state.b === Player.MemberNumber) {
+			unlock('rl');
+		}
 		if (!music || music.track.url !== track.url || music.track.id !== j.state.i) {
 			loadSong({ ...track, title: j.state.ti, id: j.state.i, by: j.state.b }, pos, j.state.pl);
 			if (music) {
@@ -8099,7 +8654,7 @@
 		const s = $('sb-toggle');
 		s.classList.add('sb-crowned');
 		if (!opts.dnd) {
-			tada();
+			fanfare(TADA);
 		}
 		if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
 			confetti(s.getBoundingClientRect());
@@ -8110,17 +8665,28 @@
 		} else {
 			notify(`👑 ${text}`);
 		}
+		unlock('ah');
 	}
-	/** A little fanfare: C E G, then a high C. */
-	function tada() {
+	/** @type {[number, number, number][]} A little fanfare for the crown: C E G, then a high C (Hz, start s, length s). */
+	const TADA = [
+		[523, 0, 0.12],
+		[659, 0.1, 0.12],
+		[784, 0.2, 0.12],
+		[1047, 0.32, 0.5],
+	];
+	/** @type {[number, number, number][]} The achievement chime: G, then a high D. */
+	const CHIME = [
+		[784, 0, 0.1],
+		[1175, 0.09, 0.35],
+	];
+	/**
+	 * Plays notes on a soft triangle wave.
+	 * @param {[number, number, number][]} notes Hz, start and length in seconds
+	 */
+	function fanfare(notes) {
 		try {
 			const ac = audioCtx || (audioCtx = new AudioContext());
-			for (const [f, at, len] of [
-				[523, 0, 0.12],
-				[659, 0.1, 0.12],
-				[784, 0.2, 0.12],
-				[1047, 0.32, 0.5],
-			]) {
+			for (const [f, at, len] of notes) {
 				const o = ac.createOscillator(),
 					g = ac.createGain();
 				o.type = 'triangle';
@@ -8325,6 +8891,10 @@
 				}
 			}
 			sending = false;
+			unlock('fb');
+			if (targets.length >= 10) {
+				unlock('bw');
+			}
 			waveText = '';
 			if ($('sb-gmsg')) {
 				$input('sb-gmsg').value = '';

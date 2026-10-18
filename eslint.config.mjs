@@ -23,6 +23,7 @@ const gameGlobals = Object.fromEntries(
 		'ChatSearchSendToast',
 		'CommonSetScreen',
 		'CurrentScreen',
+		'TranslationLanguage',
 		'GameVersion',
 		'PreferenceRegisterExtensionSetting',
 		'PreferenceSubscreenExtensionsOpen',
