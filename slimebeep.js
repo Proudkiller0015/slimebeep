@@ -7755,51 +7755,7 @@
 			return;
 		}
 		setOpen(false);
-		Promise.resolve(PreferenceSubscreenExtensionsOpen('SlimeBeep'))
-			.then(() => settingsShown(0))
-			.catch((e) => warn(e, 'settings'));
-	}
-	/**
-	 * Coming from another screen, the game can finish loading Settings after SlimeBeep's page was opened:
-	 * it shows its Extensions list (or the main Settings page) again, or draws the list's buttons over
-	 * SlimeBeep's page. For up to two seconds, until its page has stayed up for half a second, SlimeBeep
-	 * makes sure its own page is the one showing (so the player's own Back afterwards is never undone).
-	 * @param {number} tries
-	 * @param {number} [steady] checks in a row that found SlimeBeep's page showing
-	 */
-	function settingsShown(tries, steady = 0) {
-		if (typeof PreferenceExtensionsCurrent === 'undefined' || tries >= 20) {
-			return;
-		}
-		setTimeout(() => {
-			try {
-				if (typeof CurrentScreen === 'undefined' || CurrentScreen !== 'Preference') {
-					// Still on the way there (the player may also have left already).
-					settingsShown(tries + 1);
-					return;
-				}
-				if (PreferenceExtensionsCurrent?.Identifier === 'SlimeBeep') {
-					// The list's buttons belong under SlimeBeep's page, hidden, as when it is picked from the list.
-					const list = document.getElementById('preference-subscreen');
-					if (list && !list.hidden) {
-						list.hidden = true;
-					}
-					if (steady < 5) {
-						settingsShown(tries + 1, steady + 1);
-					}
-					return;
-				}
-				// Another extension's page means the player picked it: leave it.
-				if (PreferenceExtensionsCurrent) {
-					return;
-				}
-				Promise.resolve(PreferenceSubscreenExtensionsOpen('SlimeBeep'))
-					.then(() => settingsShown(tries + 1))
-					.catch((e) => warn(e, 'settings'));
-			} catch (e) {
-				warn(e, 'settings');
-			}
-		}, 100);
+		Promise.resolve(PreferenceSubscreenExtensionsOpen('SlimeBeep')).catch((e) => warn(e, 'settings'));
 	}
 	/** Removes your profile picture (and the photo it was cut from) and tells SlimeBeep friends. */
 	function removePicture() {
@@ -7909,6 +7865,8 @@
 			Identifier: 'SlimeBeep',
 			ButtonText: 'SlimeBeep',
 			Image: ICON,
+			// The game turns a page down without load, run and click (nothing to load here).
+			load: () => {},
 			run: () => {
 				try {
 					DrawCharacter(Player, 50, 50, 0.9);

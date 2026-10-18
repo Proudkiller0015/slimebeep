@@ -271,7 +271,18 @@ const check = (ok, what) => {
 			}
 		};
 		window.PreferenceExtensionsSettings = {};
+		// Turns a page down the way the game (R133) does: it needs an Identifier, load, run, click and ButtonText.
 		window.PreferenceRegisterExtensionSetting = (x) => {
+			if (
+				typeof x.Identifier !== 'string' ||
+				!x.Identifier ||
+				typeof x.load !== 'function' ||
+				typeof x.run !== 'function' ||
+				typeof x.click !== 'function' ||
+				(typeof x.ButtonText !== 'string' && typeof x.ButtonText !== 'function')
+			) {
+				throw new Error('Invalid extension setting');
+			}
 			if (PreferenceExtensionsSettings[x.Identifier]) {
 				throw new Error('twice');
 			}
@@ -446,75 +457,6 @@ const check = (ok, what) => {
 		await p.evaluate(() => openedSettings.join() === 'SlimeBeep' && document.getElementById('sb-panel').style.display === 'none'),
 		"⚙ opens SlimeBeep's page in the game's Settings > Extensions (and gets the window out of the way)",
 	);
-	// From a chat room the game can finish loading Settings after SlimeBeep's page opened and fall back to
-	// the Extensions list: SlimeBeep's page is opened again from there.
-	{
-		const was = await p.evaluate(() => {
-			const before = { screen: window.CurrentScreen, open: window.PreferenceSubscreenExtensionsOpen };
-			window.PreferenceExtensionsCurrent = null;
-			window.PreferenceSubscreen = null;
-			window.settingsOpens = 0;
-			window.PreferenceSubscreenExtensionsOpen = (id) => {
-				settingsOpens++;
-				window.CurrentScreen = 'Preference';
-				window.PreferenceSubscreen = { name: 'Extensions' };
-				window.PreferenceExtensionsCurrent = { Identifier: id };
-				if (settingsOpens === 1) {
-					// The game's late load puts the list back.
-					setTimeout(() => {
-						window.PreferenceExtensionsCurrent = null;
-					}, 30);
-				}
-				return Promise.resolve();
-			};
-			window.restoreSettings = () => {
-				window.CurrentScreen = before.screen;
-				window.PreferenceSubscreenExtensionsOpen = before.open;
-				delete window.PreferenceExtensionsCurrent;
-				delete window.PreferenceSubscreen;
-			};
-			return before.screen;
-		});
-		await p.click('#sb-toggle');
-		await wait(200);
-		await p.click('#sb-gear');
-		await wait(900);
-		const landed = await p.evaluate(() => ({
-			page: PreferenceExtensionsCurrent && PreferenceExtensionsCurrent.Identifier,
-			opens: settingsOpens,
-		}));
-		check(
-			landed.page === 'SlimeBeep' && landed.opens === 2,
-			`⚙ still lands on SlimeBeep's page when the game falls back to the list (${JSON.stringify(landed)})`,
-		);
-		// Or the game puts its list's buttons back over SlimeBeep's page: they are hidden again.
-		await p.evaluate(() => {
-			const list = document.createElement('div');
-			list.id = 'preference-subscreen';
-			document.body.appendChild(list);
-			window.PreferenceSubscreenExtensionsOpen = (id) => {
-				window.PreferenceExtensionsCurrent = { Identifier: id };
-				list.hidden = true;
-				setTimeout(() => {
-					list.hidden = false;
-				}, 30);
-				return Promise.resolve();
-			};
-		});
-		await p.click('#sb-toggle');
-		await wait(200);
-		await p.click('#sb-gear');
-		await wait(600);
-		check(
-			await p.evaluate(() => document.getElementById('preference-subscreen').hidden),
-			"and when the game shows its list's buttons over SlimeBeep's page, they are hidden again",
-		);
-		await p.evaluate(() => {
-			document.getElementById('preference-subscreen').remove();
-			restoreSettings();
-		});
-		check((await p.evaluate(() => window.CurrentScreen)) === was, 'and the test puts the game screen back');
-	}
 	// "Let them join me" starts off; the room tests below switch it on (its box is the 5th on the page).
 	check(await p.evaluate(() => !JSON.parse(localStorage.getItem('slimebeep.options')).shareRoom), '"Let them join me" starts off');
 	await p.evaluate(() => {
