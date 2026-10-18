@@ -487,7 +487,32 @@ const check = (ok, what) => {
 			landed.page === 'SlimeBeep' && landed.opens === 2,
 			`⚙ still lands on SlimeBeep's page when the game falls back to the list (${JSON.stringify(landed)})`,
 		);
-		await p.evaluate(() => restoreSettings());
+		// Or the game puts its list's buttons back over SlimeBeep's page: they are hidden again.
+		await p.evaluate(() => {
+			const list = document.createElement('div');
+			list.id = 'preference-subscreen';
+			document.body.appendChild(list);
+			window.PreferenceSubscreenExtensionsOpen = (id) => {
+				window.PreferenceExtensionsCurrent = { Identifier: id };
+				list.hidden = true;
+				setTimeout(() => {
+					list.hidden = false;
+				}, 30);
+				return Promise.resolve();
+			};
+		});
+		await p.click('#sb-toggle');
+		await wait(200);
+		await p.click('#sb-gear');
+		await wait(600);
+		check(
+			await p.evaluate(() => document.getElementById('preference-subscreen').hidden),
+			"and when the game shows its list's buttons over SlimeBeep's page, they are hidden again",
+		);
+		await p.evaluate(() => {
+			document.getElementById('preference-subscreen').remove();
+			restoreSettings();
+		});
 		check((await p.evaluate(() => window.CurrentScreen)) === was, 'and the test puts the game screen back');
 	}
 	// "Let them join me" starts off; the room tests below switch it on (its box is the 5th on the page).
@@ -2494,15 +2519,16 @@ const check = (ok, what) => {
 		await p.type('#sb-text', 'whispering back');
 		await p.keyboard.press('Enter');
 		await wait(300);
-		const sentW = await p.evaluate(() => ({ chats: chats.slice(), beeps: beeps.length }));
+		const sentW = await p.evaluate(() => ({ chats: chats.slice(), beeps: beeps.length, box: document.getElementById('sb-text').value }));
 		const wBack = await p.$eval('#sb-msgs', (e) => e.textContent);
 		check(
 			sentW.chats.length === 1 &&
 				sentW.chats[0].Type === 'Whisper' &&
 				sentW.chats[0].Target === 11 &&
 				sentW.beeps === 0 &&
+				sentW.box === '' &&
 				/whispering back/.test(wBack),
-			`replying there whispers to Ann (no beep) and it shows in her chat (${JSON.stringify(sentW)})`,
+			`replying there whispers to Ann (no beep), empties the box and shows in her chat (${JSON.stringify(sentW)})`,
 		);
 		// A whisper typed in the game's own chat lands here too.
 		await p.evaluate(() => ServerSend('ChatRoomChat', { Content: 'typed in the room', Type: 'Whisper', Target: 11 }));
@@ -2605,6 +2631,27 @@ const check = (ok, what) => {
 		await wait(200);
 		await p.evaluate(() => SlimeBeep.api.openChat(11));
 		await wait(200);
+		// Esc also closes it after a click in the window that leaves nothing focused (a bubble, the header).
+		await p.evaluate(() => document.activeElement.blur());
+		await p.click('.sb-thead .sb-main');
+		await p.evaluate(() => document.activeElement.blur());
+		await p.keyboard.press('Escape');
+		await wait(100);
+		const escClicked = await p.evaluate(() => document.getElementById('sb-panel').style.display === 'flex');
+		await p.click('#sb-toggle');
+		await wait(200);
+		await p.evaluate(() => SlimeBeep.api.openChat(11));
+		await wait(200);
+		// But not after the player clicked the game instead.
+		await p.mouse.click(700, 600);
+		await p.evaluate(() => document.activeElement.blur());
+		await p.keyboard.press('Escape');
+		await wait(100);
+		const escElsewhere = await p.evaluate(() => document.getElementById('sb-panel').style.display === 'flex');
+		check(
+			!escClicked && escElsewhere,
+			`Esc after clicking in the window closes it, not after clicking the game (${JSON.stringify({ escClicked, escElsewhere })})`,
+		);
 		const dndApi = await p.evaluate(() => {
 			const on = SlimeBeep.api.setDoNotDisturb(true);
 			const r = { on, read: SlimeBeep.api.doNotDisturb(), label: document.getElementById('sb-dnd').textContent };

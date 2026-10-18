@@ -1682,9 +1682,12 @@
 			'pointerdown',
 			() => {
 				lastPanelTouch = Date.now();
+				panelActive = true;
 			},
 			true,
 		);
+		addEventListener('pointerdown', leavePanel, true);
+		addEventListener('keydown', escAfterClick);
 		toggle.addEventListener(
 			'pointerdown',
 			() => {
@@ -1766,6 +1769,8 @@
 		}
 		try {
 			removeEventListener('resize', place);
+			removeEventListener('pointerdown', leavePanel, true);
+			removeEventListener('keydown', escAfterClick);
 		} catch (e) {
 			/* gone */
 		}
@@ -4584,6 +4589,7 @@
 	 * @param {boolean} on
 	 */
 	function setOpen(on) {
+		panelActive = on;
 		if (!on) {
 			for (const id of ['sb-crop', 'sb-zoom', 'sb-ask', 'sb-emoji']) {
 				if ($(id)) {
@@ -5989,8 +5995,9 @@
 			closeEmoji();
 			// What you send takes you back to the newest messages.
 			box.scrollTop = box.scrollHeight;
-			sendGroup(id, text).catch((e) => warn(e, 'send'));
+			// Cleared first: sending can redraw the chat, which keeps what is in the box.
 			ta.value = '';
+			sendGroup(id, text).catch((e) => warn(e, 'send'));
 		};
 		$('sb-send').addEventListener('click', send);
 		ta.addEventListener('keydown', (e) => {
@@ -6189,7 +6196,7 @@
 		const near = sameRoom(n);
 		let placeholder = `Beep ${nameOf(n)}… (/help)`;
 		if (near) {
-			placeholder = `Whisper to ${nameOf(n)} (you're in the same room)…`;
+			placeholder = `Whisper to ${nameOf(n)}… (/help)`;
 		} else if (offline) {
 			placeholder = `${nameOf(n)} is offline: it'll wait for them…`;
 		}
@@ -6251,14 +6258,14 @@
 			closeEmoji();
 			// What you send takes you back to the newest messages.
 			box.scrollTop = box.scrollHeight;
+			// Cleared first: a whisper redraws the chat while it is sent, and the redraw keeps what is in the box.
+			ta.value = '';
 			// In the same room, it's a whisper (outListener adds it to this chat).
 			if (sameRoom(n) && ChatRoomSendWhisper(n, text) === true) {
-				ta.value = '';
 				return;
 			}
 			if (isOffline(n)) {
 				queueBeep(n, text);
-				ta.value = '';
 				return render(true);
 			}
 			// Read at send time so a quick second Enter doesn't add the room again.
@@ -6268,7 +6275,6 @@
 			threadPin = false;
 			sync();
 			notify(`✓ Beep sent to ${nameOf(n)}${invite ? ' 📍' : ''}`);
-			ta.value = '';
 			setTimeout(() => render(true), 50);
 		};
 		$('sb-send').addEventListener('click', send);
@@ -7437,6 +7443,29 @@
 
 	/** Last pointerdown on the panel or toggle. */
 	let lastPanelTouch = 0;
+	/** Whether the player's last click was in the window (so Esc closes it even when nothing in it has focus). */
+	let panelActive = false;
+	/** @param {PointerEvent} e */
+	function leavePanel(e) {
+		if (!(e.target instanceof Node) || !$('sb-panel').contains(e.target)) {
+			panelActive = false;
+		}
+	}
+	/**
+	 * Esc after clicking somewhere in the window that takes no focus (a bubble, the header): the key goes to
+	 * the page, not the window, so it is caught here. Keys typed in the window never get here.
+	 * @param {KeyboardEvent} e
+	 */
+	function escAfterClick(e) {
+		if (e.key !== 'Escape' || !panelActive || !isOpen() || (e.target !== document.body && e.target !== document.documentElement)) {
+			return;
+		}
+		if ($('sb-emoji')) {
+			closeEmoji();
+		} else {
+			setOpen(false);
+		}
+	}
 	/**
 	 * Whether a redraw may focus SlimeBeep's chat box: only if focus is already in the panel or it was
 	 * touched in the last 1.5 s, so it never takes the cursor from the game's chat input.
@@ -7731,28 +7760,37 @@
 			.catch((e) => warn(e, 'settings'));
 	}
 	/**
-	 * Coming from another screen, the game can finish loading Settings after SlimeBeep's page was opened and
-	 * show the Extensions list instead: SlimeBeep's page is opened again from there (for up to two seconds).
+	 * Coming from another screen, the game can finish loading Settings after SlimeBeep's page was opened:
+	 * it shows its Extensions list (or the main Settings page) again, or draws the list's buttons over
+	 * SlimeBeep's page. For up to two seconds, until its page has stayed up for half a second, SlimeBeep
+	 * makes sure its own page is the one showing (so the player's own Back afterwards is never undone).
 	 * @param {number} tries
+	 * @param {number} [steady] checks in a row that found SlimeBeep's page showing
 	 */
-	function settingsShown(tries) {
-		if (typeof PreferenceExtensionsCurrent === 'undefined' || tries > 20) {
+	function settingsShown(tries, steady = 0) {
+		if (typeof PreferenceExtensionsCurrent === 'undefined' || tries >= 20) {
 			return;
 		}
 		setTimeout(() => {
 			try {
+				if (typeof CurrentScreen === 'undefined' || CurrentScreen !== 'Preference') {
+					// Still on the way there (the player may also have left already).
+					settingsShown(tries + 1);
+					return;
+				}
 				if (PreferenceExtensionsCurrent?.Identifier === 'SlimeBeep') {
-					// Once more, in case the game was still loading.
-					if (tries < 3) {
-						settingsShown(tries + 1);
+					// The list's buttons belong under SlimeBeep's page, hidden, as when it is picked from the list.
+					const list = document.getElementById('preference-subscreen');
+					if (list && !list.hidden) {
+						list.hidden = true;
+					}
+					if (steady < 5) {
+						settingsShown(tries + 1, steady + 1);
 					}
 					return;
 				}
-				if (typeof CurrentScreen === 'undefined' || CurrentScreen !== 'Preference' || PreferenceSubscreen?.name !== 'Extensions') {
-					// Still on its way there; the player may also have left already.
-					if (typeof CurrentScreen !== 'undefined' && CurrentScreen === 'Preference') {
-						settingsShown(tries + 1);
-					}
+				// Another extension's page means the player picked it: leave it.
+				if (PreferenceExtensionsCurrent) {
 					return;
 				}
 				Promise.resolve(PreferenceSubscreenExtensionsOpen('SlimeBeep'))
