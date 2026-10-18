@@ -114,9 +114,13 @@ const check = (ok, what) => {
 		if (r.url() === 'https://example.com/music/song.wav') {
 			return r.respond({ status: 200, contentType: 'audio/wav', headers: cors, body: SILENCE });
 		}
-		// The YouTube player is left out: the tests check what SlimeBeep asks of it.
+		// The YouTube player is left out: the tests check what SlimeBeep asks of it (the page echoes it back).
 		if (r.url().startsWith('https://www.youtube-nocookie.com/')) {
-			return r.respond({ status: 200, contentType: 'text/html', body: '<!doctype html><title>player</title>' });
+			return r.respond({
+				status: 200,
+				contentType: 'text/html',
+				body: `<!doctype html><title>player</title><script>addEventListener('message', (e) => parent.postMessage({ sbtest: String(e.data) }, '*'));</script>`,
+			});
 		}
 		return r.continue();
 	});
@@ -1575,6 +1579,142 @@ const check = (ok, what) => {
 			!ended.yt && !ended.audio && /Cat stopped sharing/.test(await p.$eval('#sb-toast', (e) => e.textContent)) && !(await jamLine()),
 			`when Cat stops sharing, it stops here and the line goes (${JSON.stringify(ended)})`,
 		);
+		// Listening along in time: what SlimeBeep asks the YouTube player, and what the player reports.
+		await p.evaluate(() => {
+			window.ytSent = [];
+			addEventListener('message', (e) => {
+				if (e.data && typeof e.data.sbtest === 'string') {
+					ytSent.push(JSON.parse(e.data.sbtest));
+				}
+			});
+			/** @param {object} info what the player reports */
+			window.ytSay = (info) => {
+				const f = document.querySelector('#sb-mu iframe');
+				dispatchEvent(
+					new MessageEvent('message', {
+						data: JSON.stringify({ event: 'infoDelivery', info }),
+						origin: 'https://www.youtube-nocookie.com',
+						source: f.contentWindow,
+					}),
+				);
+			};
+		});
+		/** The seekTo commands SlimeBeep sent the player. */
+		const seeks = () => p.evaluate(() => ytSent.filter((m) => m.func === 'seekTo').map((m) => m.args[0]));
+		await hide(13, 'Cat', { sb: 1, music: { u: YT, ti: 'Never Gonna', p: 30, pl: true, d: 214, i: 5, b: 13 } });
+		await hide(13, 'Cat', {
+			sb: 1,
+			mq: [
+				{ id: 6, ti: 'My song', by: 1 },
+				{ id: 7, ti: 'Her song', by: 13 },
+			],
+		});
+		await wait(400);
+		await p.click('#sb-view [data-jam=join]');
+		await wait(400);
+		const told = await p.evaluate(() => hidden.filter((h) => h.MemberNumber === 13).map((h) => JSON.parse(h.Message)));
+		check(
+			told.some((x) => x.mlisten === 1),
+			'listening along tells Cat, so she sees your picture',
+		);
+		// While it loads, YouTube reports 0:00: that is not news, and it stays at Cat's time.
+		await p.evaluate(() => ytSay({ currentTime: 0, playerState: 3 }));
+		await wait(1200);
+		check(
+			(await p.$eval('#sb-mu-cur', (e) => e.textContent)) === '0:30',
+			"while the video loads, its 0:00 doesn't send the song back to the start",
+		);
+		await p.evaluate(() => ytSay({ currentTime: 30, playerState: 1 }));
+		await wait(300);
+		const firstSeek = await seeks();
+		check(
+			firstSeek.length === 1 && firstSeek[0] > 31 && firstSeek[0] < 32.5,
+			`once it plays, it jumps to Cat's time now, a little past it for the time loading takes (${JSON.stringify(firstSeek)})`,
+		);
+		const along2 = await p.evaluate(() => ({
+			rows: [...document.querySelectorAll('#sb-mu-queue .sb-mu-row')].map((r) => r.textContent.trim()),
+			skips: [...document.querySelectorAll('#sb-mu-queue [data-jskip]')].map((b) => b.dataset.jskip),
+			next: document.getElementById('sb-mu-next').disabled,
+			ears: document.querySelectorAll('#sb-mu-ears .sb-av').length,
+		}));
+		check(
+			JSON.stringify(along2.rows) === '["▶ Never GonnaCat","My song","Her songCat"]' &&
+				JSON.stringify(along2.skips) === '["6"]' &&
+				along2.next &&
+				along2.ears === 1,
+			`the player shows Cat's queue and who added each song; only yours can be skipped, ⏭ only skips yours (${JSON.stringify(along2)})`,
+		);
+		await shot('music-shared-queue');
+		await p.click('#sb-mu-queue [data-jskip="6"]');
+		await p.type('#sb-mu-link', WAV);
+		await p.keyboard.press('Enter');
+		await wait(800);
+		const asks = await p.evaluate(() => hidden.filter((h) => h.MemberNumber === 13).map((h) => JSON.parse(h.Message)));
+		check(
+			asks.some((x) => x.mskip === 6) &&
+				asks.some((x) => x.madd && x.madd.u === WAV) &&
+				(await player()).yt &&
+				/Listening along with Cat/.test((await player()).status),
+			'✕ on your song asks Cat to skip it, and a song you add goes to her queue; you keep listening along',
+		);
+		// The song is now Cat's turn for yours: ⏭ skips it.
+		await hide(13, 'Cat', { sb: 1, music: { u: YT, ti: 'Never Gonna', p: 31, pl: true, d: 214, i: 5, b: 1 } });
+		await wait(400);
+		check(!(await p.$eval('#sb-mu-next', (e) => e.disabled)), '⏭ works while the song playing is one you added');
+		// Behind Cat by a second for a few reports: it moves back to her time.
+		await wait(3000);
+		const seeksBefore = (await seeks()).length;
+		for (let k = 0; k < 4; k++) {
+			await p.evaluate(() => {
+				const cur = Number(document.getElementById('sb-mu-seek').value);
+				ytSay({ currentTime: cur - 1, playerState: 1 });
+			});
+			await wait(1000);
+		}
+		check((await seeks()).length > seeksBefore, 'a player that falls behind Cat by a second is moved back to her time');
+		await p.click('#sb-mu-share');
+		await wait(400);
+		check(
+			(await p.evaluate(() => hidden.filter((h) => h.MemberNumber === 13).map((h) => JSON.parse(h.Message)))).some((x) => x.mlisten === 0),
+			'leaving tells Cat you stopped listening',
+		);
+		// You host: Cat queues a song, sees the queue, and can only skip hers.
+		await p.type('#sb-mu-link', WAV);
+		await p.keyboard.press('Enter');
+		await wait(500);
+		await p.click('#sb-mu-share');
+		await wait(600);
+		await hide(13, 'Cat', { sb: 1, mlisten: 1 });
+		await hide(13, 'Cat', { sb: 1, madd: { u: 'https://example.com/music/two.wav', ti: 'two' } });
+		await wait(800);
+		const asHost = await p.evaluate(() => ({
+			rows: [...document.querySelectorAll('#sb-mu-queue .sb-mu-row')].map((r) => r.textContent.trim()),
+			ears: document.querySelectorAll('#sb-mu-ears .sb-av').length,
+			mq: hidden
+				.filter((h) => h.MemberNumber === 13)
+				.map((h) => JSON.parse(h.Message))
+				.filter((x) => x.mq)
+				.pop(),
+		}));
+		check(
+			/^▶ song$/.test(asHost.rows[asHost.rows.length - 2]) &&
+				/twoCat$/.test(asHost.rows[asHost.rows.length - 1]) &&
+				asHost.ears === 1 &&
+				asHost.mq &&
+				asHost.mq.mq.length === 1 &&
+				asHost.mq.mq[0].by === 13,
+			`Cat's song joins your queue with her name, she is told what comes next, and her picture shows she listens (${JSON.stringify(asHost)})`,
+		);
+		const twoId = asHost.mq.mq[0].id;
+		await hide(13, 'Cat', { sb: 1, mskip: twoId - 1 });
+		await wait(300);
+		check((await p.$$eval('#sb-mu-queue .sb-mu-row', (r) => r.length)) === asHost.rows.length, "Cat can't skip your song");
+		await hide(13, 'Cat', { sb: 1, mskip: twoId });
+		await wait(300);
+		check((await p.$$eval('#sb-mu-queue .sb-mu-row', (r) => r.length)) === asHost.rows.length - 1, 'but she can skip hers');
+		await p.click('#sb-mu-share');
+		await wait(400);
+		check((await p.$$eval('#sb-mu-ears .sb-av', (e) => e.length)) === 0, 'stopping sharing clears who listened');
 		// A group: Share sends the song to the relay; Ann's shared song is offered, followed, and ends.
 		await p.evaluate((g) => SlimeBeep.api.openGroup(g), gid);
 		await wait(300);
@@ -1600,6 +1740,73 @@ const check = (ok, what) => {
 		a.send({ t: 'musicEnd' });
 		await wait(600);
 		check(!(await player()).yt && !(await jamLine()), 'and stops when Ann stops sharing');
+		// Statuses, like Discord's: a short line of your own, and the song you listen to.
+		await hide(13, 'Cat', { sb: 1, st: { t: 'king of the swamp', l: 'Never Gonna' } });
+		a.send({ t: 'status', s: { t: 'brb food 🍕', l: '' } });
+		await wait(600);
+		while (!(await p.$('[data-tab=friends]'))) {
+			await p.click('#sb-back');
+			await wait(200);
+		}
+		await p.click('[data-tab=friends]');
+		await wait(300);
+		const friendStatus = await p.evaluate(() =>
+			Object.fromEntries(
+				[...document.querySelectorAll('.sb-row[data-open]')].map((r) => [
+					r.dataset.open,
+					(r.querySelector('.sb-status') || { textContent: '' }).textContent,
+				]),
+			),
+		);
+		check(
+			friendStatus['13'] === 'king of the swamp · 🎵 Never Gonna' && friendStatus['11'] === 'brb food 🍕' && !friendStatus['12'],
+			`friends' statuses show under their names, from a friend's beep or a group (${JSON.stringify(friendStatus)})`,
+		);
+		await p.evaluate(() => SlimeBeep.api.openChat(13));
+		await wait(300);
+		check(
+			(await p.$eval('.sb-thead .sb-status', (e) => e.textContent)) === 'king of the swamp · 🎵 Never Gonna',
+			"and in the top bar of Cat's chat",
+		);
+		await p.click('#sb-me');
+		await wait(200);
+		await p.type('#sb-status-text', 'king of the swamp');
+		await shot('status-box');
+		await p.keyboard.press('Enter');
+		await wait(8000);
+		const sentStatus = await p.evaluate(() => ({
+			opt: JSON.parse(localStorage.getItem('slimebeep.options') || '{}').status,
+			toCat: hidden
+				.filter((h) => h.MemberNumber === 13)
+				.map((h) => JSON.parse(h.Message).st)
+				.pop(),
+			box: !!document.getElementById('sb-ask'),
+		}));
+		const statusToGroup = a.last('status');
+		check(
+			!sentStatus.box &&
+				sentStatus.opt === 'king of the swamp' &&
+				sentStatus.toCat &&
+				sentStatus.toCat.t === 'king of the swamp' &&
+				statusToGroup &&
+				statusToGroup.s &&
+				statusToGroup.s.t === 'king of the swamp' &&
+				statusToGroup.n === 1,
+			`your picture opens Set status; once saved it goes to SlimeBeep friends and your groups (${JSON.stringify({ sentStatus, statusToGroup })})`,
+		);
+		await p.click('#sb-me');
+		await wait(200);
+		await p.click('#sb-ask [data-act=clear]');
+		await wait(8000);
+		check(
+			(await p.evaluate(() =>
+				hidden
+					.filter((h) => h.MemberNumber === 13)
+					.map((h) => JSON.parse(h.Message).st)
+					.pop(),
+			)) === 0 && a.last('status').s === null,
+			'Clear takes it away for everyone',
+		);
 		// Songs on file hosts play too: catbox, file.garden, Discord, and a Dropbox share link (as its file).
 		const HOSTED = [
 			'https://files.catbox.moe/ab12cd.wav',

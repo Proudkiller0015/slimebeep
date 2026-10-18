@@ -46,6 +46,8 @@ const testPageGlobals = Object.fromEntries(
 		'openedSettings',
 		'settingsClick',
 		'toasts',
+		'ytSent',
+		'ytSay',
 		'beeps',
 		'hidden',
 		'chats',

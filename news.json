@@ -274,5 +274,11 @@
     "date": "18 Oct 2026",
     "title": "📢 SlimeBeep 3.2",
     "text": "⚙ now opens SlimeBeep's page in the game's Settings, with every option in one place. Actions read like in the game: *waves or /me waves shows as *Name waves*. Esc closes the window. New beeps and notes now pop as the game's own notifications, in SlimeBeep's colours."
+  },
+  {
+    "id": "3.2.1",
+    "date": "18 Oct 2026",
+    "title": "📢 SlimeBeep 3.2.1",
+    "text": "🎧 Listen along stays in time with the host much more closely, and starts where they are. Everyone listening can add songs to the host's queue and skip their own, and small pictures show who is listening. 💬 Tap your picture at the top to set a status, like on Discord; it can show the song you're listening to."
   }
 ]

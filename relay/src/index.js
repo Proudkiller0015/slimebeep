@@ -75,6 +75,12 @@ const LIMITS = {
 	songTitle: 100,
 	/** Hours a group's song is kept for members who connect later. */
 	songHours: 12,
+	/** Most upcoming songs a host shows the group. */
+	songQueue: 10,
+	/** Longest title of a queued song. */
+	queueTitle: 40,
+	/** Longest status line (each part). */
+	status: 60,
 };
 /** A group id. */
 const ID_RE = /^[a-z0-9]{8,24}$/;
@@ -99,6 +105,8 @@ const ORIGINS = [
 
 /** A plausible member number. */
 const isNum = (n) => Number.isInteger(n) && n > 0 && n < 1e9;
+/** A song link: https, short, nothing that could break out of an attribute; '' for anything else. */
+const songUrl = (u) => (typeof u === 'string' && u.length <= LIMITS.songUrl && /^https:\/\/[^\s<>"']+$/.test(u) ? u : '');
 /** A string with control characters removed, trimmed and cut to `max`; '' for anything else. */
 const clean = (x, max) =>
 	typeof x === 'string'
@@ -157,10 +165,11 @@ export default {
 };
 
 /**
- * One group chat. Storage: 'meta' { name, owner, admins, open, created, pic, e2e }, 'members' (member
+ * One group chat. Members' statuses and who listens along live on their connections, not in storage. Storage: 'meta' { name, owner, admins, open, created, pic, e2e }, 'members' (member
  * number -> { n, name, pub, ek, eks, joined, pic }), 'invites' (secret -> { member, by, exp, uses }),
  * 'msg:<seq>' sealed messages, 'keys' { epoch, rekey, eps: epoch -> member -> wrap } and 'music'
- * { u, ti, p, pl, d, by, name, at }: the song playing, only its link and where it is, never the sound.
+ * { u, ti, p, pl, d, i, b, by, name, at, q }: the song playing, only its link and where it is, never the sound,
+ * and the titles of the songs queued after it.
  */
 export class Group extends DurableObject {
 	constructor(ctx, env) {
@@ -206,7 +215,8 @@ export class Group extends DurableObject {
 
 	/**
 	 * A client message (JSON with `t`). Before sign-in only 'auth'; then 'say', 'history', 'gkey', 'invite', 'kick',
-	 * 'admin', 'owner', 'rename', 'open', 'profile', 'gpic', 'music', 'musicEnd', 'leave' and 'disband'. Rate limited per connection.
+	 * 'admin', 'owner', 'rename', 'open', 'profile', 'gpic', 'music', 'musicEnd', 'musicQueue', 'musicAdd', 'musicSkip',
+	 * 'musicListen', 'status', 'leave' and 'disband'. Rate limited per connection.
 	 */
 	async webSocketMessage(ws, raw) {
 		const att = ws.deserializeAttachment();
@@ -268,6 +278,16 @@ export class Group extends DurableObject {
 					return await this.setMusic(att.member, p);
 				case 'musicEnd':
 					return await this.endMusic(att.member);
+				case 'musicQueue':
+					return await this.setQueue(att.member, p.q);
+				case 'musicAdd':
+					return await this.addSong(att.member, p);
+				case 'musicSkip':
+					return await this.skipSong(att.member, p.id);
+				case 'musicListen':
+					return await this.setListening(ws, att, p.on === true);
+				case 'status':
+					return this.setStatus(ws, att, p.s);
 				case 'leave':
 					return await this.leave(att.member);
 				case 'disband':
@@ -296,6 +316,12 @@ export class Group extends DurableObject {
 		}
 		if (a && a.member && this.meta) {
 			this.broadcast({ t: 'presence', online: this.online(ws) });
+			if (a.listening) {
+				this.broadcast({ t: 'musicListeners', list: this.listeners(ws) });
+			}
+			if (a.status && !this.statuses(ws).some((x) => x.n === a.member)) {
+				this.broadcast({ t: 'status', n: a.member, s: null });
+			}
 		}
 	}
 	/** Members with a live, signed-in connection right now (`except`: one that is closing). */
@@ -403,10 +429,21 @@ export class Group extends DurableObject {
 		if (this.meta.pic) {
 			this.send(ws, { t: 'gpic', data: this.meta.pic });
 		}
+		const statuses = this.statuses(ws);
+		if (statuses.length) {
+			this.send(ws, { t: 'statuses', list: statuses });
+		}
 		const music = await this.ctx.storage.get('music');
 		if (music && Date.now() - music.at < LIMITS.songHours * 36e5) {
-			const { at, ...song } = music;
+			const { at, q, ...song } = music;
 			this.send(ws, { t: 'music', music: song, age: Date.now() - at });
+			if (q) {
+				this.send(ws, { t: 'musicQueue', q });
+			}
+			const list = this.listeners();
+			if (list.length) {
+				this.send(ws, { t: 'musicListeners', list });
+			}
 		}
 		this.history(ws, p.after);
 		this.broadcast({ t: 'roster', roster: this.roster() });
@@ -621,10 +658,11 @@ export class Group extends DurableObject {
 
 	/**
 	 * The song a member shares with the group (its host; a member who starts their own takes over).
-	 * Each player plays the link itself; only this record is kept.
+	 * Each player plays the link itself; only this record is kept. The host repeats where the song is
+	 * now and then: that is only passed on, and stored only when it differs from what is stored.
 	 */
 	async setMusic(member, p) {
-		const u = typeof p.u === 'string' && p.u.length <= LIMITS.songUrl && /^https:\/\/[^\s<>"']+$/.test(p.u) ? p.u : '';
+		const u = songUrl(p.u);
 		const pos = typeof p.p === 'number' && Number.isFinite(p.p) && p.p >= 0 && p.p <= 86400 ? p.p : -1;
 		const dur = typeof p.d === 'number' && Number.isFinite(p.d) && p.d >= 0 && p.d <= 86400 ? p.d : 0;
 		if (!u || pos < 0 || typeof p.pl !== 'boolean') {
@@ -632,8 +670,66 @@ export class Group extends DurableObject {
 		}
 		const m = this.members[member];
 		const song = { u, ti: clean(p.ti, LIMITS.songTitle), p: pos, pl: p.pl, d: dur, by: member, name: m.name };
-		await this.ctx.storage.put('music', { ...song, at: Date.now() });
+		if (Number.isInteger(p.i) && p.i > 0 && p.i < 1e9) {
+			song.i = p.i;
+		}
+		if (isNum(p.b) && this.members[p.b]) {
+			song.b = p.b;
+		}
+		const old = await this.ctx.storage.get('music');
+		const now = Date.now();
+		// Where the stored record says the song is now.
+		const due = old && (old.pl ? old.p + (now - old.at) / 1000 : old.p);
+		const same =
+			old && old.by === member && old.u === u && old.pl === song.pl && old.i === song.i && old.ti === song.ti && Math.abs(due - pos) < 2;
+		if (!same) {
+			// A new host starts with an empty queue and nobody listening along yet.
+			const q = old && old.by === member ? old.q : undefined;
+			await this.ctx.storage.put('music', { ...song, at: now, ...(q ? { q } : {}) });
+			if (old && old.by !== member) {
+				if (old.q) {
+					this.broadcast({ t: 'musicQueue', q: [] });
+				}
+				this.stopListening();
+			}
+		}
 		this.broadcast({ t: 'music', music: song, age: 0 });
+	}
+
+	/** The host's upcoming songs (titles and who added them, never the links), shown to the group. */
+	async setQueue(member, list) {
+		const music = await this.ctx.storage.get('music');
+		if (!music || music.by !== member || !Array.isArray(list)) {
+			return;
+		}
+		const q = [];
+		for (const x of list.slice(0, LIMITS.songQueue)) {
+			if (!x || !Number.isInteger(x.id) || x.id <= 0 || x.id >= 1e9 || !isNum(x.by)) {
+				return;
+			}
+			q.push({ id: x.id, ti: clean(x.ti, LIMITS.queueTitle), by: x.by });
+		}
+		await this.ctx.storage.put('music', { ...music, q });
+		this.broadcast({ t: 'musicQueue', q });
+	}
+
+	/** A member asks the host to queue a song; only the host's connections get it. */
+	async addSong(member, p) {
+		const u = songUrl(p.u);
+		const music = await this.ctx.storage.get('music');
+		if (!u || !music || music.by === member) {
+			return;
+		}
+		this.sendMember(music.by, { t: 'musicAdd', u, ti: clean(p.ti, LIMITS.songTitle), by: member });
+	}
+
+	/** A member asks the host to skip or drop a song they added (the host checks it is theirs). */
+	async skipSong(member, id) {
+		const music = await this.ctx.storage.get('music');
+		if (!Number.isInteger(id) || id <= 0 || id >= 1e9 || !music || music.by === member) {
+			return;
+		}
+		this.sendMember(music.by, { t: 'musicSkip', id, by: member });
 	}
 
 	/** The host stops sharing their song. */
@@ -644,6 +740,71 @@ export class Group extends DurableObject {
 		}
 		await this.ctx.storage.delete('music');
 		this.broadcast({ t: 'music', music: null, by: member });
+		this.stopListening();
+	}
+
+	/** Members listening along to the group's song (kept on their connections, never stored), leaving out `skip`. */
+	listeners(skip) {
+		const list = new Set();
+		for (const ws of this.ctx.getWebSockets()) {
+			const a = ws !== skip && ws.deserializeAttachment();
+			if (a && a.member && a.listening && this.members[a.member]) {
+				list.add(a.member);
+			}
+		}
+		return [...list];
+	}
+
+	/** A member starts or stops listening along; everyone sees who is. */
+	async setListening(ws, att, on) {
+		const music = await this.ctx.storage.get('music');
+		if (!!att.listening === on || (on && (!music || music.by === att.member))) {
+			return;
+		}
+		att.listening = on;
+		ws.serializeAttachment(att);
+		this.broadcast({ t: 'musicListeners', list: this.listeners() });
+	}
+
+	/** Members' statuses (kept on their connections while online, never stored), leaving out `skip`'s. */
+	statuses(skip) {
+		const list = new Map();
+		for (const ws of this.ctx.getWebSockets()) {
+			const a = ws !== skip && ws.deserializeAttachment();
+			if (a && a.member && a.status && this.members[a.member]) {
+				list.set(a.member, a.status);
+			}
+		}
+		return [...list].map(([n, s]) => ({ n, s }));
+	}
+
+	/** A member's status: a short line of their own and the song they listen to (null: none). */
+	setStatus(ws, att, s) {
+		const t = s && typeof s === 'object' ? clean(s.t, LIMITS.status) : '';
+		const l = s && typeof s === 'object' ? clean(s.l, LIMITS.status) : '';
+		const status = t || l ? { t, l } : null;
+		if (JSON.stringify(status) === JSON.stringify(att.status || null)) {
+			return;
+		}
+		att.status = status;
+		ws.serializeAttachment(att);
+		this.broadcast({ t: 'status', n: att.member, s: status });
+	}
+
+	/** Nobody listens along any more (the song stopped, or someone else's took over). */
+	stopListening() {
+		let changed = false;
+		for (const ws of this.ctx.getWebSockets()) {
+			const a = ws.deserializeAttachment();
+			if (a && a.listening) {
+				a.listening = false;
+				ws.serializeAttachment(a);
+				changed = true;
+			}
+		}
+		if (changed) {
+			this.broadcast({ t: 'musicListeners', list: [] });
+		}
 	}
 
 	/** A member leaves; ownership passes on, and an empty group is deleted. */
@@ -815,6 +976,20 @@ export class Group extends DurableObject {
 			ws.send(JSON.stringify(x));
 		} catch (e) {
 			/* gone */
+		}
+	}
+	/** Sends to one member's signed-in connections. */
+	sendMember(n, x) {
+		const s = JSON.stringify(x);
+		for (const ws of this.ctx.getWebSockets()) {
+			const a = ws.deserializeAttachment();
+			if (a && a.member === n) {
+				try {
+					ws.send(s);
+				} catch (e) {
+					/* gone */
+				}
+			}
 		}
 	}
 	/** Sends to every signed-in member. */

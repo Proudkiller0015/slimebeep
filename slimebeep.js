@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.2.0';
+	const VERSION = '3.2.1';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -67,6 +67,10 @@
 		musicPos: null,
 		/** Version and missing game parts already warned about by gameCheck. */
 		gameWarned: '',
+		/** Your status: a short line of your own (like "king of the swamp") that SlimeBeep friends and your groups see. */
+		status: '',
+		/** Whether your status also says what you listen to in the music player. */
+		showListening: true,
 	};
 	/** @typedef {typeof DEFAULTS} Options */
 	/** Release notes, shown as cards and in update notes. */
@@ -1245,6 +1249,14 @@
 		.sb-mu-row { display: flex; align-items: center; border-radius: 8px; }
 		.sb-mu-row.on { background: #ffe6f3; }
 		.sb-mu-song { flex: 1; min-width: 0; border: 0; background: none; color: inherit; padding: 4px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+		.sb-status { font-size: 11px; font-style: italic; color: #b0628f; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+		.sb-status-card { width: 280px; align-items: stretch; }
+		.sb-status-card .sb-search { margin: 0; }
+		.sb-status-card label { display: flex; align-items: center; gap: 6px; }
+		.sb-mu-ears { display: flex; flex-wrap: wrap; gap: 2px; margin-top: 3px; }
+		.sb-mu-ears:empty { display: none; }
+		.sb-mu-ears .sb-av { width: 16px; height: 16px; font-size: 7px; border: 0; }
+		.sb-mu-by { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; opacity: .7; padding-right: 4px; }
 		.sb-mu-del { flex: none; border: 0; background: none; color: #c08aaa; width: 24px; height: 24px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
 		#sb-mu .sb-mu-share { width: 100%; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 		.sb-mu-share.on { background: #ff4fa3; color: #fff; }
@@ -1663,7 +1675,7 @@
 		);
 		$('sb-me').addEventListener('click', () => {
 			if (loggedIn()) {
-				openSettings();
+				openStatus();
 			}
 		});
 		// Keys typed in the panel stay out of the game's key handlers.
@@ -2127,6 +2139,26 @@
 	}
 	/** Member number -> when we last answered their ping. */
 	const ponged = new Map();
+	/**
+	 * A status as SlimeBeep friends and groups see it.
+	 * @typedef {object} Status
+	 * @property {string} t a short line of their own
+	 * @property {string} l the song they listen to; '' for none
+	 */
+	/** Longest part of a status. */
+	const STATUS_MAX = 60;
+	/** Ms a changed status waits before it goes out (songs skipped in a row, typing). */
+	const STATUS_SETTLE = 5000;
+	/** Most SlimeBeep friends told at once that your status changed. */
+	const STATUS_FRIENDS = 40;
+	/** @type {Map<number, Status>} SlimeBeep friends' and group members' statuses, by member number (this visit only). */
+	const statuses = new Map();
+	/** Your status as last sent, so a change goes out once. */
+	let statusSent = JSON.stringify({ t: '', l: '' });
+	/** Date.now() when your status changed, waiting STATUS_SETTLE to go out; 0 when nothing waits. */
+	let statusChanged = 0;
+	/** Member number -> when we last asked them for their status (with a ping). */
+	const statusAsked = new Map();
 
 	/** Member number -> when we last asked them for their picture. */
 	const asked = new Map();
@@ -2149,6 +2181,11 @@
 	 * @property {{ code: string, name: string }} [ginv] a group invite
 	 * @property {MusicState} [music] the song they share with you (see takeJam)
 	 * @property {1} [musicEnd] they stopped sharing it
+	 * @property {QueueItem[]} [mq] the songs coming after the one they share
+	 * @property {{ u: string, ti: string }} [madd] asks you, the host, to queue a song
+	 * @property {number} [mskip] asks you, the host, to skip the song with this number (one they added)
+	 * @property {0 | 1} [mlisten] they started (1) or stopped (0) listening along to the song you share
+	 * @property {Status | 0} [st] their status (0: none); every hidden beep but picture pieces has it
 	 */
 	/**
 	 * Picture fields of a hidden beep: `pv` (their picture version; 0 = none) makes us ask for a new one,
@@ -2514,13 +2551,14 @@
 		if (!loggedIn()) {
 			me.title = '';
 		} else {
-			me.title = myPfp() ? 'Your profile picture' : 'Choose a profile picture';
+			me.title = opts.status ? `Your status: ${opts.status}` : 'Set your status';
 		}
 	}
 
 	/**
 	 * A hidden beep (BeepType PROTO) from a friend: JSON with `sb: 1` and any of `kf` (their key start),
-	 * picture fields (pictureNews), `ping`/`pong` (SlimeBeep check), `ginv` (group invite) or `music`/`musicEnd` (a shared song).
+	 * picture fields (pictureNews), `ping`/`pong` (SlimeBeep check), `ginv` (group invite), `music`/`musicEnd`/`mq` (a shared
+	 * song and what comes next) or `madd`/`mskip`/`mlisten` (a listener's songs, and that they listen).
 	 * Ignored from non-friends; the sender's member number comes from the game server.
 	 * @param {ServerBeep} d
 	 */
@@ -2559,6 +2597,9 @@
 			saveGC();
 		}
 		pictureNews(from, p);
+		if (p.st !== undefined) {
+			takeStatus(from, p.st);
+		}
 		if (p.ping === 1) {
 			answerPing(from);
 		}
@@ -2570,6 +2611,18 @@
 		}
 		if (p.musicEnd === 1) {
 			takeJam(`n:${from}`, from, nameOf(from), null);
+		}
+		if (p.mq) {
+			takeQueue(`n:${from}`, from, p.mq);
+		}
+		if (p.madd && typeof p.madd === 'object') {
+			takeAdd(`n:${from}`, from, p.madd.u, p.madd.ti);
+		}
+		if (p.mskip) {
+			takeSkip(`n:${from}`, from, p.mskip);
+		}
+		if ((p.mlisten === 0 || p.mlisten === 1) && sharing === `n:${from}`) {
+			takeEars(`n:${from}`, p.mlisten ? [from] : []);
 		}
 	}
 	/**
@@ -2594,6 +2647,138 @@
 		}
 		ponged.set(n, Date.now());
 		sendHidden(n, { sb: 1, pong: 1 });
+	}
+	/** Your status now: your own line, and the song playing unless you hide it. */
+	const myStatus = () => {
+		const m = music;
+		const l = opts.showListening && m && m.playing && m.started ? m.track.title.slice(0, STATUS_MAX) : '';
+		return { t: String(opts.status || '').slice(0, STATUS_MAX), l };
+	};
+	/**
+	 * Someone's status, from a hidden beep or a group's relay.
+	 * @param {number} n
+	 * @param {unknown} s a Status; 0 or null for none
+	 */
+	function takeStatus(n, s) {
+		const x = /** @type {Partial<Status> | null} */ (s && typeof s === 'object' ? s : null);
+		const t = x ? clean(x.t, STATUS_MAX) : '';
+		const l = x ? clean(x.l, STATUS_MAX) : '';
+		const before = JSON.stringify(statuses.get(n) || null);
+		if (t || l) {
+			statuses.set(n, { t, l });
+		} else {
+			statuses.delete(n);
+		}
+		if (JSON.stringify(statuses.get(n) || null) !== before && isOpen()) {
+			render(true);
+		}
+	}
+	/** Every second: a changed status goes out once it has settled, to your groups and online SlimeBeep friends. */
+	function statusTick() {
+		const now = JSON.stringify(myStatus());
+		if (now === statusSent) {
+			statusChanged = 0;
+			return;
+		}
+		if (!statusChanged) {
+			statusChanged = Date.now();
+		}
+		if (Date.now() - statusChanged < STATUS_SETTLE) {
+			return;
+		}
+		statusSent = now;
+		statusChanged = 0;
+		const st = myStatus();
+		for (const id of Object.keys(groups)) {
+			relaySend(id, { t: 'status', s: st.t || st.l ? st : null });
+		}
+		// Every hidden beep carries the status: a bare one is enough.
+		for (const f of friends.filter((x) => peers.has(x.MemberNumber)).slice(0, STATUS_FRIENDS)) {
+			sendHidden(f.MemberNumber, { sb: 1 });
+		}
+	}
+	/**
+	 * Asks a SlimeBeep friend for their status (their pong carries it), at most every 5 minutes.
+	 * @param {number} n
+	 */
+	function askStatus(n) {
+		if (!peers.has(n) || statuses.has(n) || Date.now() - (statusAsked.get(n) || 0) < 300000) {
+			return;
+		}
+		statusAsked.set(n, Date.now());
+		sendHidden(n, { sb: 1, ping: 1 });
+	}
+	/**
+	 * Someone's status as a line under their name; nothing when they have none.
+	 * @param {number} n
+	 * @returns {HtmlValue}
+	 */
+	function statusLine(n) {
+		const s = statuses.get(n);
+		if (!s) {
+			return '';
+		}
+		const text = [s.t, s.l && `🎵 ${s.l}`].filter(Boolean).join(' · ');
+		return html`<div class="sb-status" title="${text}">${text}</div>`;
+	}
+	/** The box for your status (your picture at the top opens it). */
+	function openStatus() {
+		if ($('sb-ask')) {
+			return;
+		}
+		const box = document.createElement('div');
+		box.id = 'sb-ask';
+		setHtml(
+			box,
+			html`<div class="sb-crop-card sb-status-card">
+			<b>Set your status</b>
+			<input class="sb-search" id="sb-status-text" maxlength="${STATUS_MAX}" placeholder="What's up? (like king of the swamp)" aria-label="Your status">
+			<label class="sb-hint"><input type="checkbox" id="sb-status-music"> Show what I'm listening to</label>
+			<span class="sb-hint" style="text-align:center">SlimeBeep friends and your group chats see it.</span>
+			<div class="sb-crop-btns" style="flex-wrap:wrap;justify-content:center"><button class="sb-pill" data-act="clear">Clear</button><button class="sb-pill" data-act="pic">🖼 Picture and settings</button><button class="sb-go" data-act="save">Save</button></div>
+		</div>`,
+		);
+		const text = /** @type {HTMLInputElement} */ (box.querySelector('#sb-status-text'));
+		const showSong = /** @type {HTMLInputElement} */ (box.querySelector('#sb-status-music'));
+		text.value = opts.status;
+		showSong.checked = opts.showListening;
+		const close = () => {
+			box.remove();
+			document.removeEventListener('keydown', onKey, true);
+		};
+		const save = () => {
+			setOpt('status', clean(text.value, STATUS_MAX));
+			setOpt('showListening', showSong.checked);
+			close();
+			notify(opts.status ? `💬 Status set: ${opts.status}` : '💬 Status cleared');
+		};
+		/** @param {KeyboardEvent} e */
+		const onKey = (e) => {
+			if (e.key === 'Escape') {
+				e.stopPropagation();
+				close();
+			} else if (e.key === 'Enter' && e.target === text) {
+				e.preventDefault();
+				save();
+			}
+		};
+		box.addEventListener('click', (e) => {
+			const act = targetOf(e).dataset.act;
+			if (targetOf(e) === box) {
+				close();
+			} else if (act === 'clear') {
+				text.value = '';
+				save();
+			} else if (act === 'save') {
+				save();
+			} else if (act === 'pic') {
+				close();
+				openSettings();
+			}
+		});
+		document.addEventListener('keydown', onKey, true);
+		$('sb-panel').appendChild(box);
+		text.focus();
 	}
 	/**
 	 * Keeps a friend's group invite in `invitations` and shows a card; nothing is joined automatically.
@@ -2646,22 +2831,28 @@
 	/**
 	 * A message from the relay (JSON). Which fields are set depends on `t`; see relay/src/index.js.
 	 * @typedef {object} RelayMessage
-	 * @property {string} t 'hello', 'welcome', 'roster', 'presence', 'msg', 'history', 'keys', 'pic', 'gpic', 'invite', 'music', 'gone', 'error', 'ok', 'mail'
+	 * @property {string} t 'hello', 'welcome', 'roster', 'presence', 'msg', 'history', 'keys', 'pic', 'gpic', 'invite', 'music',
+	 * 'musicQueue', 'musicAdd', 'musicSkip', 'musicListeners', 'status', 'statuses', 'pong', 'gone', 'error', 'ok', 'mail'
 	 * @property {string} [nonce] hello: what to sign
 	 * @property {RelayRoster} [roster] welcome, roster
 	 * @property {number[]} [online] presence
 	 * @property {RelayGroupMessage} [m] msg
 	 * @property {RelayGroupMessage[]} [msgs] history
-	 * @property {number} [n] pic: whose picture
+	 * @property {number} [n] pic: whose picture; status: whose status
 	 * @property {string | null} [data] pic, gpic: the picture, or null when removed
 	 * @property {string} [code] invite: the new secret
 	 * @property {string} [why] error, gone
 	 * @property {boolean} [fatal] error: the connection is closed
 	 * @property {string} [ref] ok, error: the id sent with the request
-	 * @property {MailItem[]} [list] mail
+	 * @property {MailItem[]} [list] mail (musicListeners: who listens along, member numbers; statuses: { n, s } each)
+	 * @property {unknown} [s] status: the member's status (null: none)
 	 * @property {(MusicState & { by: number, name: string }) | null} [music] music: the song shared in the group and its host; null when they stopped
-	 * @property {number} [by] music: who stopped sharing (with music null)
+	 * @property {number} [by] music: who stopped sharing (with music null); musicAdd, musicSkip: who asks
 	 * @property {number} [age] music: ms since it was set
+	 * @property {unknown} [q] musicQueue: the songs coming after the shared one
+	 * @property {string} [u] musicAdd: the link of the song a member asks you, the host, to queue
+	 * @property {string} [ti] musicAdd: its title
+	 * @property {number} [id] musicSkip: the number of the song a member asks you, the host, to skip
 	 * @property {number} [epoch] keys: the group key's current epoch (0: none yet)
 	 * @property {boolean} [rekey] keys: a member left, so a new key is needed
 	 * @property {{ e: number, w: { to: number, by: number, ek: string, iv: string, ct: string, sig: string } }[]} [mine] keys: the wraps sent to you
@@ -2712,6 +2903,7 @@
 	 * @property {(why: string) => void} [onFail] called if the sign-in fails
 	 * @property {boolean} [dead] closed on purpose (no reconnect)
 	 * @property {number} [pinged] last keep-alive
+	 * @property {number} [rtt] ms a ping took to come back, averaged
 	 */
 	/** @type {Record<string, Conn>} One relay connection per group (reconnects with backoff, up to 5 min), by group id. */
 	const conns = {};
@@ -3651,6 +3843,10 @@
 				g.picv = pic ? pic.v : undefined;
 				saveGC();
 			}
+			const st = myStatus();
+			if (st.t || st.l) {
+				ws.send(JSON.stringify({ t: 'status', s: st }));
+			}
 			const done = c.onWelcome;
 			c.create = undefined;
 			c.invite = undefined;
@@ -3722,7 +3918,43 @@
 			if (p.music === null && isNum(p.by)) {
 				takeJam(`g:${gid}`, p.by, '', null);
 			} else if (p.music && isNum(p.music.by) && p.music.by !== me) {
-				takeJam(`g:${gid}`, p.music.by, p.music.name, p.music, p.age);
+				takeJam(`g:${gid}`, p.music.by, p.music.name, p.music, p.age, relayLag(gid));
+			}
+			return;
+		}
+		if (p.t === 'status' && isNum(p.n) && p.n !== me) {
+			takeStatus(p.n, p.s);
+			return;
+		}
+		if (p.t === 'statuses' && Array.isArray(p.list)) {
+			for (const x of /** @type {{ n?: unknown, s?: unknown }[]} */ (/** @type {unknown} */ (p.list)).slice(0, LIMITS.members)) {
+				if (x && isNum(x.n) && x.n !== me) {
+					takeStatus(/** @type {number} */ (x.n), x.s);
+				}
+			}
+			return;
+		}
+		if (p.t === 'musicListeners') {
+			takeEars(`g:${gid}`, /** @type {unknown} */ (p.list));
+			return;
+		}
+		if (p.t === 'musicQueue') {
+			const j = jams.get(`g:${gid}`);
+			takeQueue(`g:${gid}`, j ? j.host : 0, p.q);
+			return;
+		}
+		if ((p.t === 'musicAdd' || p.t === 'musicSkip') && isNum(p.by)) {
+			if (p.t === 'musicAdd') {
+				takeAdd(`g:${gid}`, p.by, p.u, p.ti);
+			} else {
+				takeSkip(`g:${gid}`, p.by, p.id);
+			}
+			return;
+		}
+		if (p.t === 'pong') {
+			if (c.pinged) {
+				const rtt = Math.min(2000, Date.now() - c.pinged);
+				c.rtt = c.rtt ? c.rtt * 0.7 + rtt * 0.3 : rtt;
 			}
 			return;
 		}
@@ -4294,9 +4526,10 @@
 			checkMail();
 		}
 		mailWaiting();
-		// '{"t":"ping"}' is answered by the relay's auto-response.
-		for (const c of Object.values(conns)) {
-			if (c.ready && c.ws && c.ws.readyState === 1 && Date.now() - (c.pinged || 0) > 240000) {
+		// '{"t":"ping"}' is answered by the relay's auto-response. In a group sharing a song it also times the way there.
+		for (const [id, c] of Object.entries(conns)) {
+			const every = sharing === `g:${id}` || following === `g:${id}` ? 15000 : 240000;
+			if (c.ready && c.ws && c.ws.readyState === 1 && Date.now() - (c.pinged || 0) > every) {
 				c.pinged = Date.now();
 				c.ws.send('{"t":"ping"}');
 			}
@@ -4315,15 +4548,25 @@
 			: html` <span title="Not the key their own SlimeBeep sent you: this may not really be them">⚠</span>`;
 	}
 
-	/** @type {[number, string][]} Hidden beeps waiting to go out, sent 250 ms apart by drain: [member number, message]. */
+	/** @type {[number, HiddenPayload | (() => HiddenPayload | null)][]} Hidden beeps waiting to go out, sent 250 ms apart by drain. */
 	const outbox = [];
 	/**
 	 * Queues a hidden beep to a friend; every one also carries your picture version (`pv`), key start (`kf`)
 	 * and, except picture pieces, your encryption key (`ek`).
 	 * @param {number} n
-	 * @param {HiddenPayload} payload
+	 * @param {HiddenPayload | (() => HiddenPayload | null)} payload or a function that makes it when it goes out (null: nothing to send)
 	 */
 	function sendHidden(n, payload) {
+		outbox.push([n, payload]);
+		if (outbox.length === 1) {
+			drain();
+		}
+	}
+	/**
+	 * A hidden beep's message, with your picture version and keys.
+	 * @param {HiddenPayload} payload
+	 */
+	function hiddenMessage(payload) {
 		const pic = myPfp();
 		const k = myKey && myKey.owner === Player.MemberNumber ? myKey : null;
 		/** @type {{ kf?: string, ek?: string }} */
@@ -4334,19 +4577,25 @@
 				keys.ek = k.ek;
 			}
 		}
-		outbox.push([n, JSON.stringify({ ...payload, pv: pic ? pic.v : 0, ...keys })]);
-		if (outbox.length === 1) {
-			drain();
-		}
+		const st = myStatus();
+		// Picture pieces fill the beep already.
+		const status = payload.pf ? {} : { st: st.t || st.l ? st : 0 };
+		return JSON.stringify({ ...payload, pv: pic ? pic.v : 0, ...keys, ...status });
 	}
 	/** Sends the next hidden beep in `outbox`. */
 	function drain() {
 		if (!outbox.length) {
 			return;
 		}
-		const [n, msg] = outbox[0];
+		const [n, payload] = outbox[0];
+		const p = typeof payload === 'function' ? payload() : payload;
+		if (!p) {
+			outbox.shift();
+			drain();
+			return;
+		}
 		try {
-			ServerSend('AccountBeep', { MemberNumber: n, BeepType: PROTO, IsSecret: true, Message: msg });
+			ServerSend('AccountBeep', { MemberNumber: n, BeepType: PROTO, IsSecret: true, Message: hiddenMessage(p) });
 		} catch (e) {
 			warn(e);
 		}
@@ -4627,7 +4876,8 @@
 			place();
 		};
 		head.addEventListener('pointerdown', (e) => {
-			if (e.button === 0 && !targetOf(e).closest('button')) {
+			// Your picture is clicked, not dragged (a drag would take its click).
+			if (e.button === 0 && !targetOf(e).closest('button, #sb-me')) {
 				begin(e, 'move', head);
 			}
 		});
@@ -4665,7 +4915,11 @@
 			gameCheck();
 			if (music || following) {
 				keepInTime();
+				shareBeat();
 				drawMusic();
+			}
+			if (loggedIn() && histOwner === Player.MemberNumber) {
+				statusTick();
 			}
 			if (waiting.length && loggedIn() && Date.now() - (friendsAskedAt || 0) > 60000) {
 				friendsAskedAt = Date.now();
@@ -5573,7 +5827,7 @@
 				}
 				const dot = on(n) ? html`<span class="sb-on" title="Online"></span>` : html`<span class="sb-off" title="Offline"></span>`;
 				return html`<div class="sb-row" style="cursor:default">${avatar(n, memberName(g, n))}
-					<div class="sb-main"><div class="sb-name">${dot}${memberName(g, n)}${keyMark(m)}${peers.has(n) && ' 🫧'}</div><div class="sb-sub">${role} · #${n}${!on(n) && ' · offline'}</div></div>
+					<div class="sb-main"><div class="sb-name">${dot}${memberName(g, n)}${keyMark(m)}${peers.has(n) && ' 🫧'}</div><div class="sb-sub">${role} · #${n}${!on(n) && ' · offline'}</div>${on(n) && statusLine(n)}</div>
 					<div class="sb-side" style="display:flex;gap:3px">${acts}</div></div>`;
 			});
 		const invite = canInvite(g, me) && g.members.length < LIMITS.members;
@@ -5902,7 +6156,7 @@
 			.map(
 				(f) => html`<div class="sb-row" data-open="${f.MemberNumber}">${avatar(f.MemberNumber, f.MemberName)}
 				<div class="sb-main"><div class="sb-name"><span class="sb-on"></span>${f.MemberName}${{ Lover: ' 💞', Submissive: ' 🎀' }[f.Type || '']}${peers.has(f.MemberNumber) && html` <span title="Has SlimeBeep">🫧</span>`}</div>
-				<div class="sb-sub">${where(f)}${!!f.ChatRoomMemberCount && ` · ${f.ChatRoomMemberCount}/${f.ChatRoomLimit || '?'}`}</div></div>
+				<div class="sb-sub">${where(f)}${!!f.ChatRoomMemberCount && ` · ${f.ChatRoomMemberCount}/${f.ChatRoomLimit || '?'}`}</div>${statusLine(f.MemberNumber)}</div>
 				<div class="sb-side">#${f.MemberNumber}</div></div>`,
 			);
 		const onlineNums = new Set(friends.map((f) => f.MemberNumber));
@@ -6028,6 +6282,9 @@
 			markRead(b);
 		}
 		const f = friends.find((x) => x.MemberNumber === n);
+		if (f) {
+			askStatus(n);
+		}
 		const before = msgsPlace();
 		const draft = $input('sb-text') ? $input('sb-text').value : '';
 		const room = myRoom();
@@ -6079,7 +6336,7 @@
 			html`
 			<div class="sb-thead"><button id="sb-back" title="Back">${ICONS.back}</button>${avatar(n, nameOf(n))}
 				<div class="sb-main"><div class="sb-name">${nameOf(n)} <small style="font-weight:normal;color:#c08aaa">#${n}</small></div>
-				<div class="sb-sub">${f && html`<span class="sb-on"></span>`}${where(f)}</div></div>${muteButton(`n:${n}`)}</div>
+				<div class="sb-sub">${f && html`<span class="sb-on"></span>`}${where(f)}</div>${!!f && statusLine(n)}</div>${muteButton(`n:${n}`)}</div>
 			${jamLine(`n:${n}`)}
 			<div class="sb-msgwrap"><div class="sb-msgs" id="sb-msgs">${bubbles}${waitingBubbles}</div>
 				<button class="sb-pill sb-jump" id="sb-jump"></button></div>
@@ -6235,8 +6492,20 @@
 	const SOUND_FILE = /^(.*)\.(?:mp3|ogg|opus|m4a|aac|flac|wav)$/i;
 	/** Most songs in the queue. */
 	const QUEUE_MAX = 50;
-	/** Seconds a listener may drift from the host before the song is moved back in time. */
-	const DRIFT = 3;
+	/** Seconds a listener's YouTube song may drift from the host's (averaged) before it is moved. */
+	const YT_DRIFT = 0.35;
+	/** Seconds off at which any song is moved at once (the host jumped, or a player stalled). */
+	const JUMP_DRIFT = 2;
+	/** Ms a moved song is left to settle before it is measured again. */
+	const SYNC_SETTLE = 3000;
+	/** Ms between a host's reminders of where the song is, in group chats (g) and chats with a friend (n). */
+	const SHARE_BEAT = { g: 30000, n: 60000 };
+	/** Most songs one listener can have waiting in the host's queue. */
+	const ADDS_MAX = 5;
+	/** Most upcoming songs a host shows the listeners. */
+	const UPCOMING_MAX = 10;
+	/** Longest title of an upcoming song shown to the listeners. */
+	const UPCOMING_TITLE = 40;
 	/** How long a song shared in a chat stays offered without news from its host, in ms. */
 	const JAM_MAX_AGE = 12 * 36e5;
 	/**
@@ -6245,6 +6514,8 @@
 	 * @property {string} url the link (a YouTube link is rewritten to its watch address)
 	 * @property {string} yt the YouTube video id; '' for a sound file
 	 * @property {string} title the file's name or "YouTube" until the player tells the real title
+	 * @property {number} [id] its number in the host's queue (listeners name it by this)
+	 * @property {number} [by] who added it to the queue
 	 */
 	/**
 	 * The song a link plays, if it is one.
@@ -6299,6 +6570,15 @@
 	 * @property {number} p seconds into the song when sent
 	 * @property {boolean} pl playing (false: paused)
 	 * @property {number} d its length in seconds; 0 if not known
+	 * @property {number} [i] its number in the host's queue
+	 * @property {number} [b] who added it to the queue
+	 */
+	/**
+	 * A song waiting in the host's queue, as the listeners see it.
+	 * @typedef {object} QueueItem
+	 * @property {number} id its number in the host's queue
+	 * @property {string} ti its title
+	 * @property {number} by who added it
 	 */
 	/**
 	 * A song shared in a chat, as last heard from its host.
@@ -6324,6 +6604,12 @@
 	 * @property {number} at Date.now() when `pos` was read
 	 * @property {number} dur its length in seconds; 0 until known
 	 * @property {HTMLIFrameElement | HTMLAudioElement} el the player
+	 * @property {boolean} ready the player takes commands
+	 * @property {boolean} started it really started playing (until then its time stands still)
+	 * @property {number} stall Date.now() when it stopped to load more; 0 while it plays
+	 * @property {number} fixedAt Date.now() when a listener's player was last moved to the host's time
+	 * @property {number} drift seconds ahead of the host (negative: behind), averaged
+	 * @property {boolean} checkLead the next measurement tells how well the last move landed
 	 */
 	/** @type {Music | null} */
 	let music = null;
@@ -6331,6 +6617,16 @@
 	let sharing = '';
 	/** The chat whose shared song you listen along to; '' when you don't. */
 	let following = '';
+	/** @type {Map<string, QueueItem[]>} The songs coming after the one shared in a chat, by chat key. */
+	const jamQueues = new Map();
+	/** @type {Map<string, number[]>} Who listens along to the song shared in a chat, by chat key. */
+	const jamEars = new Map();
+	/** Seconds a listener's YouTube song is moved past the host's time, for the time it takes to load there (learnt). */
+	let seekLead = 0.3;
+	/** Date.now() when you last told the chat you share with where the song is. */
+	let sharedAt = 0;
+	/** The number given to the last song added to your queue. */
+	let trackIds = 0;
 	/** Until when the seek bar is left alone because it is being dragged. */
 	let seekingUntil = 0;
 	/** The queue as last drawn, so it is only rebuilt when it changed. */
@@ -6341,7 +6637,7 @@
 		if (!music) {
 			return 0;
 		}
-		const p = music.playing ? music.pos + (Date.now() - music.at) / 1000 : music.pos;
+		const p = music.playing && music.started && !music.stall ? music.pos + (Date.now() - music.at) / 1000 : music.pos;
 		return Math.max(0, music.dur ? Math.min(p, music.dur) : p);
 	};
 	/**
@@ -6366,6 +6662,27 @@
 	const jamPos = (j) => {
 		const p = j.state.pl ? j.state.p + (Date.now() - j.at) / 1000 : j.state.p;
 		return j.state.d ? Math.min(p, j.state.d) : p;
+	};
+	/**
+	 * Who added a song, for the queue: "you", or their name.
+	 * @param {string} chat the chat the song is shared in
+	 * @param {number} n
+	 */
+	const adderName = (chat, n) => {
+		if (n === Player.MemberNumber) {
+			return 'you';
+		}
+		const g = chat.startsWith('g:') ? groups[chat.slice(2)] : undefined;
+		const m = g && g.members.find((x) => x.n === n);
+		return m ? m.name : nameOf(n);
+	};
+	/**
+	 * Half the time a message takes to the group's relay and back, in ms (0 until measured).
+	 * @param {string} gid
+	 */
+	const relayLag = (gid) => {
+		const c = conns[gid];
+		return c && c.rtt ? c.rtt / 2 : 0;
 	};
 	/**
 	 * Whether a shared song is still worth offering: not over long ago, and heard from in the last 12 hours.
@@ -6439,13 +6756,14 @@
 		}
 		if (d.event === 'onReady') {
 			toYouTube(el, { event: 'listening' });
-			applyVolume();
+			playerReady();
 			return;
 		}
 		const info = d.info;
 		if (!info || typeof info !== 'object') {
 			return;
 		}
+		playerReady();
 		if (typeof info.duration === 'number' && info.duration > 0) {
 			music.dur = info.duration;
 		}
@@ -6458,7 +6776,11 @@
 		if (data && typeof data.author === 'string') {
 			music.author = clean(data.author, LIMITS.name);
 		}
-		if (typeof info.currentTime === 'number') {
+		// 1: playing, 3: loading more. Before it first plays, its time is where it will start.
+		if (info.playerState === 1 || info.playerState === 3) {
+			playerRuns(info.playerState === 1);
+		}
+		if (typeof info.currentTime === 'number' && music.started) {
 			setPos(info.currentTime);
 		}
 		// 0: the video ended.
@@ -6495,7 +6817,9 @@
 					return;
 				}
 				music.dur = isFinite(a.duration) ? a.duration : 0;
-				a.currentTime = musicPos();
+				music.ready = true;
+				const j = following ? jams.get(following) : undefined;
+				a.currentTime = j ? jamPos(j) : musicPos();
 				if (music.playing) {
 					a.play().catch(() => setPos(musicPos(), false));
 				}
@@ -6504,6 +6828,16 @@
 			a.addEventListener('timeupdate', () => {
 				if (music && music.el === a) {
 					setPos(a.currentTime);
+				}
+			});
+			a.addEventListener('playing', () => {
+				if (music && music.el === a) {
+					playerRuns(true);
+				}
+			});
+			a.addEventListener('waiting', () => {
+				if (music && music.el === a) {
+					playerRuns(false);
 				}
 			});
 			a.addEventListener('ended', () => {
@@ -6520,7 +6854,21 @@
 			});
 			el = a;
 		}
-		music = { track, author: '', playing, pos, at: Date.now(), dur: 0, el };
+		music = {
+			track,
+			author: '',
+			playing,
+			pos,
+			at: Date.now(),
+			dur: 0,
+			el,
+			ready: false,
+			started: false,
+			stall: 0,
+			fixedAt: 0,
+			drift: 0,
+			checkLead: false,
+		};
 		$('sb-mu-art').replaceChildren(el);
 		applyVolume();
 		openMusic(true);
@@ -6534,6 +6882,49 @@
 			music.el.remove();
 		}
 		music = null;
+	}
+	/** The YouTube player takes commands now: it gets the volume, and plays or pauses as `music` says. */
+	function playerReady() {
+		if (!music || music.ready) {
+			return;
+		}
+		music.ready = true;
+		applyVolume();
+		applyMusic();
+	}
+	/**
+	 * The player really plays (`runs`) or stopped to load more. Its time stands still while it loads. Once
+	 * it starts, a listener's player moves to the host's time, and a host tells the chat where it really is.
+	 * @param {boolean} runs
+	 */
+	function playerRuns(runs) {
+		const m = music;
+		if (!m) {
+			return;
+		}
+		if (!runs) {
+			if (m.started && !m.stall) {
+				setPos(musicPos());
+				m.stall = Date.now();
+			}
+			return;
+		}
+		if (m.started && !m.stall) {
+			return;
+		}
+		const first = !m.started;
+		const waited = m.stall ? Date.now() - m.stall : 0;
+		m.started = true;
+		m.stall = 0;
+		// Its time runs again from now.
+		setPos(m.pos);
+		const j = following ? jams.get(following) : undefined;
+		if (j && first && j.state.pl && Math.abs(musicPos() - jamPos(j)) > 0.15) {
+			moveToHost(j);
+		}
+		if (first || waited > 500) {
+			shareState();
+		}
 	}
 	/**
 	 * Makes the player match `music`: playing or paused, and the time. A sound file is moved when it is
@@ -6556,6 +6947,10 @@
 			} else if (!m.playing && !a.paused) {
 				a.pause();
 			}
+			return;
+		}
+		// Until then the embed starts as it was loaded (start=, autoplay=).
+		if (!m.ready) {
 			return;
 		}
 		if (seek) {
@@ -6589,19 +6984,39 @@
 	}
 
 	/**
-	 * Adds a song to your queue; it plays now when `now` is set or nothing is playing. Listening along
-	 * is left first: your own songs never go to someone else's chat.
+	 * Puts a song at the end of your queue. A full queue makes room by dropping its first song, unless that one is playing.
+	 * @param {Track} track
+	 * @param {number} by who added it
+	 * @returns {boolean} false when the queue is full
+	 */
+	function pushTrack(track, by) {
+		if (queue.length >= QUEUE_MAX) {
+			if (queueAt === 0) {
+				return false;
+			}
+			queue = queue.slice(1);
+			if (queueAt > 0) {
+				queueAt -= 1;
+			}
+		}
+		trackIds += 1;
+		queue = [...queue, { ...track, id: trackIds, by }];
+		return true;
+	}
+	/**
+	 * Adds a song to your queue; it plays now when `now` is set or nothing is playing.
 	 * @param {Track} track
 	 * @param {boolean} now
 	 */
 	function addSong(track, now) {
-		if (following) {
-			leaveJam(true);
+		if (!pushTrack(track, Player.MemberNumber)) {
+			notify('⚠ Your queue is full');
+			return;
 		}
-		queue = [...queue, track].slice(-QUEUE_MAX);
 		if (now || !music) {
 			playQueued(queue.length - 1);
 		} else {
+			shareQueue();
 			drawMusic();
 		}
 	}
@@ -6616,6 +7031,7 @@
 		queueAt = i;
 		loadSong(queue[i]);
 		shareState();
+		shareQueue();
 		drawMusic();
 	}
 	/**
@@ -6634,6 +7050,7 @@
 		} else if (i < queueAt) {
 			queueAt -= 1;
 		}
+		shareQueue();
 		drawMusic();
 	}
 
@@ -6645,20 +7062,115 @@
 		music && {
 			u: music.track.url,
 			ti: music.track.title,
-			p: Math.round(musicPos() * 10) / 10,
+			p: Math.round(musicPos() * 100) / 100,
 			pl: music.playing,
 			d: Math.round(music.dur),
+			...(music.track.id ? { i: music.track.id } : {}),
+			b: music.track.by || Player.MemberNumber,
 		};
-	/** Tells the chat you share with what is playing and where (after every change you make). */
+	/** Tells the chat you share with what is playing and where (after every change, and now and then). */
 	function shareState() {
 		const state = stateNow();
 		if (!sharing || !state) {
 			return;
 		}
+		sharedAt = Date.now();
 		if (sharing.startsWith('g:')) {
-			relaySend(sharing.slice(2), { t: 'music', ...state });
+			const gid = sharing.slice(2);
+			// Where it will be when the relay passes it on.
+			const p = state.pl ? Math.round((state.p + relayLag(gid) / 1000) * 100) / 100 : state.p;
+			relaySend(gid, { t: 'music', ...state, p });
 		} else {
-			sendHidden(Number(sharing.slice(2)), { sb: 1, music: state });
+			const chat = sharing;
+			// Made when it goes out, since other hidden beeps may be waiting before it.
+			sendHidden(Number(chat.slice(2)), () => {
+				const now = sharing === chat ? stateNow() : null;
+				return now && { sb: 1, music: now };
+			});
+		}
+	}
+	/** Tells the chat you share with which songs come next and who added them (titles only). */
+	function shareQueue() {
+		if (!sharing) {
+			return;
+		}
+		/** @type {QueueItem[]} */
+		const q = queue
+			.slice(queueAt + 1, queueAt + 1 + UPCOMING_MAX)
+			.map((t) => ({ id: t.id || 0, ti: t.title.slice(0, UPCOMING_TITLE), by: t.by || Player.MemberNumber }));
+		if (sharing.startsWith('g:')) {
+			relaySend(sharing.slice(2), { t: 'musicQueue', q });
+			return;
+		}
+		const chat = sharing;
+		sendHidden(Number(chat.slice(2)), () => {
+			if (sharing !== chat) {
+				return null;
+			}
+			// A hidden beep holds 1000 characters, keys included.
+			while (q.length && JSON.stringify(q).length > 600) {
+				q.pop();
+			}
+			return { sb: 1, mq: q };
+		});
+	}
+	/** While you share a playing song, the chat is reminded now and then where it is (in case a message got lost). */
+	function shareBeat() {
+		const m = music;
+		if (sharing && m && m.playing && m.started && !m.stall && Date.now() - sharedAt > SHARE_BEAT[sharing.startsWith('g:') ? 'g' : 'n']) {
+			shareState();
+		}
+	}
+	/**
+	 * A listener asks you, the host, to queue a song: it goes at the end of your queue, and plays now if
+	 * your music had come to its end.
+	 * @param {string} chat where they listen along
+	 * @param {number} by
+	 * @param {unknown} u the link
+	 * @param {unknown} ti its title
+	 */
+	function takeAdd(chat, by, u, ti) {
+		const track = typeof u === 'string' && u.length <= 300 ? trackOf(u) : null;
+		if (sharing !== chat || !track || by === Player.MemberNumber) {
+			return;
+		}
+		if (queue.slice(queueAt + 1).filter((t) => t.by === by).length >= ADDS_MAX) {
+			return;
+		}
+		const title = clean(ti, TITLE_MAX) || track.title;
+		const ended = !music || (!music.playing && !!music.dur && musicPos() >= music.dur - 0.5);
+		if (!pushTrack({ ...track, title }, by)) {
+			return;
+		}
+		notify(`🎶 ${adderName(chat, by)} queued ${title}`);
+		if (ended) {
+			playQueued(queue.length - 1);
+		} else {
+			shareQueue();
+			drawMusic();
+		}
+	}
+	/**
+	 * A listener skips the song they added (playing now or waiting); songs others added are left alone.
+	 * @param {string} chat where they listen along
+	 * @param {number} by
+	 * @param {unknown} id the song's number
+	 */
+	function takeSkip(chat, by, id) {
+		const i = queue.findIndex((t) => t.id === id);
+		if (sharing !== chat || i < 0 || queue[i].by !== by || i < queueAt) {
+			return;
+		}
+		notify(`⏭ ${adderName(chat, by)} skipped ${queue[i].title}`);
+		if (i > queueAt) {
+			removeQueued(i);
+		} else if (queueAt < queue.length - 1) {
+			playQueued(queueAt + 1);
+		} else if (music) {
+			setPos(music.dur || musicPos(), false);
+			applyMusic(true);
+			shareState();
+			drawMusic();
 		}
 	}
 	/**
@@ -6673,6 +7185,7 @@
 		stopSharing();
 		sharing = chat;
 		shareState();
+		shareQueue();
 		notify(`🎧 Sharing your music with ${chatLabel(chat)}`);
 		drawMusic();
 		renderIfOpen(chat);
@@ -6684,6 +7197,7 @@
 			return;
 		}
 		sharing = '';
+		jamEars.delete(chat);
 		if (chat.startsWith('g:')) {
 			relaySend(chat.slice(2), { t: 'musicEnd' });
 		} else {
@@ -6710,14 +7224,17 @@
 	 * @param {string} hostName
 	 * @param {unknown} s a MusicState; null when they stopped sharing
 	 * @param {number} [age] ms since it was sent: a group's song as stored when you connect
+	 * @param {number} [travel] ms the news took to get here
 	 */
-	function takeJam(chat, host, hostName, s, age = 0) {
+	function takeJam(chat, host, hostName, s, age = 0, travel = 0) {
 		const before = jams.get(chat);
 		if (s === null) {
 			if (before && before.host !== host) {
 				return;
 			}
 			jams.delete(chat);
+			jamQueues.delete(chat);
+			jamEars.delete(chat);
 			if (following === chat) {
 				following = '';
 				unloadSong();
@@ -6732,8 +7249,17 @@
 			return;
 		}
 		/** @type {Jam} */
-		const j = { host, hostName: clean(hostName, LIMITS.name) || `#${host}`, state, at: Date.now() - (state.pl ? Math.max(0, age) : 0) };
+		const j = {
+			host,
+			hostName: clean(hostName, LIMITS.name) || `#${host}`,
+			state,
+			at: Date.now() - (state.pl ? Math.max(0, age) + travel : 0),
+		};
 		jams.set(chat, j);
+		if (before && before.host !== host) {
+			jamQueues.delete(chat);
+			jamEars.delete(chat);
+		}
 		// Someone else in a group started their own music: yours stops being the one shared there.
 		if (sharing === chat) {
 			sharing = '';
@@ -6768,7 +7294,80 @@
 			return null;
 		}
 		const d = typeof x.d === 'number' && isFinite(x.d) && x.d > 0 && x.d <= 86400 ? x.d : 0;
-		return { u: track.url, ti: clean(x.ti, TITLE_MAX) || track.title, p, pl: x.pl, d };
+		/** @type {MusicState} */
+		const state = { u: track.url, ti: clean(x.ti, TITLE_MAX) || track.title, p, pl: x.pl, d };
+		if (Number.isInteger(x.i) && /** @type {number} */ (x.i) > 0) {
+			state.i = x.i;
+		}
+		if (isNum(x.b)) {
+			state.b = x.b;
+		}
+		return state;
+	}
+	/**
+	 * The songs coming after the one shared in a chat, from its host.
+	 * @param {string} chat
+	 * @param {number} host who sent them
+	 * @param {unknown} list
+	 */
+	function takeQueue(chat, host, list) {
+		const j = jams.get(chat);
+		if (!Array.isArray(list) || (j && j.host !== host)) {
+			return;
+		}
+		/** @type {QueueItem[]} */
+		const q = [];
+		for (const x of list.slice(0, UPCOMING_MAX)) {
+			const y = /** @type {Partial<QueueItem> | null} */ (x);
+			if (y && typeof y === 'object' && Number.isInteger(y.id) && isNum(y.by)) {
+				q.push({ id: /** @type {number} */ (y.id), ti: clean(y.ti, UPCOMING_TITLE) || 'Song', by: /** @type {number} */ (y.by) });
+			}
+		}
+		jamQueues.set(chat, q);
+		drawMusic();
+	}
+	/**
+	 * Asks the host you listen along with to queue a song (their SlimeBeep has to be new enough to show a queue).
+	 * @param {Track} track
+	 */
+	function askHost(track) {
+		const chat = following;
+		const j = jams.get(chat);
+		const q = jamQueues.get(chat);
+		if (!j) {
+			return;
+		}
+		if (!q) {
+			notify(`⚠ ${j.hostName} needs to update SlimeBeep before you can add songs`);
+			return;
+		}
+		if (q.filter((x) => x.by === Player.MemberNumber).length >= ADDS_MAX) {
+			notify(`⚠ You have ${ADDS_MAX} songs waiting already`);
+			return;
+		}
+		const song = { u: track.url, ti: track.title };
+		if (chat.startsWith('g:')) {
+			relaySend(chat.slice(2), { t: 'musicAdd', ...song });
+		} else {
+			sendHidden(j.host, { sb: 1, madd: song });
+		}
+		notify(`🎶 Asked ${j.hostName} to queue ${track.title}`);
+	}
+	/**
+	 * Asks the host you listen along with to skip a song you added.
+	 * @param {number} id the song's number
+	 */
+	function askSkip(id) {
+		const chat = following;
+		const j = jams.get(chat);
+		if (!j) {
+			return;
+		}
+		if (chat.startsWith('g:')) {
+			relaySend(chat.slice(2), { t: 'musicSkip', id });
+		} else {
+			sendHidden(j.host, { sb: 1, mskip: id });
+		}
 	}
 	/**
 	 * Listens along to the song shared in a chat, with sound, from where the host is.
@@ -6785,7 +7384,41 @@
 		queueAt = -1;
 		unloadSong();
 		followJam(j);
+		tellListening(chat, true);
 		renderIfOpen(chat);
+	}
+	/**
+	 * Tells a chat's host (and, in a group, everyone) that you started or stopped listening along.
+	 * @param {string} chat
+	 * @param {boolean} on
+	 */
+	function tellListening(chat, on) {
+		const j = jams.get(chat);
+		if (chat.startsWith('g:')) {
+			relaySend(chat.slice(2), { t: 'musicListen', on });
+		} else if (j) {
+			sendHidden(j.host, { sb: 1, mlisten: on ? 1 : 0 });
+		}
+	}
+	/**
+	 * Who listens along in a chat changed (a group's list from the relay, or your friend in a chat with them).
+	 * Its host gets a note for each newcomer.
+	 * @param {string} chat
+	 * @param {unknown} list member numbers
+	 */
+	function takeEars(chat, list) {
+		if (!Array.isArray(list)) {
+			return;
+		}
+		const before = jamEars.get(chat) || [];
+		const ears = list.filter((n) => isNum(n) && n !== Player.MemberNumber).slice(0, LIMITS.members);
+		jamEars.set(chat, ears);
+		if (sharing === chat) {
+			for (const n of ears.filter((x) => !before.includes(x))) {
+				notify(`🎧 ${adderName(chat, n)} is listening along`);
+			}
+		}
+		drawMusic();
 	}
 	/**
 	 * Makes the player follow the host: their song, playing or paused, at their time.
@@ -6797,45 +7430,74 @@
 			return;
 		}
 		const pos = jamPos(j);
-		if (!music || music.track.url !== track.url) {
-			loadSong({ ...track, title: j.state.ti }, pos, j.state.pl);
+		if (!music || music.track.url !== track.url || music.track.id !== j.state.i) {
+			loadSong({ ...track, title: j.state.ti, id: j.state.i, by: j.state.b }, pos, j.state.pl);
 			if (music) {
 				music.dur = j.state.d;
 			}
 		} else {
 			music.track.title = j.state.ti;
-			const off = Math.abs(musicPos() - pos) > DRIFT;
-			setPos(off ? pos : musicPos(), j.state.pl);
-			applyMusic(off);
+			// The host paused, played or jumped; smaller gaps are keepInTime's.
+			if (music.playing !== j.state.pl || Math.abs(musicPos() - pos) > JUMP_DRIFT) {
+				moveToHost(j);
+			}
 		}
 		drawMusic();
 	}
 	/**
-	 * Stops listening along.
-	 * @param {boolean} [quiet] no toast (you are starting your own music)
+	 * Moves a listener's player to the host's time: a playing YouTube song a little further, for the time it takes to load there.
+	 * @param {Jam} j
 	 */
-	function leaveJam(quiet = false) {
+	function moveToHost(j) {
+		const m = music;
+		if (!m) {
+			return;
+		}
+		const lead = j.state.pl && !(m.el instanceof HTMLAudioElement);
+		setPos(jamPos(j) + (lead ? seekLead : 0), j.state.pl);
+		applyMusic(true);
+		m.fixedAt = Date.now();
+		m.drift = 0;
+		m.checkLead = lead;
+	}
+	/** Stops listening along. */
+	function leaveJam() {
 		const chat = following;
 		if (!chat) {
 			return;
 		}
 		following = '';
 		unloadSong();
-		if (!quiet) {
-			notify(`🎧 You stopped listening along with ${(jams.get(chat) || { hostName: chatLabel(chat) }).hostName}`);
-		}
+		tellListening(chat, false);
+		notify(`🎧 You stopped listening along with ${(jams.get(chat) || { hostName: chatLabel(chat) }).hostName}`);
 		drawMusic();
 		renderIfOpen(chat);
 	}
-	/** Every second while listening along: a player that drifted from the host is moved back in time. */
+	/** Every second while listening along: keeps the player at the host's time. */
 	function keepInTime() {
 		const j = following ? jams.get(following) : undefined;
-		if (!j || !music || !music.playing) {
+		const m = music;
+		if (!j || !m || !m.playing || !m.started || m.stall || Date.now() - m.fixedAt < SYNC_SETTLE) {
 			return;
 		}
-		if (Math.abs(musicPos() - jamPos(j)) > DRIFT) {
-			setPos(jamPos(j));
-			applyMusic(true);
+		const off = musicPos() - jamPos(j);
+		if (Math.abs(off) > JUMP_DRIFT) {
+			moveToHost(j);
+			return;
+		}
+		if (m.el instanceof HTMLAudioElement) {
+			// A sound file closes small gaps by playing a little faster or slower: there is no jump to hear.
+			m.el.playbackRate = Math.abs(off) < 0.05 ? 1 : fit(1 - off / 10, 0.95, 1.05);
+			return;
+		}
+		if (m.checkLead) {
+			// Where the last move landed tells how far past the host's time to aim next time.
+			m.checkLead = false;
+			seekLead = fit(seekLead - off, 0, 2);
+		}
+		m.drift = m.drift * 0.5 + off * 0.5;
+		if (Math.abs(m.drift) > YT_DRIFT) {
+			moveToHost(j);
 		}
 	}
 
@@ -6929,6 +7591,7 @@
 			status = m.author || 'Only you';
 		}
 		$('sb-mu-status').textContent = status;
+		drawEars();
 		const pos = musicPos();
 		$('sb-mu-cur').textContent = clock(pos);
 		$('sb-mu-dur').textContent = m && m.dur ? clock(m.dur) : '0:00';
@@ -6943,7 +7606,10 @@
 		play.title = m && m.playing ? 'Pause' : 'Play';
 		play.disabled = !!following || (!m && !queue.length);
 		$input('sb-mu-prev').disabled = !!following || !m;
-		$input('sb-mu-next').disabled = !!following || queueAt < 0 || queueAt >= queue.length - 1;
+		const next = $input('sb-mu-next');
+		// A listener skips only a song they added.
+		next.disabled = j ? j.state.b !== Player.MemberNumber || !j.state.i : queueAt < 0 || queueAt >= queue.length - 1;
+		next.title = j ? 'Skip your song' : 'Next song';
 		const mute = $('sb-mu-mute');
 		mute.textContent = opts.musicMuted || !opts.musicVolume ? '🔇' : '🔊';
 		mute.title = opts.musicMuted ? 'Turn the sound on' : 'Mute';
@@ -6964,19 +7630,45 @@
 			share.textContent = chat ? `🎧 ${chatLabel(chat)} doesn't have SlimeBeep` : '🎧 Open a chat to share with it';
 			share.disabled = true;
 		}
-		const drawn = JSON.stringify([queue.map((t) => t.title), queueAt, !!following]);
+		const jq = following ? jamQueues.get(following) || [] : [];
+		const drawn = JSON.stringify(j ? [following, j.state.i, j.state.ti, j.state.b, jq] : [queue.map((t) => [t.title, t.by]), queueAt]);
 		if (drawn !== queueDrawn) {
 			queueDrawn = drawn;
+			const me = Player.MemberNumber;
+			/** @param {number | undefined} by */
+			const byLine = (by) => (by && by !== me ? html`<span class="sb-mu-by">${adderName(following || sharing, by)}</span>` : '');
 			setHtml(
 				$('sb-mu-queue'),
-				html`${queue.map(
-					(t, i) =>
-						html`<div class="sb-mu-row${i === queueAt && !following ? ' on' : ''}"><button class="sb-mu-song" data-q="${i}" title="${t.url}">${i === queueAt && !following ? '▶ ' : ''}${t.title}</button><button class="sb-mu-del" data-qdel="${i}" title="Remove">${ICONS.close}</button></div>`,
-				)}`,
+				j
+					? html`${[{ id: j.state.i || 0, ti: j.state.ti, by: j.state.b || j.host }, ...jq].map(
+							(t, i) =>
+								html`<div class="sb-mu-row${i ? '' : ' on'}"><span class="sb-mu-song" title="${t.ti}">${i ? '' : '▶ '}${t.ti}</span>${byLine(t.by)}${t.by === me && t.id ? html`<button class="sb-mu-del" data-jskip="${t.id}" title="Skip your song">${ICONS.close}</button>` : ''}</div>`,
+						)}`
+					: html`${queue.map(
+							(t, i) =>
+								html`<div class="sb-mu-row${i === queueAt ? ' on' : ''}"><button class="sb-mu-song" data-q="${i}" title="${t.url}">${i === queueAt ? '▶ ' : ''}${t.title}</button>${byLine(t.by)}<button class="sb-mu-del" data-qdel="${i}" title="Remove">${ICONS.close}</button></div>`,
+						)}`,
 			);
 			// A longer queue makes the player taller: it stays inside the window.
 			placeMusic();
 		}
+	}
+	/** Small pictures of who listens along to the song you share or follow. */
+	function drawEars() {
+		const chat = sharing || following;
+		const j = following ? jams.get(following) : undefined;
+		// In a chat with a friend, they only listen while online.
+		const ears = (jamEars.get(chat) || []).filter((n) => chat.startsWith('g:') || friends.some((f) => f.MemberNumber === n));
+		const list = j ? [j.host, ...ears.filter((n) => n !== j.host)] : ears;
+		const drawn = JSON.stringify([chat, list, list.map((n) => !!pfpOf(n))]);
+		const box = $('sb-mu-ears');
+		if (box.dataset.drawn === drawn) {
+			return;
+		}
+		box.dataset.drawn = drawn;
+		const names = list.map((n) => (j && n === j.host ? j.hostName : adderName(chat, n)));
+		box.title = list.length ? `Listening: ${names.join(', ')}` : '';
+		setHtml(box, html`${list.map((n, i) => html`<span title="${names[i]}">${avatar(n, names[i])}</span>`)}`);
 	}
 	/** Builds the music player (hidden until 🎵 or a song opens it). */
 	function buildMusic() {
@@ -6989,7 +7681,7 @@
 				<button id="sb-mu-mini" title="Smaller">${ICONS.down}</button><button id="sb-mu-x" title="Hide (the music keeps playing)">${ICONS.close}</button></div>
 			<div class="sb-mu-now">
 				<div class="sb-mu-art" id="sb-mu-art"></div>
-				<div class="sb-mu-info"><div class="sb-mu-title" id="sb-mu-title"></div><div class="sb-mu-status" id="sb-mu-status"></div></div>
+				<div class="sb-mu-info"><div class="sb-mu-title" id="sb-mu-title"></div><div class="sb-mu-status" id="sb-mu-status"></div><div class="sb-mu-ears" id="sb-mu-ears"></div></div>
 			</div>
 			<div class="sb-mu-progress"><span id="sb-mu-cur">0:00</span><input type="range" id="sb-mu-seek" min="0" max="0" step="1" value="0" aria-label="Song position"><span id="sb-mu-dur">0:00</span></div>
 			<div class="sb-mu-controls">
@@ -7034,7 +7726,14 @@
 				playQueued(queueAt - 1);
 			}
 		});
-		$('sb-mu-next').addEventListener('click', () => playQueued(queueAt + 1));
+		$('sb-mu-next').addEventListener('click', () => {
+			const j = following ? jams.get(following) : undefined;
+			if (!j) {
+				playQueued(queueAt + 1);
+			} else if (j.state.i) {
+				askSkip(j.state.i);
+			}
+		});
 		const seek = $input('sb-mu-seek');
 		seek.addEventListener('input', () => {
 			seekingUntil = Date.now() + 1500;
@@ -7066,7 +7765,11 @@
 				return;
 			}
 			link.value = '';
-			addSong(track, false);
+			if (following) {
+				askHost(track);
+			} else {
+				addSong(track, false);
+			}
 		};
 		$('sb-mu-addbtn').addEventListener('click', add);
 		link.addEventListener('keydown', (e) => {
@@ -7080,12 +7783,11 @@
 			if (!b) {
 				return;
 			}
-			if (b.dataset.qdel !== undefined) {
+			if (b.dataset.jskip !== undefined) {
+				askSkip(Number(b.dataset.jskip));
+			} else if (b.dataset.qdel !== undefined) {
 				removeQueued(Number(b.dataset.qdel));
 			} else if (b.dataset.q !== undefined) {
-				if (following) {
-					leaveJam(true);
-				}
 				playQueued(Number(b.dataset.q));
 			}
 		});
@@ -7137,11 +7839,17 @@
 	}
 	/**
 	 * ▶ on a song link in a chat: it plays now, for you only (sharing goes through the player's share button).
+	 * While you listen along, it goes to the host's queue instead.
 	 * @param {string} link
 	 */
 	function playLink(link) {
 		const track = trackOf(link);
-		if (track) {
+		if (!track) {
+			return;
+		}
+		if (following) {
+			askHost(track);
+		} else {
 			addSong(track, true);
 		}
 	}

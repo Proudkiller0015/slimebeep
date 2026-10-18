@@ -247,6 +247,66 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 		`signing in brings the song and how long ago it was set, so players can catch up (${JSON.stringify(stored)})`,
 	);
 	c5.ws.close();
+	// Cat repeats where the song is: everyone hears it, but the stored record keeps its first time.
+	c3.send({ t: 'music', ...song, p: 12.5 + stored.age / 1000 });
+	await wait(300);
+	const c7 = await connect(gid, cat);
+	check(
+		a.got.filter((x) => x.t === 'music').length === 2 && c7.last('music').age >= stored.age,
+		`a reminder of where the song is goes to everyone without being stored again (${c7.last('music').age} ms)`,
+	);
+	c7.ws.close();
+	// The queue: only the host shows it; a member's songs and skips go to the host alone.
+	c3.send({ t: 'musicQueue', q: [{ id: 2, ti: 'Next song', by: 11 }] });
+	a.send({ t: 'musicQueue', q: [{ id: 9, ti: 'Not the host', by: 11 }] });
+	await wait(300);
+	check(
+		JSON.stringify(a.last('musicQueue').q) === '[{"id":2,"ti":"Next song","by":11}]' &&
+			a.got.filter((x) => x.t === 'musicQueue').length === 1,
+		"the host shows the group what comes next; Ann isn't the host, so hers is ignored",
+	);
+	const c8 = await connect(gid, cat);
+	check(c8.last('musicQueue') && c8.last('musicQueue').q.length === 1, 'signing in brings the queue');
+	c8.ws.close();
+	a.send({ t: 'musicAdd', u: 'https://example.com/b.mp3', ti: 'B' });
+	a.send({ t: 'musicAdd', u: 'javascript:alert(1)', ti: 'X' });
+	a.send({ t: 'musicSkip', id: 2 });
+	await wait(300);
+	const asked = c3.got.filter((x) => x.t === 'musicAdd');
+	check(
+		asked.length === 1 && asked[0].u === 'https://example.com/b.mp3' && asked[0].by === 11 && !a.got.some((x) => x.t === 'musicAdd'),
+		`Ann asks the host to queue a song: only Cat gets it, with who asked; a link that isn't https is dropped (${JSON.stringify(asked)})`,
+	);
+	check(
+		c3.last('musicSkip') && c3.last('musicSkip').id === 2 && c3.last('musicSkip').by === 11,
+		'a skip goes to the host too, with who asked',
+	);
+	// Who listens along: everyone sees it, and it ends when they go.
+	const ann2 = await connect(gid, ann);
+	ann2.send({ t: 'musicListen', on: true });
+	c3.send({ t: 'musicListen', on: true });
+	await wait(300);
+	check(
+		JSON.stringify(c3.last('musicListeners').list) === '[11]',
+		'Ann listens along and Cat sees it (the host never counts as a listener)',
+	);
+	ann2.ws.close();
+	await wait(500);
+	check(JSON.stringify(c3.last('musicListeners').list) === '[]', 'when her connection closes, she no longer listens');
+	// Statuses live on connections: everyone sees them, newcomers get them, and they go with the connection.
+	const ann3 = await connect(gid, ann);
+	ann3.send({ t: 'status', s: { t: 'king of the swamp', l: '' } });
+	await wait(300);
+	const c9 = await connect(gid, cat);
+	check(
+		JSON.stringify(c3.last('status')) === '{"t":"status","n":11,"s":{"t":"king of the swamp","l":""}}' &&
+			JSON.stringify(c9.last('statuses').list) === '[{"n":11,"s":{"t":"king of the swamp","l":""}}]',
+		'a status goes to everyone, and signing in brings all of them',
+	);
+	c9.ws.close();
+	ann3.ws.close();
+	await wait(500);
+	check(c3.last('status').s === null, 'when the connection closes, the status goes');
 	a.send({ t: 'musicEnd' });
 	await wait(300);
 	check(a.last('music').music !== null, "only the member sharing the song can stop it (Ann can't stop Cat's)");
