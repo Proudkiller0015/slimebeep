@@ -286,5 +286,11 @@
     "date": "18 Oct 2026",
     "title": "📢 SlimeBeep 3.2.2",
     "text": "🏆 Achievements! Slime someone, keep the Slime Queen company, start a jam… (and a few secrets). Your friends see your trophies. 🌐 Translate any message with a tap, or a whole chat by itself (it follows CATS if you have it). Chats now show who is offline with a grey dot."
+  },
+  {
+    "id": "3.2.3",
+    "date": "18 Oct 2026",
+    "title": "📢 SlimeBeep 3.2.3",
+    "text": "Fewer pop-ups: after an update you get just this one note, even if you skipped a version, and you can turn it off in Settings > Extensions > SlimeBeep (\"Tell me what's new after an update\"). Night mode now also darkens the status, achievements and other small windows."
   }
 ]

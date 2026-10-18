@@ -711,11 +711,11 @@ const check = (ok, what) => {
 	await p.click('#sb-body label:nth-of-type(4) input');
 	await p.type('#sb-gmsg', 'Party in 10!');
 	await p.click('#sb-gear');
-	// The WaveBeep gap: its - button sits under the 8 checkboxes.
+	// The WaveBeep gap: its - button sits under the 9 checkboxes.
 	await p.evaluate(() => {
 		for (let i = 0; i < 20; i++) {
 			MouseX = 520;
-			MouseY = 190 + 8 * 72 + 20;
+			MouseY = 190 + 9 * 72 + 20;
 			PreferenceExtensionsSettings.SlimeBeep.click();
 		}
 	});
@@ -3231,14 +3231,17 @@ const check = (ok, what) => {
 	await wait(4500);
 	check((await p.$$eval('.sb-card.news', (e) => e.length)) === 0, 'news shows once');
 	check((await p.evaluate(() => local.length)) === 0, 'and the room note does not repeat for the same version');
-	// A new version is pushed: one note, with its news item.
+	// A new version is pushed after one that was skipped: one note, with the new version's news item only.
 	await p.evaluate(() => {
 		const o = JSON.parse(localStorage.getItem('slimebeep.options'));
 		o.lastVersion = '0.0.1';
 		localStorage.setItem('slimebeep.options', JSON.stringify(o));
 	});
 	const ver = src.match(/const VERSION = '([^']+)'/)[1];
-	newsBody = JSON.stringify([{ id: ver, text: 'Shiny new things.' }]);
+	newsBody = JSON.stringify([
+		{ id: '0.0.2', text: 'Skipped things.' },
+		{ id: ver, text: 'Shiny new things.' },
+	]);
 	await p.reload();
 	await p.evaluate(stub);
 	// The first try is lost (the game drops it), so SlimeBeep tries again.
@@ -3260,7 +3263,30 @@ const check = (ok, what) => {
 		upd.length === 1 && upd[0].includes(`updated to v${ver}`) && upd[0].includes('Shiny new things.'),
 		`after an update, one room note with what's new, even when the first try was lost`,
 	);
+	check(
+		!upd.join('').includes('Skipped things') && (await p.$$eval('.sb-card.news', (e) => e.length)) === 0,
+		'a skipped version shows nothing, and no card repeats the room note',
+	);
 	await shot('reload');
+	// "Tell me what's new after an update" off: no note at all.
+	await p.evaluate(() => {
+		const o = JSON.parse(localStorage.getItem('slimebeep.options'));
+		o.lastVersion = '0.0.1';
+		o.updateNotes = false;
+		localStorage.setItem('slimebeep.options', JSON.stringify(o));
+	});
+	await p.reload();
+	await p.evaluate(stub);
+	await p.evaluate(() => makeLog());
+	await p.addScriptTag({ content: src });
+	await wait(5000);
+	const quiet = await p.evaluate(() => ({ notes: local.length, last: JSON.parse(localStorage.getItem('slimebeep.options')).lastVersion }));
+	check(quiet.notes === 0 && quiet.last === ver, `update notes switched off: nothing in the room chat (${JSON.stringify(quiet)})`);
+	await p.evaluate(() => {
+		const o = JSON.parse(localStorage.getItem('slimebeep.options'));
+		o.updateNotes = true;
+		localStorage.setItem('slimebeep.options', JSON.stringify(o));
+	});
 
 	// ---- 🍞 The game's toasts (R133): cards and notes go through ToastManager in SlimeBeep's colours,
 	// and ten quick clicks on the slime crown it (tada and confetti).

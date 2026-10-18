@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.2.2';
+	const VERSION = '3.2.3';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -47,6 +47,8 @@
 		seenNews: null,
 		/** @type {string | null} Last version that posted its update note in the room chat. */
 		lastVersion: null,
+		/** After an update, a note in the room chat with what's new. */
+		updateNotes: true,
 		/** Night colours. */
 		night: false,
 		/** Follow a theme add-on's colours (Themed, BCNeko). */
@@ -5511,6 +5513,11 @@
 		if (Date.now() - (noteLastTry || 0) < 10000) {
 			return;
 		}
+		if (!opts.updateNotes) {
+			opts.lastVersion = VERSION;
+			saveOpts();
+			return;
+		}
 		const item = newsItems.find((i) => i.id === VERSION);
 		const first = !opts.lastVersion;
 		const head = first ? `SlimeBeep v${VERSION} is ready!` : `SlimeBeep updated to v${VERSION}`;
@@ -5567,7 +5574,10 @@
 	/** Load time, for updateNote's wait. */
 	const started = Date.now();
 
-	/** Loads news.json and shows unseen items as cards (a first install gets only the newest). */
+	/**
+	 * Loads news.json and shows the newest unseen item as a card, unless it is this version's (the update note in the
+	 * room chat says that one) or update notes are off. Older unseen items are skipped: one note per update is enough.
+	 */
 	function news() {
 		fetch(`${NEWS}?t=${Date.now()}`, { cache: 'no-store' })
 			.then((r) => (r.ok ? r.json() : []))
@@ -5578,12 +5588,13 @@
 					return;
 				}
 				const seen = Array.isArray(opts.seenNews) ? opts.seenNews : valid.slice(0, -1).map((i) => i.id);
-				for (const i of valid.filter((x) => !seen.includes(x.id)).slice(-3)) {
+				const newest = valid[valid.length - 1];
+				if (opts.updateNotes && !opts.dnd && !seen.includes(newest.id) && newest.id !== VERSION) {
 					card({
 						icon: logoIcon(),
-						title: i.title || '📢 SlimeBeep news',
-						text: i.text,
-						sub: i.date || '',
+						title: newest.title || '📢 SlimeBeep news',
+						text: newest.text,
+						sub: newest.date || '',
 						ms: 0,
 						cls: 'news',
 					});
@@ -9033,6 +9044,7 @@
 			],
 			['keep', 'Keep my beeps in this browser after I log out', () => opts.keep, (on) => setKeep(on)],
 			['dnd', 'Do not disturb (no sounds or pop-ups)', () => opts.dnd, (on) => setDnd(on)],
+			['updateNotes', "Tell me what's new after an update", () => opts.updateNotes, (on) => setOpt('updateNotes', on)],
 		];
 		/** @type {[() => string, () => void, (() => boolean)?][]} The buttons on the right, top to bottom: label, action, shown. */
 		const buttons = [

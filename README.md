@@ -45,7 +45,7 @@ Click the pink slime (drag it anywhere you like; it stays there). A pink dot on 
 - **🌙 Night mode:** the moon in the header (or ⚙ Settings) switches to navy with a night blue slime.
 - **Settings > Extensions:** SlimeBeep is listed there too, with the same options.
 - **🐞 Bug:** report a problem. SlimeBeep adds its version, the game's version and its own recent errors (nothing about your chats), then you open it on GitHub, copy it, or beep it to SlimeQueenSamantha.
-- **⚙ Settings:** the ⚙ in the header opens SlimeBeep's page in the game's Settings > Extensions: pop sound, pop-ups, desktop notifications, Do not disturb, whether 📍 starts on, remembering who you picked, the wait between group beeps, your profile picture, keeping or clearing your chats, putting the slime back in its corner, and matching a theme add-on.
+- **⚙ Settings:** the ⚙ in the header opens SlimeBeep's page in the game's Settings > Extensions: pop sound, pop-ups, desktop notifications, Do not disturb, the update note, whether 📍 starts on, remembering who you picked, the wait between group beeps, your profile picture, keeping or clearing your chats, putting the slime back in its corner, and matching a theme add-on.
 
 Every beep you send pops up a "✓ Beep sent" note. A new beep pops a 💌 card (click it to reply); on game versions with notifications (R133 and later) these use the game's own notifications, in SlimeBeep's colours, with an optional desktop notification when the game is in the background. Your chats are kept in your browser, per account, so they're still there after you log out (⚙ Settings can turn that off or clear them).
 
@@ -68,11 +68,11 @@ Group chats and mailboxes need the game's https address (signing in uses the bro
 
 ## Updates in the room chat
 
-After an update, a small pink line in the room chat (only you see it) says SlimeBeep was updated, with the `news.json` item whose `id` is that version.
+After an update, a small pink line in the room chat (only you see it) says SlimeBeep was updated, with the `news.json` item whose `id` is that version. Versions you skipped are left out, and Settings can turn the note off.
 
 ## News
 
-[`news.json`](news.json) holds announcements. Add an item (a new `id`, a `title` and a `text`) and push: every player sees it once, as a notification, on their next reload. Nobody has to update anything.
+[`news.json`](news.json) holds announcements. Add an item (a new `id`, a `title` and a `text`) and push: every player sees it once, as a notification, on their next reload (only the newest unseen item, and not one whose `id` is the version they run: the room-chat note covers that). Nobody has to update anything.
 
 ## Updates
 
