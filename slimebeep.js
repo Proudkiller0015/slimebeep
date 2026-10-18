@@ -1436,6 +1436,13 @@
 		html.sb-night .sb-jamline { background: #1a2147; border-color: #2c3866; }
 		html.sb-night .sb-mu-share.on { background: #5b8cff; color: #fff; }
 		html.sb-night .sb-pill { background: #1d2550; color: #a9c1ff; border-color: #2f3b75; }
+		html.sb-night #sb-crop, html.sb-night #sb-ask { background: #0008; }
+		html.sb-night #sb-crop .sb-crop-card, html.sb-night #sb-ask .sb-crop-card { background: #1a2142; color: #dfe6ff; box-shadow: 0 0 0 1px #2f3b75, 0 10px 40px #000a; }
+		html.sb-night #sb-crop .sb-crop-ring { border-color: #5b8cff; }
+		html.sb-night #sb-crop .sb-crop-x { background: #253064; color: #a9c1ff; }
+		html.sb-night #sb-crop input[type=range] { accent-color: #5b8cff; }
+		html.sb-night #sb-ask .sb-warn { background: #3a1420; color: #ffb3bd; }
+		html.sb-night .sb-tr-pick select { background: #141a33; border-color: #2f3b75; }
 		html.sb-night #sb-panel input[type=checkbox] { accent-color: #5b8cff; }
 		html.sb-night .sb-line[style] { background: #141a33 !important; }
 		html.sb-night .sb-card { background: #1a2142; color: #dfe6ff; border-color: #2f3b75; box-shadow: 0 6px 20px #0008; }
