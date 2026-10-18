@@ -1297,7 +1297,7 @@
 		#sb-crop input[type=range] { width: 200px; accent-color: #ff4fa3; }
 		#sb-ask { align-items: flex-start; padding-top: 70px; }
 		#sb-ask .sb-warn { background: #ffe1e1; color: #b00020; border: 2px solid #e5303f; border-radius: 12px; padding: 10px 12px; font-weight: 700; font-size: 13px; line-height: 1.35; text-align: center; }
-		#sb-ask [data-act=quit], #sb-ask .sb-danger { background: #e5303f; }
+		#sb-ask .sb-danger { background: #e5303f; }
 		#sb-crop .sb-crop-btns, #sb-ask .sb-crop-btns { display: flex; gap: 8px; }
 		#sb-crop .sb-crop-card { position: relative; }
 		#sb-crop .sb-crop-x { position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; border-radius: 50%; border: none; background: #ffe3f1; color: #c2387f; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
@@ -1700,130 +1700,13 @@
 			listen();
 		}
 		place();
-		tickTimer = setInterval(tick, 1000);
+		setInterval(tick, 1000);
 		news();
 		registerSettings();
 	}
 
 	/** @type {BcSocket | null} The ServerSocket our listeners are attached to (see listen). */
 	let listening = null;
-	/** Set by quit(); stops every timer callback and late reply from doing anything. */
-	let stopped = false;
-	/** @type {ReturnType<typeof setInterval> | undefined} The 1 s tick interval, cleared by quit(). */
-	let tickTimer;
-	/** Asks before quitting (⏻), in a box inside the panel. */
-	function askQuit() {
-		if (stopped || $('sb-ask')) {
-			return;
-		}
-		if (!isOpen()) {
-			setOpen(true);
-		}
-		const box = document.createElement('div');
-		box.id = 'sb-ask';
-		setHtml(
-			box,
-			html`<div class="sb-crop-card">
-			<b>Turn SlimeBeep off?</b>
-			<div class="sb-warn">⚠ To get it back you'll have to <u>reload the game</u> and <u>click your SlimeBeep bookmark again</u> (with the userscript it comes back on its own after the reload).</div>
-			<span class="sb-hint" style="text-align:center">Your chats and settings stay.</span>
-			<div class="sb-crop-btns"><button class="sb-pill" data-act="keep">Keep it on</button><button class="sb-go" data-act="quit">⏻ Turn off</button></div>
-		</div>`,
-		);
-		const close = () => {
-			box.remove();
-			document.removeEventListener('keydown', onKey, true);
-		};
-		/** @param {KeyboardEvent} e */
-		const onKey = (e) => {
-			if (e.key === 'Escape') {
-				e.stopPropagation();
-				close();
-			}
-		};
-		box.addEventListener('click', (e) => {
-			const act = targetOf(e).dataset.act;
-			if (act === 'quit') {
-				close();
-				quit();
-			} else if (act === 'keep' || targetOf(e) === box) {
-				close();
-			}
-		});
-		document.addEventListener('keydown', onKey, true);
-		$('sb-panel').appendChild(box);
-	}
-	/**
-	 * Removes SlimeBeep from the page until the next load: DOM, style, listeners, timers and relay
-	 * connections. Saved data is kept.
-	 */
-	function quit() {
-		if (stopped) {
-			return;
-		}
-		stopped = true;
-		try {
-			clearInterval(tickTimer);
-		} catch (e) {
-			/* gone */
-		}
-		try {
-			removeEventListener('resize', place);
-			removeEventListener('pointerdown', leavePanel, true);
-			removeEventListener('keydown', escAfterClick);
-		} catch (e) {
-			/* gone */
-		}
-		try {
-			const sock = listening;
-			if (sock) {
-				if (typeof sock.offAny === 'function') {
-					sock.offAny(anyListener);
-				}
-				if (typeof sock.offAnyOutgoing === 'function') {
-					sock.offAnyOutgoing(outListener);
-				}
-				if (typeof sock.off === 'function') {
-					sock.off('AccountBeep', beepListener);
-					sock.off('AccountQueryResult', queryListener);
-				}
-			}
-		} catch (e) {
-			/* gone */
-		}
-		listening = null;
-		removeEventListener('message', onYouTube);
-		for (const c of Object.values(conns)) {
-			c.dead = true;
-			try {
-				if (c.ws) {
-					c.ws.close();
-				}
-			} catch (e) {
-				/* gone */
-			}
-		}
-		for (const b of $$(document, '.sb-bcjoin')) {
-			b.remove();
-		}
-		for (const id of ['sb-toggle', 'sb-panel', 'sb-mu', 'sb-toast', 'sb-cards', 'sb-crop', 'sb-zoom', 'sb-ask', 'sb-emoji', 'sb-style']) {
-			const el = $(id);
-			if (el) {
-				el.remove();
-			}
-		}
-		const root = document.documentElement;
-		for (const k of [...root.classList]) {
-			if (/^sb-/.test(k)) {
-				root.classList.remove(k);
-			}
-		}
-		for (const set of Object.values(apiListeners)) {
-			set.clear();
-		}
-		delete window.SlimeBeep;
-		console.info('[SlimeBeep] quit until the next reload');
-	}
 	/** @type {{ at: string, from: number, type: string, text: string | null }[]} The last 20 beeps received, for SlimeBeep.debug(). */
 	const seenBeeps = [];
 	/**
@@ -3407,7 +3290,7 @@
 	 * @param {boolean} [now]
 	 */
 	async function mailWaiting(now = false) {
-		if (mailing || stopped || !loggedIn() || !waiting.length || !secure()) {
+		if (mailing || !loggedIn() || !waiting.length || !secure()) {
 			return;
 		}
 		const due = waiting.filter((w) => peers.has(w.n) && peerKeys[w.n] && peerEks[w.n] && (now || Date.now() - (w.tried || 0) > 600000));
@@ -3476,7 +3359,7 @@
 	let mailBusy = false;
 	/** Fetches your mailbox (at login, then every 5 minutes from relayTick). */
 	async function checkMail() {
-		if (mailBusy || stopped || !loggedIn() || !secure()) {
+		if (mailBusy || !loggedIn() || !secure()) {
 			return;
 		}
 		mailBusy = true;
@@ -3640,7 +3523,7 @@
 	 * @returns {Conn}
 	 */
 	function connectGroup(gid, extra = {}) {
-		if (stopped || !secure()) {
+		if (!secure()) {
 			return { ws: null, ready: false, queue: [], waiters: [], dead: true };
 		}
 		const old = conns[gid];
@@ -4441,9 +4324,6 @@
 	 * @param {HiddenPayload} payload
 	 */
 	function sendHidden(n, payload) {
-		if (stopped) {
-			return;
-		}
 		const pic = myPfp();
 		const k = myKey && myKey.owner === Player.MemberNumber ? myKey : null;
 		/** @type {{ kf?: string, ek?: string }} */
@@ -4934,9 +4814,6 @@
 	 * @param {CardOptions} options
 	 */
 	function card({ icon, pic, title, text, sub = '', onClick, ms = 7000, cls = '' }) {
-		if (stopped) {
-			return;
-		}
 		if (gameToasts()) {
 			gameToast({
 				title,
@@ -5267,9 +5144,6 @@
 	 * @returns {void}
 	 */
 	function render(keepScroll) {
-		if (stopped) {
-			return;
-		}
 		const view = $('sb-view');
 		// The music player's share button follows the chat that is open.
 		setTimeout(drawMusic, 0);
@@ -5963,7 +5837,7 @@
 				<button class="sb-pill sb-jump" id="sb-jump"></button></div>
 			<div class="sb-compose">
 				<button class="pin" id="sb-emo" title="Emoji">😊</button>
-				<textarea id="sb-text" maxlength="${LIMITS.text}" placeholder="Message ${g.name}… (/help)"></textarea>
+				<textarea id="sb-text" maxlength="${LIMITS.text}" placeholder="Message ${g.name}…"></textarea>
 				<button id="sb-send" title="Send (Enter)">${ICONS.send}</button>
 			</div>`,
 		);
@@ -6194,11 +6068,11 @@
 		);
 		const pinTitle = room ? `Let them join me: adds a button to join you in "${room}"` : "You're not in a chat room";
 		const near = sameRoom(n);
-		let placeholder = `Beep ${nameOf(n)}… (/help)`;
+		let placeholder = `Beep ${nameOf(n)}…`;
 		if (near) {
-			placeholder = `Whisper to ${nameOf(n)}… (/help)`;
+			placeholder = `Whisper ${nameOf(n)}…`;
 		} else if (offline) {
-			placeholder = `${nameOf(n)} is offline: it'll wait for them…`;
+			placeholder = `${nameOf(n)} is offline…`;
 		}
 		setHtml(
 			view,
@@ -7576,9 +7450,6 @@
 	 * @param {string} text
 	 */
 	function notify(text) {
-		if (stopped) {
-			return;
-		}
 		if (gameToasts()) {
 			if (typeof ToastManager.dismissByCategory === 'function') {
 				ToastManager.dismissByCategory('SlimeBeep-note');
@@ -7606,9 +7477,6 @@
 	 * @param {boolean} includeRoom adds your room
 	 */
 	function beep(n, text, includeRoom) {
-		if (stopped) {
-			return;
-		}
 		try {
 			if (typeof ServerSendBeepMessage === 'function') {
 				ServerSendBeepMessage(n, text, { includeRoom });
@@ -7838,7 +7706,6 @@
 			],
 			[() => `Clear kept beeps (${hist.length})`, clearKept],
 			[() => 'Ask again for picture sites', () => setOpt('trustedHosts', []), () => opts.trustedHosts.length > 0],
-			[() => 'Turn SlimeBeep off', askQuit],
 		];
 		const RIGHT = 1430,
 			BUTTON_W = 440;
@@ -7870,12 +7737,6 @@
 			run: () => {
 				try {
 					DrawCharacter(Player, 50, 50, 0.9);
-					if (stopped) {
-						DrawText('SlimeBeep is off until you reload the game.', 1100, 300, 'Black', 'Gray');
-						DrawText('Then click your SlimeBeep bookmark again (the userscript starts it on its own).', 1100, 370, '#B00020', 'Gray');
-						DrawButton(...EXIT, '', 'White', 'Icons/Exit.png');
-						return;
-					}
 					MainCanvas.textAlign = 'left';
 					DrawText(`- SlimeBeep Settings - v${VERSION}`, LEFT, 125, 'Black', 'Gray');
 					const { g, MINUS, PLUS } = layout();
@@ -7906,9 +7767,6 @@
 						if (typeof PreferenceSubscreenExtensionsClear === 'function') {
 							PreferenceSubscreenExtensionsClear();
 						}
-						return;
-					}
-					if (stopped) {
 						return;
 					}
 					const { MINUS, PLUS } = layout();

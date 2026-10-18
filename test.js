@@ -1750,41 +1750,6 @@ const check = (ok, what) => {
 		check(r.off === false && r.offBg !== 'rgb(255, 240, 224)', 'api.matchTheme(false) (for theme add-ons) turns it back off');
 	}
 
-	// ---- ⏻ Quit (on the Settings page): everything goes until the next reload, and the bookmarklet can start it again.
-	{
-		const r = await p.evaluate(async () => {
-			settingsClick('Turn SlimeBeep off');
-			const asked =
-				!!document.querySelector('#sb-ask') &&
-				!!document.getElementById('sb-toggle') &&
-				/bookmark again/.test(document.querySelector('#sb-ask .sb-warn').textContent);
-			document.querySelector('#sb-ask [data-act=keep]').click();
-			const kept = !document.querySelector('#sb-ask') && !!document.getElementById('sb-toggle');
-			settingsClick('Turn SlimeBeep off');
-			document.querySelector('#sb-ask [data-act=quit]').click();
-			await new Promise((res) => setTimeout(res, 300));
-			if (!asked || !kept) {
-				return { left: ['no confirm'], asked, kept };
-			}
-			const left = [...document.querySelectorAll('[id^="sb-"]')].map((e) => e.id);
-			fire('AccountBeep', { MemberNumber: 11, MemberName: 'Ann', BeepType: '', Message: 'still there?' });
-			await new Promise((res) => setTimeout(res, 300));
-			return {
-				left,
-				api: typeof window.SlimeBeep,
-				cls: [...document.documentElement.classList].filter((c) => c.startsWith('sb-')),
-				cards: !!document.getElementById('sb-cards'),
-			};
-		});
-		check(
-			r.left.length === 0 && r.api === 'undefined' && r.cls.length === 0 && !r.cards,
-			`⏻ Quit removes SlimeBeep completely until a reload (${JSON.stringify(r)})`,
-		);
-		await p.addScriptTag({ content: src });
-		await wait(1500);
-		check(!!(await p.$('#sb-toggle')), 'and starting it again (the bookmarklet) brings it back');
-	}
-
 	// ---- An old copy (the raw link lagging) finds a newer one on GitHub Pages: the newer one runs, once.
 	{
 		const ver = src.match(/const VERSION = '([^']+)'/)[1];
@@ -2014,14 +1979,15 @@ const check = (ok, what) => {
 	const picButtons = await p.evaluate(() => {
 		buttons = {};
 		PreferenceExtensionsSettings.SlimeBeep.run();
-		return ['Change profile picture', 'Adjust profile picture', 'Remove profile picture', 'Turn SlimeBeep off'].map((label) => {
+		const shown = ['Change profile picture', 'Adjust profile picture', 'Remove profile picture'].map((label) => {
 			const r = buttons[label];
 			return !!r && r[0] + r[2] <= 2000 && r[1] + r[3] <= 1000;
 		});
+		return [...shown, !Object.keys(buttons).some((label) => /off/i.test(label))];
 	});
 	check(
 		picButtons.every((x) => x === true),
-		`Settings shows Change, Adjust and Remove picture and Turn SlimeBeep off, all on the screen (${picButtons})`,
+		`Settings shows Change, Adjust and Remove picture, all on the screen, and no button to turn SlimeBeep off (${picButtons})`,
 	);
 
 	// ---- 🐞 Bug report: the player's words plus SlimeBeep's own details, out to GitHub, the clipboard or a beep.
@@ -2457,7 +2423,9 @@ const check = (ok, what) => {
 			/psst, over here/.test(wThread) && /🤫/.test(wThread) && !/said out loud/.test(wThread),
 			"a whisper from Ann in the room shows in her chat, marked 🤫 (room chat doesn't)",
 		);
-		check(/^Whisper to Ann/.test(await p.$eval('#sb-text', (e) => e.placeholder)), 'in the same room, the chat offers to whisper');
+		check(/^Whisper Ann…$/.test(await p.$eval('#sb-text', (e) => e.placeholder)), 'in the same room, the chat offers to whisper');
+		const fits = await p.$eval('#sb-text', (e) => ({ empty: e.value === '', scroll: e.scrollHeight, height: e.clientHeight }));
+		check(fits.empty && fits.scroll <= fits.height, `and that line fits the box, with nothing to scroll (${JSON.stringify(fits)})`);
 		await p.type('#sb-text', 'whispering back');
 		await p.keyboard.press('Enter');
 		await wait(300);

@@ -29,7 +29,6 @@ Click the pink slime (drag it anywhere you like; it stays there). A pink dot on 
 - **📍 Join:** a beep sent from a chat room has a **Join** button that takes you there.
 - **🚪 Leave or delete a group:** the 🚪 at the top of a group chat. Anyone can leave; the owner can also delete the group for everyone.
 - **🔕 Do not disturb:** the 🔔 button in SlimeBeep's header silences it: no sounds, pop-ups or desktop notifications until you tap it again. Messages still arrive and show as unread.
-- **⏻ Quit:** **Turn SlimeBeep off** in ⚙ Settings removes it until you reload, as if you'd never started it. With the bookmarklet, reload and don't click it; with the userscript, turn it off there to stop it for good.
 - **😊 Emoji and commands:** the 😊 by the chat box opens emoji (your last ones first). Commands: `/me waves`, `/shrug`, `/roll 20`, `/flip`, `/help`. Actions read like the game shows them: `*waves` or `/me waves` from Ann is *Ann waves*, and `**the lights flicker**` has no name.
 - **✨ Actions:** `*giggles*` shows in italics, and a beep that's only an action gets a soft bubble of its own.
 - **📬 Offline beeps:** beep a friend who's offline and, if they have SlimeBeep, it's left in their SlimeBeep mailbox (📬): they get it when they log in, even if you're gone by then. Only their own SlimeBeep can read it. For friends without SlimeBeep (or if the mailbox can't be reached) it waits here instead and goes out the moment they're back online (you need to be online then too); cancel it any time before.
@@ -43,7 +42,7 @@ Click the pink slime (drag it anywhere you like; it stays there). A pink dot on 
 - **🌙 Night mode:** the moon in the header (or ⚙ Settings) switches to navy with a night blue slime.
 - **Settings > Extensions:** SlimeBeep is listed there too, with the same options.
 - **🐞 Bug:** report a problem. SlimeBeep adds its version, the game's version and its own recent errors (nothing about your chats), then you open it on GitHub, copy it, or beep it to SlimeQueenSamantha.
-- **⚙ Settings:** the ⚙ in the header opens SlimeBeep's page in the game's Settings > Extensions: pop sound, pop-ups, desktop notifications, Do not disturb, whether 📍 starts on, remembering who you picked, the wait between group beeps, your profile picture, keeping or clearing your chats, putting the slime back in its corner, matching a theme add-on, and turning SlimeBeep off.
+- **⚙ Settings:** the ⚙ in the header opens SlimeBeep's page in the game's Settings > Extensions: pop sound, pop-ups, desktop notifications, Do not disturb, whether 📍 starts on, remembering who you picked, the wait between group beeps, your profile picture, keeping or clearing your chats, putting the slime back in its corner, and matching a theme add-on.
 
 Every beep you send pops up a "✓ Beep sent" note. A new beep pops a 💌 card (click it to reply); on game versions with notifications (R133 and later) these use the game's own notifications, in SlimeBeep's colours, with an optional desktop notification when the game is in the background. Your chats are kept in your browser, per account, so they're still there after you log out (⚙ Settings can turn that off or clear them).
 
