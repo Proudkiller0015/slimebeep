@@ -80,6 +80,15 @@ declare function ChatRoomSendLocal(content: string, timeout?: number): void;
 /** Whispers to someone in the room (R133); true when sent, or why not ('target-gone', 'target-out-of-range'). */
 declare function ChatRoomSendWhisper(target: number, msg: string): boolean | string;
 declare function ChatRoomCanLeave(): boolean;
+/** The game's toast popups (R133). */
+declare const ToastManager: {
+	custom(
+		msg: string,
+		type: string,
+		opts?: { title?: string; icon?: string; iconColor?: string; duration?: number; category?: string; onClick?: () => void },
+	): void;
+	dismissByCategory?(category: string): void;
+};
 declare function ChatRoomLeave(clearCharacters?: boolean): void;
 declare function ChatSearchSendToast(type: string): void;
 declare function CommonSetScreen(module: string, screen: string): Promise<void>;

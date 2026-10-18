@@ -45,7 +45,7 @@ Click the pink slime (drag it anywhere you like; it stays there). A pink dot on 
 - **🐞 Bug:** report a problem. SlimeBeep adds its version, the game's version and its own recent errors (nothing about your chats), then you open it on GitHub, copy it, or beep it to SlimeQueenSamantha.
 - **⚙ Settings:** the ⚙ in the header opens SlimeBeep's page in the game's Settings > Extensions: pop sound, pop-ups, desktop notifications, Do not disturb, whether 📍 starts on, remembering who you picked, the wait between group beeps, your profile picture, keeping or clearing your chats, putting the slime back in its corner, matching a theme add-on, and turning SlimeBeep off.
 
-Every beep you send pops up a "✓ Beep sent" note by the slime. A new beep pops a 💌 card (click it to reply), with an optional desktop notification when the game is in the background. Your chats are kept in your browser, per account, so they're still there after you log out (⚙ Settings can turn that off or clear them).
+Every beep you send pops up a "✓ Beep sent" note. A new beep pops a 💌 card (click it to reply); on game versions with notifications (R133 and later) these use the game's own notifications, in SlimeBeep's colours, with an optional desktop notification when the game is in the background. Your chats are kept in your browser, per account, so they're still there after you log out (⚙ Settings can turn that off or clear them).
 
 ## For other add-ons
 
@@ -70,7 +70,7 @@ After an update, a small pink line in the room chat (only you see it) says Slime
 
 ## News
 
-[`news.json`](news.json) holds announcements. Add an item (a new `id`, a `title` and a `text`) and push: every player sees it once, as a card by the slime, on their next reload. Nobody has to update anything.
+[`news.json`](news.json) holds announcements. Add an item (a new `id`, a `title` and a `text`) and push: every player sees it once, as a notification, on their next reload. Nobody has to update anything.
 
 ## Updates
 

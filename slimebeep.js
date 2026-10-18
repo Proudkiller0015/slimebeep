@@ -1462,6 +1462,27 @@
 			opacity: 0; transform: translateY(6px); transition: opacity .2s, transform .2s; white-space: nowrap; }
 		#sb-toast.show { opacity: 1; transform: none; }
 		#sb-toggle.boing { animation: sb-boing .45s; }
+		.toast.sb-toast { --background-color: #fff2f9; --accent-color: #7a2456; --progress-color: #ff4fa3; background: linear-gradient(135deg, #ffe3f1, #fff7fc); border: 2px solid #ff9ccf; border-radius: 16px; font-family: "Trebuchet MS", "Segoe UI", sans-serif; text-align: left; }
+		.toast.sb-toast .progress-bar { background: transparent; }
+		.toast.sb-toast .progress-bar::-webkit-progress-bar { background: transparent; }
+		.toast.sb-toast .progress-bar::-webkit-progress-value { background: var(--progress-color); }
+		.toast.sb-toast .progress-bar::-moz-progress-bar { background: var(--progress-color); }
+		.toast.sb-toast .toast-icon { border-radius: 50%; box-shadow: 0 0 0 2px #fff, 0 0 0 3px #ff9ccf; }
+		.toast.sb-toast .toast-title { color: #d6247f; }
+		.toast.sb-toast[data-category="SlimeBeep-note"] { border-width: 1px; }
+		.toast.sb-toast[data-category="SlimeBeep-crown"] { --progress-color: #e6b422; background: linear-gradient(135deg, #fff4c2, #ffe08a 45%, #ffd1ec); border-color: #e6b422; box-shadow: 0 0 18px #ffd23f99; }
+		.toast.sb-toast[data-category="SlimeBeep-crown"] .toast-title { color: #a8740a; }
+		html.sb-night .toast.sb-toast { --progress-color: #5b8cff; --background-color: #141a33; --accent-color: #dfe6ff; background: linear-gradient(135deg, #1d2550, #141a33); border-color: #5b8cff; }
+		html.sb-night .toast.sb-toast .toast-title { color: #8fb3ff; }
+		html.sb-night .toast.sb-toast[data-category="SlimeBeep-crown"] { --progress-color: #e6b422; background: linear-gradient(135deg, #3a2f0c, #1d2550); border-color: #e6b422; }
+		html.sb-night .toast.sb-toast[data-category="SlimeBeep-crown"] .toast-title { color: #ffd23f; }
+		html.sb-themed .toast.sb-toast { --progress-color: var(--sb-t-accent); --background-color: var(--sb-t-main); --accent-color: var(--sb-t-text); background: var(--sb-t-main); border-color: var(--sb-t-accent); }
+		html.sb-themed .toast.sb-toast .toast-title { color: var(--sb-t-accent); }
+		#sb-toggle.sb-crowned::before { content: '👑'; position: absolute; z-index: 1; left: 50%; top: -24px; font-size: 28px; line-height: 1; transform: translateX(-50%) rotate(-12deg); pointer-events: none; animation: sb-crown .6s ease-out; filter: drop-shadow(0 2px 2px #0005); }
+		@keyframes sb-crown { from { transform: translate(-50%, -30px) rotate(-30deg) scale(.4); opacity: 0; } 70% { transform: translate(-50%, 3px) rotate(-8deg) scale(1.15); opacity: 1; } }
+		.sb-confetti { position: fixed; width: 0; height: 0; z-index: 100001; pointer-events: none; }
+		.sb-confetti i { position: absolute; width: 7px; height: 11px; border-radius: 2px; opacity: 0; animation: sb-confetti 1.4s ease-out forwards; }
+		@keyframes sb-confetti { 0% { transform: translate(0, 0) rotate(0); opacity: 1; } 70% { opacity: 1; } 100% { transform: translate(var(--dx), calc(var(--dy) + 140px)) rotate(var(--r)); opacity: 0; } }
 		@keyframes sb-boing { 30% { transform: scale(1.25, .8); } 60% { transform: scale(.9, 1.15); } }
 		.sb-head #sb-dnd.on { background: #fff; box-shadow: 0 0 0 2px #ff4fa3; }
 	`;
@@ -1598,6 +1619,7 @@
 				return;
 			}
 			setOpen(panel.style.display !== 'flex');
+			countCrownClick();
 		});
 		toggle.addEventListener('pointercancel', () => endDrag(true));
 		toggle.addEventListener('lostpointercapture', () => endDrag(true));
@@ -2715,6 +2737,7 @@
 		}
 		card({
 			icon: avatar(from, fromName),
+			pic: (pfpOf(from) || {}).data,
 			title: `👥 ${name}`,
 			text: `${fromName} invited you to a group chat. Tap to see it.`,
 			onClick: () => {
@@ -3977,6 +4000,7 @@
 			} else if (!opts.dnd) {
 				card({
 					icon: groupAv({}),
+					pic: g.pic,
 					title: `👥 ${g.name}`,
 					text: `${unseen.length} new messages while you were away`,
 					onClick: () => {
@@ -4858,8 +4882,15 @@
 		if (opts.popups) {
 			card(
 				g
-					? { icon: groupAv(g), title: `👥 ${g.name}`, text: h.announceText || `${h.MemberName}: ${text}`, onClick: open }
-					: { icon: avatar(h.MemberNumber, h.MemberName), title: `💌 ${h.MemberName}`, text, sub: room, onClick: open },
+					? { icon: groupAv(g), pic: g.pic, title: `👥 ${g.name}`, text: h.announceText || `${h.MemberName}: ${text}`, onClick: open }
+					: {
+							icon: avatar(h.MemberNumber, h.MemberName),
+							pic: (pfpOf(h.MemberNumber) || {}).data,
+							title: `💌 ${h.MemberName}`,
+							text,
+							sub: room,
+							onClick: open,
+						},
 			);
 		}
 		if (opts.desktop && document.hidden && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
@@ -4884,6 +4915,7 @@
 	 * A card by the toggle.
 	 * @typedef {object} CardOptions
 	 * @property {SafeHtml} icon
+	 * @property {string | null} [pic] the picture a game toast shows (the slime when none)
 	 * @property {string} title
 	 * @property {string} text
 	 * @property {string} [sub] a small line under the text
@@ -4895,8 +4927,19 @@
 	 * Adds a card to the stack (at most 4).
 	 * @param {CardOptions} options
 	 */
-	function card({ icon, title, text, sub = '', onClick, ms = 7000, cls = '' }) {
+	function card({ icon, pic, title, text, sub = '', onClick, ms = 7000, cls = '' }) {
 		if (stopped) {
+			return;
+		}
+		if (gameToasts()) {
+			gameToast({
+				title,
+				text: sub ? `${text}\n${sub}` : text,
+				pic,
+				ms,
+				onClick,
+				category: cls === 'news' ? 'SlimeBeep-news' : 'SlimeBeep',
+			});
 			return;
 		}
 		const box = $('sb-cards');
@@ -4930,6 +4973,28 @@
 		placeCards();
 		if (ms) {
 			setTimeout(close, ms);
+		}
+	}
+
+	/** Whether the game has its toast system (R133), which SlimeBeep's cards and notes go through. */
+	const gameToasts = () => typeof ToastManager === 'object' && ToastManager !== null && typeof ToastManager.custom === 'function';
+	/**
+	 * Shows a toast through the game's toast system, in SlimeBeep's colours (type sb-toast; the category
+	 * picks the variant: SlimeBeep, SlimeBeep-news, SlimeBeep-note or SlimeBeep-crown).
+	 * @param {{ title?: string, text: string, pic?: string | null, ms?: number, onClick?: () => void, category?: string }} t
+	 */
+	function gameToast({ title = '', text, pic, ms = 7000, onClick, category = 'SlimeBeep' }) {
+		try {
+			ToastManager.custom(text, 'sb-toast', {
+				title,
+				icon: pic || ICON,
+				iconColor: 'default',
+				duration: ms,
+				category,
+				...(onClick ? { onClick } : {}),
+			});
+		} catch (e) {
+			warn(e, 'toast');
 		}
 	}
 
@@ -7390,12 +7455,107 @@
 
 	/** @type {ReturnType<typeof setTimeout> | undefined} Hides the toast. */
 	let toastTimer;
+	/** @type {number[]} When the slime was last clicked (for the crown). */
+	const slimeClicks = [];
+	/** Ten clicks on the slime within four seconds crown it. */
+	function countCrownClick() {
+		const now = Date.now();
+		slimeClicks.push(now);
+		while (slimeClicks.length && now - slimeClicks[0] > 4000) {
+			slimeClicks.shift();
+		}
+		if (slimeClicks.length >= 10) {
+			slimeClicks.length = 0;
+			crown();
+		}
+	}
+	/** The slime gets a royal crown (for this visit), with a tada and confetti. */
+	function crown() {
+		const s = $('sb-toggle');
+		s.classList.add('sb-crowned');
+		if (!opts.dnd) {
+			tada();
+		}
+		if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+			confetti(s.getBoundingClientRect());
+		}
+		const text = 'All hail the Slime Queen!';
+		if (gameToasts()) {
+			gameToast({ title: '👑 SlimeBeep', text, ms: 6000, category: 'SlimeBeep-crown' });
+		} else {
+			notify(`👑 ${text}`);
+		}
+	}
+	/** A little fanfare: C E G, then a high C. */
+	function tada() {
+		try {
+			const ac = audioCtx || (audioCtx = new AudioContext());
+			for (const [f, at, len] of [
+				[523, 0, 0.12],
+				[659, 0.1, 0.12],
+				[784, 0.2, 0.12],
+				[1047, 0.32, 0.5],
+			]) {
+				const o = ac.createOscillator(),
+					g = ac.createGain();
+				o.type = 'triangle';
+				o.frequency.value = f;
+				g.gain.setValueAtTime(0.0001, ac.currentTime + at);
+				g.gain.exponentialRampToValueAtTime(0.14, ac.currentTime + at + 0.02);
+				g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + at + len);
+				o.connect(g).connect(ac.destination);
+				o.start(ac.currentTime + at);
+				o.stop(ac.currentTime + at + len + 0.02);
+			}
+		} catch (e) {
+			/* no sound, no matter */
+		}
+	}
 	/**
-	 * Shows a short toast by the toggle.
+	 * A burst of confetti from the middle of a box (removed when it has fallen).
+	 * @param {DOMRect} r
+	 */
+	function confetti(r) {
+		const box = document.createElement('div');
+		box.className = 'sb-confetti';
+		box.style.left = `${r.left + r.width / 2}px`;
+		box.style.top = `${r.top + r.height / 2}px`;
+		const colours = ['#ff4fa3', '#ffd23f', '#7bdcff', '#9b6bff', '#6fe3a1', '#ff8a5c'];
+		for (let i = 0; i < 40; i++) {
+			const bit = document.createElement('i');
+			const angle = Math.random() * Math.PI * 2;
+			const dist = 60 + Math.random() * 110;
+			bit.style.setProperty('--dx', `${Math.cos(angle) * dist}px`);
+			bit.style.setProperty('--dy', `${Math.sin(angle) * dist - 40}px`);
+			bit.style.setProperty('--r', `${Math.round(Math.random() * 720 - 360)}deg`);
+			bit.style.background = colours[i % colours.length];
+			bit.style.animationDelay = `${Math.random() * 0.12}s`;
+			box.appendChild(bit);
+		}
+		document.body.appendChild(box);
+		setTimeout(() => box.remove(), 1700);
+	}
+	/** Makes the slime bounce. */
+	function boing() {
+		const s = $('sb-toggle');
+		s.classList.remove('boing');
+		void s.offsetWidth;
+		s.classList.add('boing');
+	}
+	/**
+	 * Shows a short note: a game toast, or the bubble by the toggle on games without toasts.
 	 * @param {string} text
 	 */
 	function notify(text) {
 		if (stopped) {
+			return;
+		}
+		if (gameToasts()) {
+			if (typeof ToastManager.dismissByCategory === 'function') {
+				ToastManager.dismissByCategory('SlimeBeep-note');
+			}
+			gameToast({ text, ms: 2200, category: 'SlimeBeep-note' });
+			boing();
 			return;
 		}
 		const t = $('sb-toast'),
@@ -7405,9 +7565,7 @@
 		t.classList.add('show');
 		t.style.left = `${Math.max(8, Math.min(innerWidth - t.offsetWidth - 8, r.left + r.width / 2 - t.offsetWidth / 2))}px`;
 		t.style.top = `${r.bottom + 8 + t.offsetHeight <= innerHeight ? r.bottom + 8 : Math.max(8, r.top - t.offsetHeight - 8)}px`;
-		s.classList.remove('boing');
-		void s.offsetWidth;
-		s.classList.add('boing');
+		boing();
 		clearTimeout(toastTimer);
 		toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
 	}

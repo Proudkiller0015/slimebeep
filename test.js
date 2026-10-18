@@ -2832,6 +2832,154 @@ const check = (ok, what) => {
 	);
 	await shot('reload');
 
+	// ---- 🍞 The game's toasts (R133): cards and notes go through ToastManager in SlimeBeep's colours,
+	// and ten quick clicks on the slime crown it (tada and confetti).
+	{
+		// The game's own toast styles, so the screenshots show the real look (skipped when offline).
+		const toastCss = await fetch('https://www.bondageprojects.elementfx.com/R133/BondageClub/CSS/toasts.css')
+			.then((r) => r.text())
+			.catch(() => '');
+		await p.addStyleTag({ content: toastCss });
+		await p.evaluate(() => {
+			window.toasts = [];
+			// Builds the same elements as the game's ToastManager, so the screenshots show the real look.
+			window.ToastManager = {
+				custom(msg, type, o = {}) {
+					toasts.push({ msg, type, ...o });
+					let box = document.querySelector('.toast-container');
+					if (!box) {
+						box = document.createElement('div');
+						box.className = 'toast-container';
+						document.body.appendChild(box);
+					}
+					const t = document.createElement('div');
+					t.className = `toast ${type} show`;
+					t.dataset.category = o.category || '';
+					const icon = document.createElement('div');
+					icon.className = `toast-icon ${o.iconColor || 'default'}`;
+					icon.style.setProperty('--toast-icon', `url(${o.icon})`);
+					const content = document.createElement('div');
+					content.className = 'toast-content';
+					const title = document.createElement('span');
+					title.className = 'toast-title';
+					title.textContent = o.title || '';
+					const text = document.createElement('span');
+					text.className = 'toast-message toast-clamp-message';
+					text.textContent = msg;
+					content.append(title, text);
+					const x = document.createElement('button');
+					x.className = 'toast-dismiss';
+					t.append(icon, content, x);
+					t.addEventListener('click', (ev) => {
+						o.onClick?.(ev, t);
+						t.remove();
+					});
+					box.appendChild(t);
+				},
+				dismissByCategory(c) {
+					document.querySelectorAll(`.toast[data-category="${c}"]`).forEach((t) => t.remove());
+				},
+			};
+			window.dings = 0;
+		});
+		await wait(300);
+		const cardsBefore = await p.evaluate(() => document.querySelectorAll('.sb-card').length);
+		await p.evaluate(() =>
+			FriendListBeepLog.push({
+				MemberNumber: 11,
+				MemberName: 'Ann',
+				Sent: false,
+				Read: false,
+				Time: new Date(),
+				Message: 'a toast for you',
+				Id: `toast${Math.random()}`,
+			}),
+		);
+		await wait(1800);
+		const beepToast = await p.evaluate(() => {
+			const t = toasts.find((x) => x.msg === 'a toast for you');
+			return (
+				t && {
+					type: t.type,
+					title: t.title,
+					category: t.category,
+					icon: !!t.icon,
+					click: typeof t.onClick,
+					cards: document.querySelectorAll('.sb-card').length,
+				}
+			);
+		});
+		check(
+			!!beepToast &&
+				beepToast.type === 'sb-toast' &&
+				beepToast.title === '💌 Ann' &&
+				beepToast.category === 'SlimeBeep' &&
+				beepToast.icon &&
+				beepToast.click === 'function' &&
+				beepToast.cards === cardsBefore,
+			`with the game's toasts, a beep pops a SlimeBeep toast instead of a card (${JSON.stringify(beepToast)})`,
+		);
+		await tap('#sb-dnd');
+		await wait(150);
+		await tap('#sb-dnd');
+		await wait(150);
+		const notes = await p.evaluate(() => ({
+			sent: toasts.filter((t) => t.category === 'SlimeBeep-note').length,
+			shown: document.querySelectorAll('.toast[data-category="SlimeBeep-note"]').length,
+			bubble: document.getElementById('sb-toast').classList.contains('show'),
+		}));
+		check(
+			notes.sent === 2 && notes.shown === 1 && !notes.bubble,
+			`notes are toasts too, one at a time, and the old bubble stays hidden (${JSON.stringify(notes)})`,
+		);
+		await shot('toasts');
+		await p.click('.toast[data-category="SlimeBeep"]');
+		await wait(300);
+		check(await p.evaluate(() => document.getElementById('sb-panel').style.display === 'flex'), 'clicking the beep toast opens the chat');
+		await p.click('#sb-toggle');
+		// Clicks older than four seconds no longer count.
+		await wait(4200);
+		const crownedBefore = await p.evaluate(() => document.getElementById('sb-toggle').classList.contains('sb-crowned'));
+		for (let i = 0; i < 9; i++) {
+			await p.click('#sb-toggle');
+		}
+		const nine = await p.evaluate(() => document.getElementById('sb-toggle').classList.contains('sb-crowned'));
+		await p.evaluate(() => {
+			window.dings = 0;
+			const real = AudioContext.prototype.createOscillator;
+			AudioContext.prototype.createOscillator = function (...a) {
+				window.dings++;
+				return real.apply(this, a);
+			};
+		});
+		await p.click('#sb-toggle');
+		await wait(250);
+		const crowned = await p.evaluate(() => ({
+			crown: document.getElementById('sb-toggle').classList.contains('sb-crowned'),
+			confetti: document.querySelectorAll('.sb-confetti i').length,
+			toast: toasts.some((t) => t.category === 'SlimeBeep-crown' && t.title === '👑 SlimeBeep'),
+			tada: window.dings,
+		}));
+		check(!crownedBefore && !nine, 'nine clicks on the slime do nothing special');
+		check(
+			crowned.crown && crowned.confetti === 40 && crowned.toast && crowned.tada === 4,
+			`the tenth click crowns the slime, with a tada, confetti and a toast (${JSON.stringify(crowned)})`,
+		);
+		await shot('crown');
+		await wait(1800);
+		await shot('crowned');
+		check(await p.evaluate(() => !document.querySelector('.sb-confetti')), 'the confetti cleans itself up');
+		await p.evaluate(() => {
+			delete window.ToastManager;
+			document.querySelector('.toast-container')?.remove();
+			if (document.getElementById('sb-panel').style.display === 'flex') {
+				document.getElementById('sb-toggle').dispatchEvent(new PointerEvent('pointerdown', { button: 0, bubbles: true }));
+				document.getElementById('sb-toggle').dispatchEvent(new PointerEvent('pointerup', { button: 0, bubbles: true }));
+			}
+		});
+		await wait(200);
+	}
+
 	// ---- A plain http:// page (no crypto.subtle): group chats and mailboxes say to use the https address and
 	// never connect; beeps work as usual.
 	{
