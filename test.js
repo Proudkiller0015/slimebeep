@@ -446,6 +446,50 @@ const check = (ok, what) => {
 		await p.evaluate(() => openedSettings.join() === 'SlimeBeep' && document.getElementById('sb-panel').style.display === 'none'),
 		"⚙ opens SlimeBeep's page in the game's Settings > Extensions (and gets the window out of the way)",
 	);
+	// From a chat room the game can finish loading Settings after SlimeBeep's page opened and fall back to
+	// the Extensions list: SlimeBeep's page is opened again from there.
+	{
+		const was = await p.evaluate(() => {
+			const before = { screen: window.CurrentScreen, open: window.PreferenceSubscreenExtensionsOpen };
+			window.PreferenceExtensionsCurrent = null;
+			window.PreferenceSubscreen = null;
+			window.settingsOpens = 0;
+			window.PreferenceSubscreenExtensionsOpen = (id) => {
+				settingsOpens++;
+				window.CurrentScreen = 'Preference';
+				window.PreferenceSubscreen = { name: 'Extensions' };
+				window.PreferenceExtensionsCurrent = { Identifier: id };
+				if (settingsOpens === 1) {
+					// The game's late load puts the list back.
+					setTimeout(() => {
+						window.PreferenceExtensionsCurrent = null;
+					}, 30);
+				}
+				return Promise.resolve();
+			};
+			window.restoreSettings = () => {
+				window.CurrentScreen = before.screen;
+				window.PreferenceSubscreenExtensionsOpen = before.open;
+				delete window.PreferenceExtensionsCurrent;
+				delete window.PreferenceSubscreen;
+			};
+			return before.screen;
+		});
+		await p.click('#sb-toggle');
+		await wait(200);
+		await p.click('#sb-gear');
+		await wait(900);
+		const landed = await p.evaluate(() => ({
+			page: PreferenceExtensionsCurrent && PreferenceExtensionsCurrent.Identifier,
+			opens: settingsOpens,
+		}));
+		check(
+			landed.page === 'SlimeBeep' && landed.opens === 2,
+			`⚙ still lands on SlimeBeep's page when the game falls back to the list (${JSON.stringify(landed)})`,
+		);
+		await p.evaluate(() => restoreSettings());
+		check((await p.evaluate(() => window.CurrentScreen)) === was, 'and the test puts the game screen back');
+	}
 	// "Let them join me" starts off; the room tests below switch it on (its box is the 5th on the page).
 	check(await p.evaluate(() => !JSON.parse(localStorage.getItem('slimebeep.options')).shareRoom), '"Let them join me" starts off');
 	await p.evaluate(() => {

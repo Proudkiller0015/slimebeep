@@ -68,6 +68,10 @@ declare var ChatRoomData: { Name: string } | null;
 /** The characters in the chat room you are in. */
 declare var ChatRoomCharacter: { MemberNumber?: number; Name: string; Nickname?: string }[];
 declare var CurrentScreen: string;
+/** The extension page open in Settings > Extensions, or null for the list. */
+declare var PreferenceExtensionsCurrent: { Identifier: string } | null;
+/** The open Settings page (R133). */
+declare var PreferenceSubscreen: { name: string } | null;
 declare var GameVersion: string;
 declare var MainCanvas: CanvasRenderingContext2D;
 declare var PreferenceExtensionsSettings: Record<string, BcExtensionSetting>;

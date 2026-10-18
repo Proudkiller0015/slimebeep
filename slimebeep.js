@@ -1478,8 +1478,8 @@
 		html.sb-night .toast.sb-toast[data-category="SlimeBeep-crown"] .toast-title { color: #ffd23f; }
 		html.sb-themed .toast.sb-toast { --progress-color: var(--sb-t-accent); --background-color: var(--sb-t-main); --accent-color: var(--sb-t-text); background: var(--sb-t-main); border-color: var(--sb-t-accent); }
 		html.sb-themed .toast.sb-toast .toast-title { color: var(--sb-t-accent); }
-		#sb-toggle.sb-crowned::before { content: '👑'; position: absolute; z-index: 1; left: 50%; top: -24px; font-size: 28px; line-height: 1; transform: translateX(-50%) rotate(-12deg); pointer-events: none; animation: sb-crown .6s ease-out; filter: drop-shadow(0 2px 2px #0005); }
-		@keyframes sb-crown { from { transform: translate(-50%, -30px) rotate(-30deg) scale(.4); opacity: 0; } 70% { transform: translate(-50%, 3px) rotate(-8deg) scale(1.15); opacity: 1; } }
+		#sb-toggle.sb-crowned::before { content: '👑'; position: absolute; z-index: 1; left: 0; right: 0; top: -24px; text-align: center; font-size: 28px; line-height: 1; pointer-events: none; animation: sb-crown .6s ease-out; filter: drop-shadow(0 2px 2px #0005); }
+		@keyframes sb-crown { from { transform: translateY(-30px) scale(.4); opacity: 0; } 70% { transform: translateY(3px) scale(1.15); opacity: 1; } }
 		.sb-confetti { position: fixed; width: 0; height: 0; z-index: 100001; pointer-events: none; }
 		.sb-confetti i { position: absolute; width: 7px; height: 11px; border-radius: 2px; opacity: 0; animation: sb-confetti 1.4s ease-out forwards; }
 		@keyframes sb-confetti { 0% { transform: translate(0, 0) rotate(0); opacity: 1; } 70% { opacity: 1; } 100% { transform: translate(var(--dx), calc(var(--dy) + 140px)) rotate(var(--r)); opacity: 0; } }
@@ -7726,7 +7726,42 @@
 			return;
 		}
 		setOpen(false);
-		Promise.resolve(PreferenceSubscreenExtensionsOpen('SlimeBeep')).catch((e) => warn(e, 'settings'));
+		Promise.resolve(PreferenceSubscreenExtensionsOpen('SlimeBeep'))
+			.then(() => settingsShown(0))
+			.catch((e) => warn(e, 'settings'));
+	}
+	/**
+	 * Coming from another screen, the game can finish loading Settings after SlimeBeep's page was opened and
+	 * show the Extensions list instead: SlimeBeep's page is opened again from there (for up to two seconds).
+	 * @param {number} tries
+	 */
+	function settingsShown(tries) {
+		if (typeof PreferenceExtensionsCurrent === 'undefined' || tries > 20) {
+			return;
+		}
+		setTimeout(() => {
+			try {
+				if (PreferenceExtensionsCurrent?.Identifier === 'SlimeBeep') {
+					// Once more, in case the game was still loading.
+					if (tries < 3) {
+						settingsShown(tries + 1);
+					}
+					return;
+				}
+				if (typeof CurrentScreen === 'undefined' || CurrentScreen !== 'Preference' || PreferenceSubscreen?.name !== 'Extensions') {
+					// Still on its way there; the player may also have left already.
+					if (typeof CurrentScreen !== 'undefined' && CurrentScreen === 'Preference') {
+						settingsShown(tries + 1);
+					}
+					return;
+				}
+				Promise.resolve(PreferenceSubscreenExtensionsOpen('SlimeBeep'))
+					.then(() => settingsShown(tries + 1))
+					.catch((e) => warn(e, 'settings'));
+			} catch (e) {
+				warn(e, 'settings');
+			}
+		}, 100);
 	}
 	/** Removes your profile picture (and the photo it was cut from) and tells SlimeBeep friends. */
 	function removePicture() {
