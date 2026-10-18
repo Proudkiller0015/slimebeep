@@ -161,8 +161,9 @@ const check = (ok, what) => {
 			{ MemberNumber: 12, MemberName: 'Bea', Sent: false, Read: false, Time: t(3), Message: `👍\n${SEP}{"messageType":"Reaction"}` },
 		];
 		window.beeps = [];
-		// Like socket.io: event listeners plus catch-all ones, which an add-on can clear.
+		// Like socket.io: event listeners plus catch-all ones, which an add-on can clear, and outgoing ones.
 		let anyFns = [];
+		let outFns = [];
 		window.ServerSocket = {
 			on: (ev, fn) => {
 				(handlers[ev] = handlers[ev] || []).push(fn);
@@ -185,15 +186,26 @@ const check = (ok, what) => {
 				anyFns = anyFns.filter((f) => f !== fn);
 			},
 			listenersAny: () => anyFns.slice(),
+			onAnyOutgoing: (fn) => {
+				outFns.push(fn);
+			},
+			offAnyOutgoing: (fn) => {
+				outFns = outFns.filter((f) => f !== fn);
+			},
 		};
 		window.fire = (ev, d) => {
 			anyFns.forEach((fn) => fn(ev, d));
 			(handlers[ev] || []).forEach((fn) => fn(d));
 		};
 		window.hidden = [];
+		window.chats = [];
 		window.ServerSend = (ev, data) => {
+			outFns.forEach((fn) => fn(ev, data));
 			if (ev === 'AccountBeep') {
 				hidden.push(data);
+			}
+			if (ev === 'ChatRoomChat') {
+				chats.push(data);
 			}
 			if (ev === 'AccountQuery') {
 				setTimeout(
@@ -232,6 +244,15 @@ const check = (ok, what) => {
 		// The room's chat log, as the game makes it a moment after entering a room; local notes land in it.
 		window.local = [];
 		window.ServerPlayerIsInChatRoom = () => true;
+		// Nobody else in the room unless a test puts them there; whispers go out like the game's.
+		window.ChatRoomCharacter = [];
+		window.ChatRoomSendWhisper = (n, msg) => {
+			if (!ChatRoomCharacter.some((C) => C.MemberNumber === n)) {
+				return 'target-gone';
+			}
+			ServerSend('ChatRoomChat', { Content: msg, Type: 'Whisper', Target: n });
+			return true;
+		};
 		window.ChatRoomSendLocal = (c) => {
 			local.push(c);
 			const log = document.getElementById('TextAreaChatLog');
@@ -2324,6 +2345,55 @@ const check = (ok, what) => {
 			/hello from your mailbox/.test(thread) && /📬/.test(thread) && !/totally Cat/.test(thread),
 			"it is in Cat's chat with 📬, and Eve's fake (signed with another key than Cat's) is thrown away",
 		);
+		await tap('#sb-back');
+	}
+
+	// ---- 🤫 Whispers in a chat room show in that person's chat; there, replying whispers while you share the room.
+	{
+		await p.evaluate(() => {
+			window.ChatRoomCharacter = [
+				{ MemberNumber: 1, Name: 'Me' },
+				{ MemberNumber: 11, Name: 'Ann' },
+			];
+			chats.length = 0;
+			beeps.length = 0;
+			fire('ChatRoomMessage', { Sender: 11, Type: 'Whisper', Content: 'psst, over here', Dictionary: [] });
+			fire('ChatRoomMessage', { Sender: 11, Type: 'Chat', Content: 'said out loud' });
+		});
+		await wait(300);
+		await p.evaluate(() => SlimeBeep.api.openChat(11));
+		await wait(250);
+		const wThread = await p.$eval('#sb-msgs', (e) => e.innerHTML);
+		check(
+			/psst, over here/.test(wThread) && /🤫/.test(wThread) && !/said out loud/.test(wThread),
+			"a whisper from Ann in the room shows in her chat, marked 🤫 (room chat doesn't)",
+		);
+		check(/^Whisper to Ann/.test(await p.$eval('#sb-text', (e) => e.placeholder)), 'in the same room, the chat offers to whisper');
+		await p.type('#sb-text', 'whispering back');
+		await p.keyboard.press('Enter');
+		await wait(300);
+		const sentW = await p.evaluate(() => ({ chats: chats.slice(), beeps: beeps.length }));
+		const wBack = await p.$eval('#sb-msgs', (e) => e.textContent);
+		check(
+			sentW.chats.length === 1 &&
+				sentW.chats[0].Type === 'Whisper' &&
+				sentW.chats[0].Target === 11 &&
+				sentW.beeps === 0 &&
+				/whispering back/.test(wBack),
+			`replying there whispers to Ann (no beep) and it shows in her chat (${JSON.stringify(sentW)})`,
+		);
+		// A whisper typed in the game's own chat lands here too.
+		await p.evaluate(() => ServerSend('ChatRoomChat', { Content: 'typed in the room', Type: 'Whisper', Target: 11 }));
+		await wait(300);
+		check(/typed in the room/.test(await p.$eval('#sb-msgs', (e) => e.textContent)), "a whisper sent from the game's chat shows here too");
+		await p.evaluate(() => {
+			window.ChatRoomCharacter = [];
+		});
+		await tap('#sb-back');
+		await wait(150);
+		await p.evaluate(() => SlimeBeep.api.openChat(11));
+		await wait(200);
+		check(/^Beep Ann/.test(await p.$eval('#sb-text', (e) => e.placeholder)), 'once Ann is not in your room, the chat beeps again');
 		await tap('#sb-back');
 	}
 

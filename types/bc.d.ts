@@ -38,6 +38,8 @@ interface BcSocket {
 	prependAny?(fn: (event: string, data: unknown) => void): void;
 	offAny?(fn: (event: string, data: unknown) => void): void;
 	listenersAny?(): ((event: string, data: unknown) => void)[];
+	onAnyOutgoing?(fn: (event: string, data: unknown) => void): void;
+	offAnyOutgoing?(fn: (event: string, data: unknown) => void): void;
 	listeners?(event: string): ((data: unknown) => void)[];
 }
 
@@ -63,6 +65,8 @@ declare var Player: BcPlayer;
 declare var ServerSocket: BcSocket;
 declare var FriendListBeepLog: BcBeepLogEntry[];
 declare var ChatRoomData: { Name: string } | null;
+/** The characters in the chat room you are in. */
+declare var ChatRoomCharacter: { MemberNumber?: number; Name: string; Nickname?: string }[];
 declare var CurrentScreen: string;
 declare var GameVersion: string;
 declare var MainCanvas: CanvasRenderingContext2D;
@@ -73,6 +77,8 @@ declare function ServerSendBeepMessage(target: number, msg: string, options?: { 
 declare function ServerPlayerIsInChatRoom(): boolean;
 declare function ServerRoomJoin(roomName: string): Promise<BcRoomJoinResult>;
 declare function ChatRoomSendLocal(content: string, timeout?: number): void;
+/** Whispers to someone in the room (R133); true when sent, or why not ('target-gone', 'target-out-of-range'). */
+declare function ChatRoomSendWhisper(target: number, msg: string): boolean | string;
 declare function ChatRoomCanLeave(): boolean;
 declare function ChatRoomLeave(clearCharacters?: boolean): void;
 declare function ChatSearchSendToast(type: string): void;

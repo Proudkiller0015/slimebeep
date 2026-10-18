@@ -14,6 +14,8 @@ const gameGlobals = Object.fromEntries(
 		'ServerPlayerIsInChatRoom',
 		'FriendListBeepLog',
 		'ChatRoomData',
+		'ChatRoomCharacter',
+		'ChatRoomSendWhisper',
 		'ChatRoomSendLocal',
 		'ChatRoomCanLeave',
 		'ChatRoomLeave',
@@ -35,9 +37,25 @@ const gameGlobals = Object.fromEntries(
 
 /** Helpers the test page defines in its stub (test.js), used inside page.evaluate callbacks. */
 const testPageGlobals = Object.fromEntries(
-	['SlimeBeep', 'fire', 'beeps', 'hidden', 'local', 'cleared', 'drawn', 'makeLog', 'gameKeys', 'apiEvents', 'opened', 'screens', 'joins', 'left', 'MouseX', 'MouseY'].map(
-		(name) => [name, 'writable'],
-	),
+	[
+		'SlimeBeep',
+		'fire',
+		'beeps',
+		'hidden',
+		'chats',
+		'local',
+		'cleared',
+		'drawn',
+		'makeLog',
+		'gameKeys',
+		'apiEvents',
+		'opened',
+		'screens',
+		'joins',
+		'left',
+		'MouseX',
+		'MouseY',
+	].map((name) => [name, 'writable']),
 );
 
 /** Style and safety rules for all of SlimeBeep's code. */
@@ -76,12 +94,20 @@ export default [
 	},
 	{
 		files: ['relay/src/index.js'],
-		languageOptions: { ecmaVersion: 2022, sourceType: 'module', globals: { ...globals.serviceworker, WebSocketPair: 'readonly', WebSocketRequestResponsePair: 'readonly' } },
+		languageOptions: {
+			ecmaVersion: 2022,
+			sourceType: 'module',
+			globals: { ...globals.serviceworker, WebSocketPair: 'readonly', WebSocketRequestResponsePair: 'readonly' },
+		},
 		rules,
 	},
 	{
 		files: ['test.js', 'relay/test-relay.js', 'relay/e2e-peer.js'],
-		languageOptions: { ecmaVersion: 2022, sourceType: 'commonjs', globals: { ...globals.node, ...globals.browser, ...gameGlobals, ...testPageGlobals } },
+		languageOptions: {
+			ecmaVersion: 2022,
+			sourceType: 'commonjs',
+			globals: { ...globals.node, ...globals.browser, ...gameGlobals, ...testPageGlobals },
+		},
 		// page.evaluate callbacks run inside the test page, not in the scope around them, so reusing a name there is not shadowing.
 		rules: { ...rules, 'no-shadow': 'off' },
 	},

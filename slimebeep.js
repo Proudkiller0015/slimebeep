@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.1.0';
+	const VERSION = '3.1.1';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -115,7 +115,7 @@
 	/**
 	 * A message in a chat (an entry of `hist`).
 	 * @typedef {object} HistEntry
-	 * @property {string} k unique key: the game beep's (keyOf), 'g:<group>:<id>', 'raw:...' or 'mail:<id>'
+	 * @property {string} k unique key: the game beep's (keyOf), 'g:<group>:<id>', 'raw:...', 'mail:<id>' or 'w:...' (a whisper)
 	 * @property {number} MemberNumber one-to-one: the other person; group: the sender (0 for system lines)
 	 * @property {string} MemberName
 	 * @property {boolean} Sent sent by you
@@ -127,6 +127,7 @@
 	 * @property {string} [sys] a group's system line: 'roster' or 'left'
 	 * @property {boolean} [unread] for entries the game's log doesn't have (group, caught and mailbox ones)
 	 * @property {boolean} [mail] went through a mailbox
+	 * @property {boolean} [whisper] a whisper in a chat room, not a beep
 	 * @property {boolean} [unchecked] mailbox beep whose sender key could not be checked
 	 * @property {string} [announceText] the card text, when different from the message
 	 */
@@ -1732,6 +1733,9 @@
 				if (typeof sock.offAny === 'function') {
 					sock.offAny(anyListener);
 				}
+				if (typeof sock.offAnyOutgoing === 'function') {
+					sock.offAnyOutgoing(outListener);
+				}
 				if (typeof sock.off === 'function') {
 					sock.off('AccountBeep', beepListener);
 					sock.off('AccountQueryResult', queryListener);
@@ -1787,12 +1791,20 @@
 	 * @property {boolean} [Private]
 	 */
 	/**
-	 * Handles the two server messages SlimeBeep reads: AccountBeep and the OnlineFriends answer. Others are ignored.
+	 * Handles the server messages SlimeBeep reads: AccountBeep, the OnlineFriends answer and whispers to you
+	 * (ChatRoomMessage). Others are ignored.
 	 * @param {string} event
 	 * @param {unknown} data
 	 */
 	function onServer(event, data) {
 		try {
+			if (event === 'ChatRoomMessage') {
+				const m = /** @type {{ Type?: string, Sender?: number, Content?: unknown } | null} */ (data);
+				if (m && m.Type === 'Whisper' && isNum(m.Sender)) {
+					takeWhisper(Number(m.Sender), m.Content, false);
+				}
+				return;
+			}
 			if (event === 'AccountQueryResult') {
 				const answer = /** @type {{ Query?: string, Result?: Friend[] } | null} */ (data);
 				if (!answer || answer.Query !== 'OnlineFriends' || !Array.isArray(answer.Result)) {
@@ -1846,6 +1858,59 @@
 	 */
 	const anyListener = (event, data) => onServer(event, data);
 	/**
+	 * Watches what the game sends, for your whispers (ChatRoomChat of type Whisper).
+	 * @param {string} event
+	 * @param {unknown} data
+	 */
+	const outListener = (event, data) => {
+		try {
+			const m = /** @type {{ Type?: string, Target?: number, Content?: unknown } | null} */ (data);
+			if (event === 'ChatRoomChat' && m && m.Type === 'Whisper' && isNum(m.Target)) {
+				takeWhisper(Number(m.Target), m.Content, true);
+			}
+		} catch (e) {
+			warn(e, 'whisper');
+		}
+	};
+	/**
+	 * Adds a chat room whisper to that person's chat. It also shows in the room's chat, so there is no
+	 * sound or card for it.
+	 * @param {number} other who it was with
+	 * @param {unknown} content
+	 * @param {boolean} sent
+	 */
+	function takeWhisper(other, content, sent) {
+		const text = typeof content === 'string' ? content.trim().slice(0, 1000) : '';
+		if (!text || other === Player.MemberNumber) {
+			return;
+		}
+		const now = Date.now();
+		const k = `w:${other}|${sent ? 1 : 0}|${now}|${text.slice(0, 40)}`;
+		if (histKeys.has(k)) {
+			return;
+		}
+		const C =
+			typeof ChatRoomCharacter === 'object' && Array.isArray(ChatRoomCharacter)
+				? ChatRoomCharacter.find((c) => c.MemberNumber === other)
+				: undefined;
+		const name = nameOf(other) || (C && clean(C.Nickname || C.Name, LIMITS.name)) || `#${other}`;
+		hist.push({
+			k,
+			MemberNumber: other,
+			MemberName: name,
+			Sent: sent,
+			Time: now,
+			Message: text,
+			whisper: true,
+			unread: !sent && !(isOpen() && thread === other),
+		});
+		histKeys.add(k);
+		saveHistory();
+		if (isOpen() && tab !== 'options' && tab !== 'wave') {
+			render(true);
+		}
+	}
+	/**
 	 * Per-event listener, for a socket without a catch-all.
 	 * @param {unknown} data
 	 */
@@ -1881,6 +1946,12 @@
 			return;
 		}
 		listening = sock;
+		if (sock.onAnyOutgoing) {
+			if (sock.offAnyOutgoing) {
+				sock.offAnyOutgoing(outListener);
+			}
+			sock.onAnyOutgoing(outListener);
+		}
 		if (catchAll) {
 			if (sock.offAny) {
 				sock.offAny(anyListener);
@@ -5948,6 +6019,8 @@
 			return html`<span title="${title}">📬</span> `;
 		};
 		/** @param {HistEntry} b */
+		const whisperMark = (b) => b.whisper && html`<span title="Whispered in a chat room">🤫</span> `;
+		/** @param {HistEntry} b */
 		const uncheckedMark = (b) =>
 			b.unchecked && html`<span title="Their SlimeBeep has not told yours its key yet, so who sent this could not be checked">⚠</span> `;
 		/** @type {HtmlValue} */
@@ -5955,7 +6028,7 @@
 		if (msgs.length) {
 			bubbles = msgs.map(
 				(b, i) =>
-					html`<div class="sb-b ${b.Sent ? 'me' : 'them'}${isAction(textOf(b)) && ' sb-act'}">${rich(textOf(b))}${roomLine(b, msgs, i)}<em>${mailMark(b)}${uncheckedMark(b)}${timeOf(b.Time)}</em></div>`,
+					html`<div class="sb-b ${b.Sent ? 'me' : 'them'}${isAction(textOf(b)) && ' sb-act'}">${rich(textOf(b))}${roomLine(b, msgs, i)}<em>${mailMark(b)}${whisperMark(b)}${uncheckedMark(b)}${timeOf(b.Time)}</em></div>`,
 			);
 		}
 		const waitingBubbles = waitingHere.map(
@@ -5963,7 +6036,13 @@
 				html`<div class="sb-b me sb-wait">${w.text}<em>⏳ sends when they're online · <a href="#" data-cancel="${w.id}">cancel</a></em></div>`,
 		);
 		const pinTitle = room ? `Let them join me: adds a button to join you in "${room}"` : "You're not in a chat room";
-		const placeholder = offline ? `${nameOf(n)} is offline: it'll wait for them…` : `Beep ${nameOf(n)}… (/help)`;
+		const near = sameRoom(n);
+		let placeholder = `Beep ${nameOf(n)}… (/help)`;
+		if (near) {
+			placeholder = `Whisper to ${nameOf(n)} (you're in the same room)…`;
+		} else if (offline) {
+			placeholder = `${nameOf(n)} is offline: it'll wait for them…`;
+		}
 		setHtml(
 			view,
 			html`
@@ -6022,6 +6101,11 @@
 			closeEmoji();
 			// What you send takes you back to the newest messages.
 			box.scrollTop = box.scrollHeight;
+			// In the same room, it's a whisper (outListener adds it to this chat).
+			if (sameRoom(n) && ChatRoomSendWhisper(n, text) === true) {
+				ta.value = '';
+				return;
+			}
 			if (isOffline(n)) {
 				queueBeep(n, text);
 				ta.value = '';
@@ -6049,6 +6133,16 @@
 		}
 	}
 
+	/**
+	 * Whether you and member `n` are in the same chat room, so a whisper reaches them.
+	 * @param {number} n
+	 */
+	const sameRoom = (n) =>
+		typeof ChatRoomSendWhisper === 'function' &&
+		typeof ChatRoomCharacter === 'object' &&
+		Array.isArray(ChatRoomCharacter) &&
+		ServerPlayerIsInChatRoom() &&
+		ChatRoomCharacter.some((C) => C.MemberNumber === n);
 	/**
 	 * Whether a friend is known to be offline.
 	 * @param {number} n
