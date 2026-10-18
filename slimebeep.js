@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.1.2';
+	const VERSION = '3.2.0';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -105,7 +105,7 @@
 	 */
 	/** @type {Friend[]} Online friends, from the last OnlineFriends answer. */
 	let friends = [];
-	/** Open panel tab: 'chats', 'groups', 'friends', 'wave', 'bug', 'options', 'newgc' or 'invitefor'. */
+	/** Open panel tab: 'chats', 'groups', 'friends', 'wave', 'bug', 'newgc' or 'invitefor'. */
 	let tab = 'chats';
 	/** @type {number | string | null} Open chat: a member number, 'g:<group id>', or null for the lists. */
 	let thread = null;
@@ -840,10 +840,24 @@
 		return b ? b.MemberName : `#${n}`;
 	};
 	/**
-	 * Whether a message is only an *action* (it gets the sb-act bubble).
+	 * A message as the action it is, the way the game shows them: "*waves" (or "*waves*", /me) from Ann reads
+	 * "*Ann waves*" and "**the lights flicker**" reads "*the lights flicker*". Null for an ordinary message.
 	 * @param {string} text
+	 * @param {string} name who sent it
+	 * @returns {string | null}
 	 */
-	const isAction = (text) => /^\*{1,2}[^*\n]+\*{1,2}$/.test(String(text).trim());
+	const asAction = (text, name) => {
+		const t = String(text).trim();
+		if (!t.startsWith('*')) {
+			return null;
+		}
+		const wrap = /^(\*{1,2})([\s\S]*)\1$/.exec(t);
+		const inner = (wrap ? wrap[2] : t.replace(/^\*{1,2}/, '')).trim();
+		if (!inner) {
+			return null;
+		}
+		return t.startsWith('**') ? `*${inner}*` : `*${name} ${inner}*`;
+	};
 	/** Group invite codes inside a text. */
 	const CODE_IN = /SB-[a-z0-9]{8,24}-[A-Z2-9]{10}/g;
 	/** @type {Record<string, string>} Undoes ESCAPES. */
@@ -1356,13 +1370,13 @@
 		html.sb-night .sb-tabs button.on { background: #5b8cff; color: #fff; box-shadow: 0 2px 6px #5b8cff66; }
 		html.sb-night .sb-tabs button i { background: #5b8cff; }
 		html.sb-night .sb-tabs button.on i { background: #fff; color: #3b55c4; }
-		html.sb-night .sb-row, html.sb-night .sb-group label, html.sb-night .sb-opts label, html.sb-night .sb-opts .sb-opt-pic { background: #1d2550; border-color: #2c3866; color: #dfe6ff; }
+		html.sb-night .sb-row, html.sb-night .sb-group label { background: #1d2550; border-color: #2c3866; color: #dfe6ff; }
 		html.sb-night .sb-row:hover { background: #253064; border-color: #5b8cff; }
 		html.sb-night .sb-sub, html.sb-night .sb-hint, html.sb-night .sb-side, html.sb-night .sb-empty { color: #8f9fd6; }
 		html.sb-night .sb-dot { background: #5b8cff; }
 		html.sb-night .sb-av { border-color: #141a33; }
 		html.sb-night .sb-av:not(.sb-pic) { filter: saturate(.7) brightness(.85); }
-		html.sb-night .sb-search, html.sb-night .sb-compose textarea, html.sb-night .sb-group textarea, html.sb-night .sb-opts input[type=number] {
+		html.sb-night .sb-search, html.sb-night .sb-compose textarea, html.sb-night .sb-group textarea {
 			background: #10152b; color: #dfe6ff; border-color: #2f3b75; }
 		html.sb-night #sb-panel textarea:focus, html.sb-night #sb-panel input:focus { border-color: #5b8cff !important; box-shadow: 0 0 0 3px #2b3a8f; }
 		html.sb-night .sb-msgs { background: radial-gradient(circle at 20% 10%, #1d2550 0, #141a33 60%); }
@@ -1409,10 +1423,10 @@
 		html.sb-themed .sb-tabs button.on { background: var(--sb-t-accent); color: var(--sb-t-text); box-shadow: none; }
 		html.sb-themed .sb-tabs button i, html.sb-themed .sb-dot { background: var(--sb-t-accent-hover); color: var(--sb-t-text); }
 		html.sb-themed .sb-tabs button.on i { background: var(--sb-t-text); color: var(--sb-t-accent); }
-		html.sb-themed .sb-row, html.sb-themed .sb-group label, html.sb-themed .sb-opts label, html.sb-themed .sb-opts .sb-opt-pic { background: var(--sb-t-element); border-color: var(--sb-t-element-hover); color: var(--sb-t-text); }
+		html.sb-themed .sb-row, html.sb-themed .sb-group label { background: var(--sb-t-element); border-color: var(--sb-t-element-hover); color: var(--sb-t-text); }
 		html.sb-themed .sb-row:hover { background: var(--sb-t-element-hover); border-color: var(--sb-t-accent); }
 		html.sb-themed .sb-sub, html.sb-themed .sb-hint, html.sb-themed .sb-side, html.sb-themed .sb-empty { color: var(--sb-t-text-disabled); }
-		html.sb-themed .sb-search, html.sb-themed .sb-compose textarea, html.sb-themed .sb-group textarea, html.sb-themed .sb-opts input[type=number] {
+		html.sb-themed .sb-search, html.sb-themed .sb-compose textarea, html.sb-themed .sb-group textarea {
 			background: var(--sb-t-main); color: var(--sb-t-text); border-color: var(--sb-t-element-hover); }
 		html.sb-themed #sb-panel textarea:focus, html.sb-themed #sb-panel input:focus { border-color: var(--sb-t-accent) !important; box-shadow: 0 0 0 3px var(--sb-t-accent-disabled); }
 		html.sb-themed .sb-msgs { background: var(--sb-t-main); }
@@ -1449,11 +1463,7 @@
 		#sb-toast.show { opacity: 1; transform: none; }
 		#sb-toggle.boing { animation: sb-boing .45s; }
 		@keyframes sb-boing { 30% { transform: scale(1.25, .8); } 60% { transform: scale(.9, 1.15); } }
-		.sb-opts label, .sb-opts .sb-opt-pic { display: block; padding: 6px 8px; margin: 4px 0; border-radius: 12px; background: #fff; }
-		.sb-opts .sb-opt-pic { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-		.sb-opt-pic-buttons { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; }
 		.sb-head #sb-dnd.on { background: #fff; box-shadow: 0 0 0 2px #ff4fa3; }
-		.sb-opts input[type=number] { width: 54px; border: 1px solid #ffb3d9; border-radius: 8px; padding: 2px 4px; font: inherit; }
 	`;
 
 	/** Creates the toggle, panel, toast and card stack, wires them up and starts the 1 s tick. */
@@ -1499,7 +1509,7 @@
 				<span id="sb-me"></span>
 				<button id="sb-music" title="Music player">🎵</button>
 				<button id="sb-moon" title="Night mode">🌙</button>
-				<button id="sb-gear" title="Options">${ICONS.gear}</button>
+				<button id="sb-gear" title="Settings">${ICONS.gear}</button>
 				<button id="sb-dnd"></button>
 				<button id="sb-close" title="Close">${ICONS.close}</button>
 			</div>
@@ -1601,11 +1611,7 @@
 		$('sb-close').addEventListener('click', () => setOpen(false));
 		$('sb-moon').addEventListener('click', () => setNight(!opts.night));
 		setNight(opts.night);
-		$('sb-gear').addEventListener('click', () => {
-			tab = tab === 'options' ? 'chats' : 'options';
-			thread = null;
-			render();
-		});
+		$('sb-gear').addEventListener('click', openSettings);
 		// Join buttons on group codes inside messages.
 		panel.addEventListener(
 			'click',
@@ -1634,15 +1640,22 @@
 			true,
 		);
 		$('sb-me').addEventListener('click', () => {
-			if (!loggedIn()) {
-				return;
+			if (loggedIn()) {
+				openSettings();
 			}
-			tab = 'options';
-			thread = null;
-			render();
 		});
 		// Keys typed in the panel stay out of the game's key handlers.
-		panel.addEventListener('keydown', (e) => e.stopPropagation());
+		panel.addEventListener('keydown', (e) => {
+			e.stopPropagation();
+			// Esc closes the emoji picker, then the window (pictures and dialogs catch it first).
+			if (e.key === 'Escape') {
+				if ($('sb-emoji')) {
+					closeEmoji();
+				} else {
+					setOpen(false);
+				}
+			}
+		});
 		panel.addEventListener(
 			'pointerdown',
 			() => {
@@ -1678,6 +1691,9 @@
 		if (stopped || $('sb-ask')) {
 			return;
 		}
+		if (!isOpen()) {
+			setOpen(true);
+		}
 		const box = document.createElement('div');
 		box.id = 'sb-ask';
 		setHtml(
@@ -1693,7 +1709,6 @@
 			box.remove();
 			document.removeEventListener('keydown', onKey, true);
 		};
-		/** @param {KeyboardEvent} e */
 		/** @param {KeyboardEvent} e */
 		const onKey = (e) => {
 			if (e.key === 'Escape') {
@@ -1911,7 +1926,7 @@
 		});
 		histKeys.add(k);
 		saveHistory();
-		if (isOpen() && tab !== 'options' && tab !== 'wave') {
+		if (isOpen() && tab !== 'wave') {
 			render(true);
 		}
 	}
@@ -2109,6 +2124,53 @@
 			} else {
 				render();
 			}
+			return true;
+		},
+		/** Opens SlimeBeep's page in the game's Settings > Extensions. */
+		openSettings: () => {
+			openSettings();
+		},
+		/** Whether Do not disturb is on (no SlimeBeep sounds, pop-ups or desktop notifications). */
+		doNotDisturb: () => !!opts.dnd,
+		/**
+		 * Turns Do not disturb on or off; returns whether it is on.
+		 * @param {boolean} on
+		 */
+		setDoNotDisturb: (on) => {
+			setDnd(!!on);
+			return !!opts.dnd;
+		},
+		/**
+		 * The song in SlimeBeep's music player, or null: title, link, whether it is a YouTube video, playing or
+		 * paused, seconds in and length (0 until known), and who you listen along with or which chat you share it with.
+		 */
+		nowPlaying: () => {
+			if (!music) {
+				return null;
+			}
+			const j = following ? jams.get(following) : undefined;
+			return {
+				title: music.track.title,
+				url: music.track.url,
+				youtube: !!music.track.yt,
+				playing: music.playing,
+				position: Math.round(musicPos()),
+				duration: Math.round(music.dur),
+				listeningAlongWith: j ? j.hostName : null,
+				sharedIn: sharing ? chatLabel(sharing) : null,
+			};
+		},
+		/**
+		 * Plays a YouTube or sound file link in the player, for this player only (nothing is shared); returns
+		 * false if it isn't a song link.
+		 * @param {string} link
+		 */
+		playSong: (link) => {
+			if (typeof link !== 'string' || !trackOf(link)) {
+				return false;
+			}
+			playLink(link);
+			openMusic(true);
 			return true;
 		},
 		/**
@@ -2319,6 +2381,9 @@
 		if ($('sb-crop')) {
 			$('sb-crop').remove();
 		}
+		if (!isOpen()) {
+			setOpen(true);
+		}
 		const SIZE = 200;
 		const img = new Image();
 		img.onload = () => {
@@ -2346,7 +2411,6 @@
 			}
 			$('sb-panel').appendChild(box);
 			// Closed by Cancel, ✕, a click outside the card, Escape, or the panel closing.
-			/** @param {KeyboardEvent} e */
 			/** @param {KeyboardEvent} e */
 			const onKey = (e) => {
 				if (e.key === 'Escape' && document.body.contains(box)) {
@@ -3468,7 +3532,7 @@
 			for (const h of fresh.slice(-3)) {
 				announce(h);
 			}
-			if (isOpen() && tab !== 'options' && tab !== 'wave') {
+			if (isOpen() && tab !== 'wave') {
 				render(true);
 			}
 		}
@@ -3926,7 +3990,7 @@
 				});
 			}
 		}
-		if (isOpen() && tab !== 'options' && tab !== 'wave') {
+		if (isOpen() && tab !== 'wave') {
 			render(true);
 		}
 	}
@@ -4466,7 +4530,7 @@
 				ding([h]);
 				inviteFromBeep(h);
 				announce(h);
-				if (isOpen() && tab !== 'options' && tab !== 'wave') {
+				if (isOpen() && tab !== 'wave') {
 					render(true);
 				}
 			} catch (e) {
@@ -4728,7 +4792,7 @@
 			for (const h of fresh.slice(-4)) {
 				announce(h);
 			}
-			if (isOpen() && tab !== 'options' && tab !== 'wave') {
+			if (isOpen() && tab !== 'wave') {
 				render(true);
 			}
 		} catch (e) {
@@ -4776,7 +4840,7 @@
 		if (opts.dnd || (!h.group && isOpen() && thread === h.MemberNumber && !document.hidden)) {
 			return;
 		}
-		const text = textOf(h);
+		const text = asAction(textOf(h), h.MemberName) ?? textOf(h);
 		const room = h.ChatRoomName && typeof h.Message === 'string' ? `📍 in ${h.ChatRoomName}` : '';
 		const g = h.group && groups[h.group];
 		if (h.group && isOpen() && thread === `g:${h.group}` && !document.hidden) {
@@ -5169,9 +5233,7 @@
 		const body = $('sb-body');
 		const scroll = keepScroll && body ? body.scrollTop : 0;
 		const page = pageState(tab);
-		if (tab === 'options') {
-			setHtml(view, html`${tabs}<div class="sb-body" id="sb-body">${optionsHtml()}</div>`);
-		} else if (tab === 'newgc') {
+		if (tab === 'newgc') {
 			setHtml(view, html`${tabs}<div class="sb-body sb-group" id="sb-body">${newGroupHtml()}</div>`);
 		} else if (tab === 'wave') {
 			setHtml(view, html`${tabs}<div class="sb-body sb-group" id="sb-body">${groupHtml()}</div>`);
@@ -5254,9 +5316,6 @@
 		}
 		if (tab === 'invitefor') {
 			wireInviteFor();
-		}
-		if (tab === 'options') {
-			wireOptions();
 		}
 		restorePage(tab, page);
 	}
@@ -5816,8 +5875,10 @@
 			if (h.sys) {
 				return html`<div class="sb-sys">${textOf(h)}</div>`;
 			}
-			const from = !h.Sent && html`<span class="sb-from">${memberName(g, h.MemberNumber) || h.MemberName}</span>`;
-			return html`<div class="sb-b ${h.Sent ? 'me' : 'them'}${isAction(textOf(h)) && ' sb-act'}">${from}${rich(textOf(h))}<em>${timeOf(h.Time)}</em></div>`;
+			const name = h.Sent ? myName() : memberName(g, h.MemberNumber) || h.MemberName;
+			const act = asAction(textOf(h), name);
+			const from = !h.Sent && !act && html`<span class="sb-from">${name}</span>`;
+			return html`<div class="sb-b ${h.Sent ? 'me' : 'them'}${act && ' sb-act'}">${from}${rich(act ?? textOf(h))}<em>${timeOf(h.Time)}</em></div>`;
 		};
 		setHtml(
 			view,
@@ -6042,13 +6103,18 @@
 		/** @param {HistEntry} b */
 		const uncheckedMark = (b) =>
 			b.unchecked && html`<span title="Their SlimeBeep has not told yours its key yet, so who sent this could not be checked">⚠</span> `;
+		/**
+		 * A message's text as an action with its sender's name, or null (see asAction).
+		 * @param {HistEntry} b
+		 */
+		const actionOf = (b) => asAction(textOf(b), b.Sent ? myName() : nameOf(n));
 		/** @type {HtmlValue} */
 		let bubbles = !waitingHere.length && html`<div class="sb-empty">🫧 Say hi!</div>`;
 		if (msgs.length) {
-			bubbles = msgs.map(
-				(b, i) =>
-					html`<div class="sb-b ${b.Sent ? 'me' : 'them'}${isAction(textOf(b)) && ' sb-act'}">${rich(textOf(b))}${roomLine(b, msgs, i)}<em>${mailMark(b)}${whisperMark(b)}${uncheckedMark(b)}${timeOf(b.Time)}</em></div>`,
-			);
+			bubbles = msgs.map((b, i) => {
+				const act = actionOf(b);
+				return html`<div class="sb-b ${b.Sent ? 'me' : 'them'}${act && ' sb-act'}">${rich(act ?? textOf(b))}${roomLine(b, msgs, i)}<em>${mailMark(b)}${whisperMark(b)}${uncheckedMark(b)}${timeOf(b.Time)}</em></div>`;
+			});
 		}
 		const waitingBubbles = waitingHere.map(
 			(w) =>
@@ -7495,9 +7561,29 @@
 		count();
 	}
 
+	/** Opens SlimeBeep's page in the game's Settings > Extensions (⚙); leaving it comes back here. */
+	function openSettings() {
+		if (typeof PreferenceSubscreenExtensionsOpen !== 'function') {
+			notify("⚙ SlimeBeep's settings are in the game's Settings > Extensions");
+			return;
+		}
+		setOpen(false);
+		Promise.resolve(PreferenceSubscreenExtensionsOpen('SlimeBeep')).catch((e) => warn(e, 'settings'));
+	}
+	/** Removes your profile picture (and the photo it was cut from) and tells SlimeBeep friends. */
+	function removePicture() {
+		setMyPfp(null);
+		try {
+			localStorage.removeItem(srcKey());
+		} catch (err) {
+			/* fine */
+		}
+		pushPicture();
+		notify('Profile picture removed');
+	}
 	/**
 	 * Registers SlimeBeep's page in the game's Settings > Extensions, drawn on the game's canvas with its
-	 * own checkbox and button helpers. Same options as the ⚙ tab.
+	 * own checkbox and button helpers: every option, checkboxes on the left and buttons on the right.
 	 */
 	function registerSettings() {
 		if (typeof PreferenceRegisterExtensionSetting !== 'function') {
@@ -7525,7 +7611,7 @@
 			],
 			['sound', 'Pop sound for new beeps', () => opts.sound, (on) => setOpt('sound', on)],
 			['popups', 'Show new beeps in a pop-up (click to reply)', () => opts.popups, (on) => setOpt('popups', on)],
-			['desktop', 'Desktop notification when the game is in the background', () => opts.desktop, (on) => setDesktop(on)],
+			['desktop', 'Desktop notification when in the background', () => opts.desktop, (on) => setDesktop(on)],
 			['share', '"Let them join me" starts on', () => opts.shareRoom, (on) => setOpt('shareRoom', on)],
 			[
 				'remember',
@@ -7539,42 +7625,59 @@
 				},
 			],
 			['keep', 'Keep my beeps in this browser after I log out', () => opts.keep, (on) => setKeep(on)],
+			['dnd', 'Do not disturb (no sounds or pop-ups)', () => opts.dnd, (on) => setDnd(on)],
 		];
-		// Boxes shown right now (an entry's 5th item decides).
+		/** @type {[() => string, () => void, (() => boolean)?][]} The buttons on the right, top to bottom: label, action, shown. */
+		const buttons = [
+			[() => (myPfp() ? 'Change profile picture' : 'Choose profile picture'), () => pickPicture()],
+			[
+				() => 'Adjust profile picture',
+				() => {
+					const src = loadSrc();
+					if (src) {
+						openCropper(src);
+					}
+				},
+				() => !!myPfp() && !!loadSrc(),
+			],
+			[() => 'Remove profile picture', removePicture, () => !!myPfp()],
+			[
+				() => 'Reset position and size',
+				() => {
+					setOpt('pos', null);
+					setOpt('win', null);
+					place();
+				},
+			],
+			[() => `Clear kept beeps (${hist.length})`, clearKept],
+			[() => 'Ask again for picture sites', () => setOpt('trustedHosts', []), () => opts.trustedHosts.length > 0],
+			[() => 'Turn SlimeBeep off', askQuit],
+		];
+		const RIGHT = 1430,
+			BUTTON_W = 440;
+		// Boxes and buttons shown right now (an entry's last, optional item decides).
 		const shown = () => boxes.filter((b) => !b[4] || b[4]());
-		const gapY = () => TOP + shown().length * ROW;
+		const shownButtons = () => buttons.filter((b) => !b[2] || b[2]());
 		/**
 		 * Recomputed every frame: the shown boxes can change.
-		 * @returns {{ g: number, MINUS: Rect, PLUS: Rect, RESET: Rect, CLEAR: Rect, PIC: Rect, NOPIC: Rect }}
+		 * @returns {{ g: number, MINUS: Rect, PLUS: Rect }}
 		 */
 		const layout = () => {
-			const g = gapY(),
-				btnY = g + ROW;
-			return {
-				g,
-				MINUS: [LEFT, g, 64, 64],
-				PLUS: [LEFT + 80, g, 64, 64],
-				RESET: [LEFT, btnY, 420, 64],
-				CLEAR: [LEFT + 450, btnY, 420, 64],
-				PIC: [LEFT, btnY + ROW, 420, 64],
-				NOPIC: [LEFT + 450, btnY + ROW, 420, 64],
-			};
+			const g = TOP + shown().length * ROW;
+			return { g, MINUS: [LEFT, g, 64, 64], PLUS: [LEFT + 80, g, 64, 64] };
 		};
+		/**
+		 * The rectangle of the i-th shown button.
+		 * @param {number} i
+		 * @returns {Rect}
+		 */
+		const buttonAt = (i) => [RIGHT, TOP + i * ROW, BUTTON_W, 64];
 		/** @param {Rect} r */
 		const mouse = (r) => typeof MouseIn === 'function' && MouseIn(...r);
 		PreferenceRegisterExtensionSetting({
 			Identifier: 'SlimeBeep',
 			ButtonText: 'SlimeBeep',
 			Image: ICON,
-			load: () => {
-				// Leaves the panel's ⚙ tab so both don't show the same options.
-				if (tab === 'options') {
-					tab = 'chats';
-					if (isOpen()) {
-						render();
-					}
-				}
-			},
 			run: () => {
 				try {
 					DrawCharacter(Player, 50, 50, 0.9);
@@ -7586,7 +7689,7 @@
 					}
 					MainCanvas.textAlign = 'left';
 					DrawText(`- SlimeBeep Settings - v${VERSION}`, LEFT, 125, 'Black', 'Gray');
-					const { g, MINUS, PLUS, RESET, CLEAR, PIC, NOPIC } = layout();
+					const { g, MINUS, PLUS } = layout();
 					shown().forEach(([, label, get], i) =>
 						DrawCheckbox(LEFT, TOP + i * ROW, 64, 64, typeof label === 'function' ? label() : label, !!get()),
 					);
@@ -7597,13 +7700,8 @@
 					MainCanvas.textAlign = 'left';
 					DrawText(`Wait ${opts.gap} seconds between WaveBeeps`, LEFT + 180, g + 33, 'Black', 'Gray');
 					MainCanvas.textAlign = 'center';
-					DrawButton(...RESET, 'Reset position and size', 'White');
-					DrawButton(...CLEAR, `Clear kept beeps (${hist.length})`, 'White');
-					DrawButton(...PIC, myPfp() ? 'Change profile picture' : 'Choose profile picture', 'White');
-					drawMyPic(NOPIC[0] + NOPIC[2] + 20, PIC[1], 64);
-					if (myPfp()) {
-						DrawButton(...NOPIC, 'Remove profile picture', 'White');
-					}
+					shownButtons().forEach(([label], i) => DrawButton(...buttonAt(i), label(), 'White'));
+					drawMyPic(RIGHT - 84, TOP, 64);
 					DrawButton(...EXIT, '', 'White', 'Icons/Exit.png');
 				} catch (e) {
 					// Never throw inside the game's draw loop.
@@ -7624,7 +7722,7 @@
 					if (stopped) {
 						return;
 					}
-					const { MINUS, PLUS, RESET, CLEAR, PIC, NOPIC } = layout();
+					const { MINUS, PLUS } = layout();
 					shown().forEach(([, , get, set], i) => {
 						if (mouse([LEFT, TOP + i * ROW, 64, 64])) {
 							set(!get());
@@ -7636,25 +7734,9 @@
 					if (mouse(PLUS)) {
 						setOpt('gap', Math.min(10, opts.gap + 0.5));
 					}
-					if (mouse(RESET)) {
-						setOpt('pos', null);
-						setOpt('win', null);
-						place();
-					}
-					if (mouse(CLEAR)) {
-						clearKept();
-					}
-					if (mouse(PIC)) {
-						pickPicture();
-					}
-					if (myPfp() && mouse(NOPIC)) {
-						setMyPfp(null);
-						try {
-							localStorage.removeItem(srcKey());
-						} catch (err) {
-							/* fine */
-						}
-						pushPicture();
+					const hit = shownButtons().find((b, i) => mouse(buttonAt(i)));
+					if (hit) {
+						hit[1]();
 					}
 				} catch (e) {
 					warn(e);
@@ -7664,7 +7746,6 @@
 		});
 	}
 
-	/* The options, changed the same way from the ⚙ tab and from Settings > Extensions. */
 	/**
 	 * Sets and saves one option.
 	 * @template {keyof Options} K
@@ -7688,10 +7769,6 @@
 				setOpt('desktop', false);
 				notify('The browser blocked notifications');
 			}
-		}
-		const box = $input('sb-o-desktop');
-		if (box) {
-			box.checked = opts.desktop;
 		}
 	}
 
@@ -7780,10 +7857,6 @@
 		if (moon) {
 			moon.textContent = opts.night ? '☀️' : '🌙';
 			moon.title = opts.night ? 'Day mode' : 'Night mode';
-		}
-		const box = $input('sb-o-night');
-		if (box) {
-			box.checked = opts.night;
 		}
 	}
 
@@ -7990,97 +8063,6 @@
 				}
 			});
 		}
-	}
-
-	/** HTML of the ⚙ tab. */
-	function optionsHtml() {
-		/** @param {boolean} on */
-		const checked = (on) => on && 'checked';
-		return html`<div class="sb-opts">
-			<b style="display:block;margin:6px 2px">⚙ Options</b>
-			<div class="sb-opt-pic">${avatar(Player.MemberNumber, myName())}<span style="flex:1;min-width:0">Profile picture<span class="sb-hint" style="display:block">SlimeBeep friends see it.</span></span>
-				<span class="sb-opt-pic-buttons"><button class="sb-pill" id="sb-o-pic">Choose</button>${myPfp() && loadSrc() && html`<button class="sb-pill" id="sb-o-fit">Adjust</button>`}${myPfp() && html`<button class="sb-pill" id="sb-o-nopic">Remove</button>`}</span></div>
-			<label><input type="checkbox" id="sb-o-night" ${checked(opts.night)}>🌙 Night mode (a night blue slime)</label>
-			<label><input type="checkbox" id="sb-o-sound" ${checked(opts.sound)}>Pop sound for new beeps</label>
-			<label><input type="checkbox" id="sb-o-popups" ${checked(opts.popups)}>💌 Show new beeps in a pop-up (click to reply)</label>
-			<label><input type="checkbox" id="sb-o-desktop" ${checked(opts.desktop)}>🖥 Desktop notification when the game is in the background</label>
-			<label><input type="checkbox" id="sb-o-keep" ${checked(opts.keep)}>🗂 Keep my beeps in this browser after I log out
-				<span class="sb-hint" style="display:block">${hist.length} beeps kept. <button class="sb-pill" id="sb-o-clear">Clear them</button></span></label>
-			${opts.trustedHosts.length > 0 && html`<label>🖼 Pictures show without asking from ${opts.trustedHosts.join(', ')}. <button class="sb-pill" id="sb-o-untrust">Ask again</button></label>`}
-			<label><input type="checkbox" id="sb-o-share" ${checked(opts.shareRoom)}>📍 "Let them join me" starts on</label>
-			<label><input type="checkbox" id="sb-o-remember" ${checked(opts.remember)}>Remember who I picked for WaveBeeps</label>
-			<label>Wait <input type="number" id="sb-o-gap" min="1" max="10" step="0.5" value="${opts.gap}"> seconds between WaveBeeps</label>
-			<label>Drag the slime to move it, the window by its top bar, and the window's edges to resize it. <button class="sb-pill" id="sb-o-reset">Put it back</button></label>
-			<label>⏻ Turn SlimeBeep off until the game reloads. <button class="sb-pill" id="sb-o-quit">Quit</button></label>
-			<div class="sb-hint" style="margin:10px 4px">SlimeBeep v${VERSION} updates itself: a reload always runs the newest version.</div>
-		</div>`;
-	}
-
-	/** Wires the ⚙ tab. */
-	function wireOptions() {
-		$('sb-o-pic').addEventListener('click', (e) => {
-			e.preventDefault();
-			pickPicture();
-		});
-		if ($('sb-o-fit')) {
-			$('sb-o-fit').addEventListener('click', (e) => {
-				e.preventDefault();
-				const src = loadSrc();
-				if (src) {
-					openCropper(src);
-				}
-			});
-		}
-		if ($('sb-o-nopic')) {
-			$('sb-o-nopic').addEventListener('click', (e) => {
-				e.preventDefault();
-				setMyPfp(null);
-				try {
-					localStorage.removeItem(srcKey());
-				} catch (err) {
-					/* fine */
-				}
-				pushPicture();
-				notify('Profile picture removed');
-				render();
-			});
-		}
-		$('sb-o-night').addEventListener('change', (e) => setNight(inputOf(e).checked));
-		$('sb-o-sound').addEventListener('change', (e) => setOpt('sound', inputOf(e).checked));
-		$('sb-o-popups').addEventListener('change', (e) => setOpt('popups', inputOf(e).checked));
-		$('sb-o-desktop').addEventListener('change', (e) => setDesktop(inputOf(e).checked));
-		$('sb-o-keep').addEventListener('change', (e) => setKeep(inputOf(e).checked));
-		$('sb-o-clear').addEventListener('click', (e) => {
-			e.preventDefault();
-			clearKept();
-		});
-		$('sb-o-quit').addEventListener('click', (e) => {
-			e.preventDefault();
-			askQuit();
-		});
-		if ($('sb-o-untrust')) {
-			$('sb-o-untrust').addEventListener('click', (e) => {
-				e.preventDefault();
-				setOpt('trustedHosts', []);
-				render();
-			});
-		}
-		$('sb-o-share').addEventListener('change', (e) => setOpt('shareRoom', inputOf(e).checked));
-		$('sb-o-remember').addEventListener('change', (e) => {
-			setOpt('remember', inputOf(e).checked);
-			if (!opts.remember) {
-				setOpt('picked', []);
-			}
-		});
-		$('sb-o-gap').addEventListener('change', (e) => {
-			setOpt('gap', Math.max(1, Math.min(10, Number(inputOf(e).value) || DEFAULTS.gap)));
-			inputOf(e).value = String(opts.gap);
-		});
-		$('sb-o-reset').addEventListener('click', () => {
-			setOpt('pos', null);
-			setOpt('win', null);
-			place();
-		});
 	}
 
 	/**

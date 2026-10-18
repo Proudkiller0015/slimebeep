@@ -84,6 +84,8 @@ declare function ChatRoomLeave(clearCharacters?: boolean): void;
 declare function ChatSearchSendToast(type: string): void;
 declare function CommonSetScreen(module: string, screen: string): Promise<void>;
 declare function PreferenceRegisterExtensionSetting(setting: BcExtensionSetting): void;
+/** Opens an extension's page in Settings > Extensions (R133); leaving it returns to the screen it was opened from. */
+declare function PreferenceSubscreenExtensionsOpen(identifier: string): Promise<void>;
 declare function PreferenceSubscreenExtensionsClear(): Promise<void>;
 declare function MouseIn(left: number, top: number, width: number, height: number): boolean;
 declare function DrawText(text: string, x: number, y: number, color: string, backColor?: string): void;

@@ -281,6 +281,24 @@ const check = (ok, what) => {
 		window.PreferenceSubscreenExtensionsClear = () => {
 			cleared++;
 		};
+		window.openedSettings = [];
+		window.PreferenceSubscreenExtensionsOpen = (id) => {
+			openedSettings.push(id);
+			return Promise.resolve();
+		};
+		/** Draws SlimeBeep's settings page and clicks the button with this label. */
+		window.settingsClick = (label) => {
+			const x = PreferenceExtensionsSettings.SlimeBeep;
+			buttons = {};
+			x.run();
+			const r = buttons[label];
+			if (!r) {
+				throw new Error(`no "${label}" button (${Object.keys(buttons)})`);
+			}
+			MouseX = r[0] + r[2] / 2;
+			MouseY = r[1] + r[3] / 2;
+			x.click();
+		};
 		// A stand-in for the game's 2000x1000 canvas: draws what the real Draw* calls would, roughly, to look at.
 		window.MouseX = 0;
 		window.MouseY = 0;
@@ -304,8 +322,10 @@ const check = (ok, what) => {
 			MainCanvas.textBaseline = 'middle';
 			MainCanvas.fillText(t, x, y);
 		};
+		window.buttons = {};
 		window.DrawButton = (l, t, w, h, label, color, img) => {
 			drawn.push(label || img || '');
+			buttons[label || img || ''] = [l, t, w, h];
 			MainCanvas.fillStyle = color;
 			MainCanvas.fillRect(l, t, w, h);
 			MainCanvas.strokeRect(l, t, w, h);
@@ -369,7 +389,6 @@ const check = (ok, what) => {
 	);
 	const page = await p.evaluate(() => {
 		const x = PreferenceExtensionsSettings.SlimeBeep;
-		x.load();
 		x.run();
 		return drawn.join(' | ') + (document.querySelector('#sb-ext') ? ' FLOATING' : '');
 	});
@@ -421,11 +440,22 @@ const check = (ok, what) => {
 
 	await p.click('#sb-toggle');
 	await wait(200);
-	// "Let them join me" starts off; the room tests below switch it on.
 	await p.click('#sb-gear');
 	await wait(200);
-	check(!(await p.$eval('#sb-o-share', (e) => e.checked)), '"Let them join me" starts off');
-	await p.click('#sb-o-share');
+	check(
+		await p.evaluate(() => openedSettings.join() === 'SlimeBeep' && document.getElementById('sb-panel').style.display === 'none'),
+		"⚙ opens SlimeBeep's page in the game's Settings > Extensions (and gets the window out of the way)",
+	);
+	// "Let them join me" starts off; the room tests below switch it on (its box is the 5th on the page).
+	check(await p.evaluate(() => !JSON.parse(localStorage.getItem('slimebeep.options')).shareRoom), '"Let them join me" starts off');
+	await p.evaluate(() => {
+		MouseX = 520;
+		MouseY = 190 + 4 * 72 + 20;
+		PreferenceExtensionsSettings.SlimeBeep.click();
+	});
+	check(await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.options')).shareRoom === true), 'and is switched on there');
+	await p.click('#sb-toggle');
+	await wait(200);
 	await p.click('[data-tab=chats]');
 	await wait(200);
 	const chats = await p.$$eval('#sb-body .sb-row', (rows) =>
@@ -644,13 +674,22 @@ const check = (ok, what) => {
 	await p.click('#sb-body label:nth-of-type(4) input');
 	await p.type('#sb-gmsg', 'Party in 10!');
 	await p.click('#sb-gear');
-	await p.$eval('#sb-o-gap', (e) => {
-		e.value = '1';
-		e.dispatchEvent(new Event('change'));
+	// The WaveBeep gap: its - button sits under the 8 checkboxes.
+	await p.evaluate(() => {
+		for (let i = 0; i < 20; i++) {
+			MouseX = 520;
+			MouseY = 190 + 8 * 72 + 20;
+			PreferenceExtensionsSettings.SlimeBeep.click();
+		}
 	});
+	check(
+		await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.options')).gap === 1),
+		'the WaveBeep gap goes down to 1 s in Settings',
+	);
+	await p.click('#sb-toggle');
 	await p.click('[data-tab=wave]');
 	await wait(100);
-	check((await p.$eval('#sb-gmsg', (e) => e.value)) === 'Party in 10!', 'the group draft survives a trip to options');
+	check((await p.$eval('#sb-gmsg', (e) => e.value)) === 'Party in 10!', 'the group draft survives a trip to Settings');
 	await shot('group');
 	await p.click('#sb-gsend');
 	await wait(1500);
@@ -693,14 +732,16 @@ const check = (ok, what) => {
 		api0.v === 1 &&
 			api0.frozen &&
 			api0.fns ===
-				'apiVersion,group,groups,hasSlimeBeep,inviteToGroup,matchTheme,matchingTheme,on,openChat,openGroup,openInvite,slimeBeepFriends,version',
+				'apiVersion,doNotDisturb,group,groups,hasSlimeBeep,inviteToGroup,matchTheme,matchingTheme,nowPlaying,on,openChat,openGroup,openInvite,openSettings,playSong,setDoNotDisturb,slimeBeepFriends,version',
 		`window.SlimeBeep.api is there for other add-ons, and can't be changed (${api0.fns})`,
 	);
 	await hide(11, 'Ann', { sb: 1, pong: 1 });
 	await hide(13, 'Cat', { sb: 1, ping: 1 });
 	await wait(400);
 	check(
-		JSON.stringify(await p.evaluate(() => hidden.map((h) => [h.MemberNumber, JSON.parse(h.Message).pong]))) === '[[13,1]]',
+		JSON.stringify(
+			await p.evaluate(() => hidden.filter((h) => JSON.parse(h.Message).pong).map((h) => [h.MemberNumber, JSON.parse(h.Message).pong])),
+		) === '[[13,1]]',
 		'a ping from a SlimeBeep friend gets a hidden answer',
 	);
 	check(
@@ -714,7 +755,10 @@ const check = (ok, what) => {
 	);
 	await hide(13, 'Cat', { sb: 1, ping: 1 });
 	await wait(400);
-	check((await p.evaluate(() => hidden.length)) === 1, 'but only once a minute, so nobody can bounce beeps off you');
+	check(
+		(await p.evaluate(() => hidden.filter((h) => JSON.parse(h.Message).pong).length)) === 1,
+		'but only once a minute, so nobody can bounce beeps off you',
+	);
 	// ---- Group chats through the relay (cd relay && npm run dev:test), friends or not.
 	if (!relayUp) {
 		console.log('skip group chats: no relay running (cd relay && npm run dev:test)');
@@ -1380,6 +1424,19 @@ const check = (ok, what) => {
 				(await p.evaluate(() => hidden.length)) === 0,
 			`a pasted song plays for you only, at the saved volume, and nothing is sent (${JSON.stringify(mine)})`,
 		);
+		const apiSong = await p.evaluate(() => ({
+			now: SlimeBeep.api.nowPlaying(),
+			notASong: SlimeBeep.api.playSong('https://example.com/page.html'),
+		}));
+		check(
+			apiSong.now &&
+				apiSong.now.title === 'song' &&
+				apiSong.now.playing &&
+				!apiSong.now.youtube &&
+				apiSong.now.sharedIn === null &&
+				apiSong.notASong === false,
+			`api.nowPlaying() tells other add-ons what plays, and playSong refuses a link that isn't a song (${JSON.stringify(apiSong)})`,
+		);
 		await shot('music');
 		await p.$eval('#sb-mu-vol', (e) => {
 			e.value = '30';
@@ -1682,22 +1739,17 @@ const check = (ok, what) => {
 		check(r.off === false && r.offBg !== 'rgb(255, 240, 224)', 'api.matchTheme(false) (for theme add-ons) turns it back off');
 	}
 
-	// ---- ⏻ Quit (in ⚙ Options): everything goes until the next reload, and the bookmarklet can start it again.
+	// ---- ⏻ Quit (on the Settings page): everything goes until the next reload, and the bookmarklet can start it again.
 	{
-		if (await p.evaluate(() => document.getElementById('sb-panel').style.display !== 'flex')) {
-			await p.click('#sb-toggle');
-		}
-		await p.click('#sb-gear');
-		await wait(200);
 		const r = await p.evaluate(async () => {
-			document.getElementById('sb-o-quit').click();
+			settingsClick('Turn SlimeBeep off');
 			const asked =
 				!!document.querySelector('#sb-ask') &&
 				!!document.getElementById('sb-toggle') &&
 				/bookmark again/.test(document.querySelector('#sb-ask .sb-warn').textContent);
 			document.querySelector('#sb-ask [data-act=keep]').click();
 			const kept = !document.querySelector('#sb-ask') && !!document.getElementById('sb-toggle');
-			document.getElementById('sb-o-quit').click();
+			settingsClick('Turn SlimeBeep off');
 			document.querySelector('#sb-ask [data-act=quit]').click();
 			await new Promise((res) => setTimeout(res, 300));
 			if (!asked || !kept) {
@@ -1851,11 +1903,7 @@ const check = (ok, what) => {
 		'and every hidden beep says which picture I have',
 	);
 	// Choosing one: the file picker, a big PNG in, a small square picture out.
-	await p.click('#sb-toggle');
-	await wait(200);
-	await p.click('#sb-gear');
-	await wait(150);
-	const [chooser] = await Promise.all([p.waitForFileChooser(), p.click('#sb-o-pic')]);
+	const [chooser] = await Promise.all([p.waitForFileChooser(), p.evaluate(() => settingsClick('Change profile picture'))]);
 	await chooser.accept([`${__dirname}/icon-256.png`]);
 	await wait(800);
 	// The cropper: place it in the circle, then Save.
@@ -1895,22 +1943,29 @@ const check = (ok, what) => {
 		'zooming, dragging and Save make it the picture',
 	);
 	check(await p.$eval('#sb-me', (e) => !!e.querySelector('img.sb-pic')), 'my own picture shows in the SlimeBeep header');
-	check(!!(await p.$('#sb-o-fit')), 'and an Adjust button can place it again');
+	check(
+		await p.evaluate(() => {
+			buttons = {};
+			PreferenceExtensionsSettings.SlimeBeep.run();
+			return !!buttons['Adjust profile picture'];
+		}),
+		'and an Adjust button in Settings can place it again',
+	);
 	await p.evaluate(() => {
-		const i = document.querySelector('.sb-opts img.sb-pic');
+		const i = document.querySelector('#sb-view img.sb-pic');
 		i.click();
 	});
 	await wait(150);
 	check(!!(await p.$('#sb-zoom img')), 'clicking a picture shows it big');
 	await p.click('#sb-zoom');
 	check(!(await p.$('#sb-zoom')), 'and a click closes it');
-	await p.click('#sb-o-fit');
+	await p.evaluate(() => settingsClick('Adjust profile picture'));
 	await wait(300);
 	check(!!(await p.$('#sb-crop canvas')), 'Adjust opens the circle again');
 	await p.keyboard.press('Escape');
 	await wait(100);
 	check(!(await p.$('#sb-crop')), 'Escape closes the picture window');
-	await p.click('#sb-o-fit');
+	await p.evaluate(() => settingsClick('Adjust profile picture'));
 	await wait(300);
 	await p.click('#sb-crop .sb-crop-x');
 	check(!(await p.$('#sb-crop')), 'and so does its ✕');
@@ -1946,18 +2001,17 @@ const check = (ok, what) => {
 		`your picture at the top keeps its colours in night mode and has no zoom cursor (${JSON.stringify(me)})`,
 	);
 	const picButtons = await p.evaluate(() => {
-		const panel = document.getElementById('sb-panel').getBoundingClientRect();
-		return ['sb-o-pic', 'sb-o-fit', 'sb-o-nopic'].map((id) => {
-			const b = document.getElementById(id);
-			const r = b ? b.getBoundingClientRect() : null;
-			return r ? r.right <= panel.right - 3 && r.left >= panel.left + 3 : null;
+		buttons = {};
+		PreferenceExtensionsSettings.SlimeBeep.run();
+		return ['Change profile picture', 'Adjust profile picture', 'Remove profile picture', 'Turn SlimeBeep off'].map((label) => {
+			const r = buttons[label];
+			return !!r && r[0] + r[2] <= 2000 && r[1] + r[3] <= 1000;
 		});
 	});
 	check(
 		picButtons.every((x) => x === true),
-		`the picture buttons (Choose, Adjust, Remove) are all inside the window (${picButtons})`,
+		`Settings shows Change, Adjust and Remove picture and Turn SlimeBeep off, all on the screen (${picButtons})`,
 	);
-	await p.click('#sb-gear');
 
 	// ---- 🐞 Bug report: the player's words plus SlimeBeep's own details, out to GitHub, the clipboard or a beep.
 	await p.evaluate(() => {
@@ -2025,6 +2079,22 @@ const check = (ok, what) => {
 				Sent: false,
 				Read: true,
 				Time: new Date(),
+				Message: '*hugs you tight',
+			});
+			FriendListBeepLog.push({
+				MemberNumber: 11,
+				MemberName: 'Ann',
+				Sent: false,
+				Read: true,
+				Time: new Date(),
+				Message: '**the lights flicker**',
+			});
+			FriendListBeepLog.push({
+				MemberNumber: 11,
+				MemberName: 'Ann',
+				Sent: false,
+				Read: true,
+				Time: new Date(),
 				Message: '*<img src=x onerror=window.pwned2=1>*',
 			});
 		});
@@ -2036,11 +2106,14 @@ const check = (ok, what) => {
 			const find = (t) => bubbles.find((b) => b.textContent.includes(t));
 			return {
 				inline: !!find('hi *giggles* there')?.querySelector('i.sb-emote'),
-				whole: !!find('*waves at you*')?.classList.contains('sb-act'),
+				whole: !!find('Ann waves at you')?.classList.contains('sb-act'),
+				open: !!find('Ann hugs you tight')?.classList.contains('sb-act'),
+				narrator: !!find('the lights flicker')?.classList.contains('sb-act') && !find('Ann the lights'),
 				safe: !window.pwned2 && !document.querySelector('#sb-msgs img'),
 			};
 		});
-		check(r.inline && r.whole, '*giggles* shows in italics, and a beep that is only an action gets a soft bubble');
+		check(r.inline && r.whole, '*giggles* shows in italics, and *waves at you* reads "Ann waves at you" in a soft bubble, like the game');
+		check(r.open && r.narrator, '"*hugs you tight" (no closing star) is an action too, and "**the lights flicker**" has no name');
 		check(r.safe, 'and it is still plain text (HTML inside stars does nothing)');
 		await tap('#sb-back');
 	}
@@ -2467,6 +2540,37 @@ const check = (ok, what) => {
 		await p.click('#sb-dnd');
 		await wait(150);
 		check((await p.$eval('#sb-dnd', (e) => e.textContent)) === '🔔', 'and 🔔 turns it back off');
+		// Esc in the window closes the emoji picker first, then the window.
+		await p.click('#sb-emo');
+		await wait(100);
+		await p.focus('#sb-text');
+		await p.keyboard.press('Escape');
+		await wait(100);
+		const escOnce = await p.evaluate(() => ({
+			emoji: !!document.getElementById('sb-emoji'),
+			open: document.getElementById('sb-panel').style.display === 'flex',
+		}));
+		await p.keyboard.press('Escape');
+		await wait(100);
+		const escTwice = await p.evaluate(() => document.getElementById('sb-panel').style.display === 'flex');
+		check(
+			!escOnce.emoji && escOnce.open && !escTwice,
+			`Esc in the window closes the emoji picker, then the window (${JSON.stringify({ escOnce, escTwice })})`,
+		);
+		await p.click('#sb-toggle');
+		await wait(200);
+		await p.evaluate(() => SlimeBeep.api.openChat(11));
+		await wait(200);
+		const dndApi = await p.evaluate(() => {
+			const on = SlimeBeep.api.setDoNotDisturb(true);
+			const r = { on, read: SlimeBeep.api.doNotDisturb(), label: document.getElementById('sb-dnd').textContent };
+			r.off = SlimeBeep.api.setDoNotDisturb(false);
+			return r;
+		});
+		check(
+			dndApi.on && dndApi.read && dndApi.label === '🔕' && dndApi.off === false,
+			`other add-ons can read and switch Do not disturb (${JSON.stringify(dndApi)})`,
+		);
 		await tap('#sb-back');
 		await p.evaluate(() => SlimeBeep.api.openChat(12));
 		await wait(250);

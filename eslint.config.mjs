@@ -24,6 +24,7 @@ const gameGlobals = Object.fromEntries(
 		'CurrentScreen',
 		'GameVersion',
 		'PreferenceRegisterExtensionSetting',
+		'PreferenceSubscreenExtensionsOpen',
 		'PreferenceExtensionsSettings',
 		'PreferenceSubscreenExtensionsClear',
 		'DrawCheckbox',
@@ -40,6 +41,9 @@ const testPageGlobals = Object.fromEntries(
 	[
 		'SlimeBeep',
 		'fire',
+		'buttons',
+		'openedSettings',
+		'settingsClick',
 		'beeps',
 		'hidden',
 		'chats',

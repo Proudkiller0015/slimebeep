@@ -24,28 +24,28 @@ Click the pink slime (drag it anywhere you like; it stays there). A pink dot on 
 - **💖 Friends:** who's online and which room they're in. Search by name, number or room; click someone to beep them.
 - **🌊 WaveBeep:** one beep to every friend you tick (**All** / **None**, or **📍 My room** for just the friends in your room), sent one at a time.
 - **👥 Groups:** group chats of up to 40 people with SlimeBeep, **friends or not**. Make one with **New group chat**; invite SlimeBeep friends with one click (🫧 marks who has it) or make an **invite code** for anyone, who pastes it in 👥 Groups. Messages you missed while offline are waiting when you're back. 🟢 shows who's online. The owner 👑 and admins ⭐ add and remove people, promote and rename; **Anyone can invite** lets every member add people. For friends, ✓ means the person in the group has the same key their own SlimeBeep sent you (⚠ if not).
-- **🖼 Profile picture:** pick one in ⚙ (or Settings > Extensions). It's shrunk to a small square and only SlimeBeep friends get it, as image data, never a web link.
-- **🖼 Profile pictures:** choose one in ⚙, then drag and zoom it to fit the circle (**Adjust** places it again later). Yours shows in SlimeBeep's header; click anyone's picture to see it big.
+- **🖼 Profile picture:** pick one in ⚙ Settings. It's shrunk to a small square and only SlimeBeep friends get it, as image data, never a web link.
+- **🖼 Profile pictures:** choose one in ⚙ Settings, then drag and zoom it to fit the circle (**Adjust** places it again later). Yours shows in SlimeBeep's header; click anyone's picture to see it big.
 - **📍 Join:** a beep sent from a chat room has a **Join** button that takes you there.
 - **🚪 Leave or delete a group:** the 🚪 at the top of a group chat. Anyone can leave; the owner can also delete the group for everyone.
 - **🔕 Do not disturb:** the 🔔 button in SlimeBeep's header silences it: no sounds, pop-ups or desktop notifications until you tap it again. Messages still arrive and show as unread.
-- **⏻ Quit:** Quit in ⚙ Options removes SlimeBeep until you reload, as if you'd never started it. With the bookmarklet, reload and don't click it; with the userscript, turn it off there to stop it for good.
-- **😊 Emoji and commands:** the 😊 by the chat box opens emoji (your last ones first). Commands: `/me waves`, `/shrug`, `/roll 20`, `/flip`, `/help`.
+- **⏻ Quit:** **Turn SlimeBeep off** in ⚙ Settings removes it until you reload, as if you'd never started it. With the bookmarklet, reload and don't click it; with the userscript, turn it off there to stop it for good.
+- **😊 Emoji and commands:** the 😊 by the chat box opens emoji (your last ones first). Commands: `/me waves`, `/shrug`, `/roll 20`, `/flip`, `/help`. Actions read like the game shows them: `*waves` or `/me waves` from Ann is *Ann waves*, and `**the lights flicker**` has no name.
 - **✨ Actions:** `*giggles*` shows in italics, and a beep that's only an action gets a soft bubble of its own.
 - **📬 Offline beeps:** beep a friend who's offline and, if they have SlimeBeep, it's left in their SlimeBeep mailbox (📬): they get it when they log in, even if you're gone by then. Only their own SlimeBeep can read it. For friends without SlimeBeep (or if the mailbox can't be reached) it waits here instead and goes out the moment they're back online (you need to be online then too); cancel it any time before.
 - **🔕 Mute a chat:** the 🔔 at the top of any chat or group chat turns its sound off (its cards still come). Press it again for sound.
 - **🔗 Links and codes:** web links in chats can be clicked (they open in a new tab), and a group code gets a **Join** button, in SlimeBeep and in the room chat.
-- **🖼 Pictures and GIFs:** a picture link shows the picture under it, and so do Tenor and Giphy links. Pictures from Tenor, Giphy, imgur, Discord, catbox, Reddit and Twitter show straight away; from any other site SlimeBeep asks first (**Show** once, or **Always trust** that site), because loading a picture tells its site who looked. ⚙ can forget the trusted sites.
+- **🖼 Pictures and GIFs:** a picture link shows the picture under it, and so do Tenor and Giphy links. Pictures from Tenor, Giphy, imgur, Discord, catbox, Reddit and Twitter show straight away; from any other site SlimeBeep asks first (**Show** once, or **Always trust** that site), because loading a picture tells its site who looked. ⚙ Settings can forget the trusted sites.
 - **🎵 Music:** 🎵 in SlimeBeep's header opens a small music player you can drag anywhere. Paste a YouTube link or a sound file link (mp3, ogg, m4a, flac, wav… from catbox, file.garden, Discord, Dropbox or any site) and it plays, without opening YouTube; more songs wait in a queue (⏮ ⏭), and the volume is yours. Song links in chats get a **▶ Play** button that plays them for you only. **Listen along:** open a chat and press **Share** in the player; that friend (if they have SlimeBeep) or everyone in the group gets a **Listen along** button, and whoever presses it hears your song in time with you. You control it; they can leave whenever they like. Nothing ever plays unless you press Play or Listen along.
 - **⬇ Jump to present:** scrolled up to read older messages, you stay there when new ones come in; the button at the bottom says how many and takes you down.
 - **🖼 Group pictures:** admins set one on the group's 👥 page.
 - **🎨 Theme add-ons:** with Themed or BCNeko running, SlimeBeep's page in Settings > Extensions offers **Match my … colours** (off unless you turn it on).
-- **🌙 Night mode:** the moon in the header (or ⚙) switches to navy with a night blue slime.
+- **🌙 Night mode:** the moon in the header (or ⚙ Settings) switches to navy with a night blue slime.
 - **Settings > Extensions:** SlimeBeep is listed there too, with the same options.
 - **🐞 Bug:** report a problem. SlimeBeep adds its version, the game's version and its own recent errors (nothing about your chats), then you open it on GitHub, copy it, or beep it to SlimeQueenSamantha.
-- **⚙ Options:** pop sound for new beeps, whether 📍 starts on, remembering who you picked, the wait between group beeps, and putting the slime back in its corner.
+- **⚙ Settings:** the ⚙ in the header opens SlimeBeep's page in the game's Settings > Extensions: pop sound, pop-ups, desktop notifications, Do not disturb, whether 📍 starts on, remembering who you picked, the wait between group beeps, your profile picture, keeping or clearing your chats, putting the slime back in its corner, matching a theme add-on, and turning SlimeBeep off.
 
-Every beep you send pops up a "✓ Beep sent" note by the slime. A new beep pops a 💌 card (click it to reply), with an optional desktop notification when the game is in the background. Your chats are kept in your browser, per account, so they're still there after you log out (⚙ can turn that off or clear them).
+Every beep you send pops up a "✓ Beep sent" note by the slime. A new beep pops a 💌 card (click it to reply), with an optional desktop notification when the game is in the background. Your chats are kept in your browser, per account, so they're still there after you log out (⚙ Settings can turn that off or clear them).
 
 ## For other add-ons
 

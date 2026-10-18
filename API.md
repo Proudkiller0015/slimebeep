@@ -2,7 +2,7 @@
 
 SlimeBeep has a small API at `window.SlimeBeep.api` for other mods. It's there once SlimeBeep has loaded. It also registers with the game's mod SDK as `SlimeBeep`, so `bcModSdk.getModsInfo()` lists it.
 
-Everything it hands out is a fresh copy, so changing it changes nothing in SlimeBeep. Group chat message text is never shared.
+Everything it hands out is a fresh copy, so changing it changes nothing in SlimeBeep. Message text (beeps, group chats, mailboxes) is never shared through the API; group chats and mailboxes are end-to-end encrypted.
 
 ## Checking for SlimeBeep
 
@@ -40,7 +40,29 @@ sb.hasSlimeBeep(12345);    // true / false
 sb.openGroup(id);          // opens SlimeBeep on that group chat
 sb.openChat(12345);        // opens SlimeBeep on a chat with that member
 sb.openInvite(12345);      // opens "Invite them to…", listing the groups you can invite to
+sb.openSettings();         // opens SlimeBeep's page in the game's Settings > Extensions
 ```
+
+## Do not disturb
+
+```js
+sb.doNotDisturb();         // true while it's on: no SlimeBeep sounds, pop-ups or desktop notifications
+sb.setDoNotDisturb(true);  // on (false: off); returns whether it is on
+```
+
+Messages still arrive while it's on, and show as unread.
+
+## Music
+
+```js
+sb.nowPlaying();
+// null, or { title, url, youtube, playing, position, duration,   // seconds; duration 0 until known
+//            listeningAlongWith,   // the host's name while listening along, else null
+//            sharedIn }            // the chat you share it with (a name), else null
+sb.playSong('https://youtu.be/…'); // plays a YouTube or sound file link for this player only; false if it isn't one
+```
+
+`playSong` never shares anything: sharing and listening along stay the player's own choice in the player.
 
 ## Inviting
 
