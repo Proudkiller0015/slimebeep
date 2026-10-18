@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.1.1';
+	const VERSION = '3.1.2';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -55,6 +55,8 @@
 		recentEmoji: [],
 		/** @type {string[]} Chats that make no sound: 'n:<member number>' or 'g:<group id>'. */
 		muted: [],
+		/** Do not disturb: no sounds, message cards or desktop notifications (messages still arrive, unread). */
+		dnd: false,
 		/** @type {string[]} Sites besides EMBED_HOSTS whose pictures show in chats without asking. */
 		trustedHosts: [],
 		/** Music player volume, 0 to 100. */
@@ -1118,7 +1120,6 @@
 	/** The icons of SlimeBeep's round buttons. */
 	const ICONS = {
 		close: svgIcon(14, html`<path d="M6 6l12 12M18 6 6 18"/>`),
-		power: svgIcon(15, html`<path d="M12 3v8M7 6.6a7.5 7.5 0 1 0 10 0"/>`),
 		// A cog with eight teeth around a hole.
 		gear: svgIcon(
 			17,
@@ -1451,7 +1452,7 @@
 		.sb-opts label, .sb-opts .sb-opt-pic { display: block; padding: 6px 8px; margin: 4px 0; border-radius: 12px; background: #fff; }
 		.sb-opts .sb-opt-pic { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 		.sb-opt-pic-buttons { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; }
-		#sb-quit { font-size: 13px; }
+		.sb-head #sb-dnd.on { background: #fff; box-shadow: 0 0 0 2px #ff4fa3; }
 		.sb-opts input[type=number] { width: 54px; border: 1px solid #ffb3d9; border-radius: 8px; padding: 2px 4px; font: inherit; }
 	`;
 
@@ -1499,7 +1500,7 @@
 				<button id="sb-music" title="Music player">🎵</button>
 				<button id="sb-moon" title="Night mode">🌙</button>
 				<button id="sb-gear" title="Options">${ICONS.gear}</button>
-				<button id="sb-quit" title="Quit SlimeBeep until you reload">${ICONS.power}</button>
+				<button id="sb-dnd"></button>
 				<button id="sb-close" title="Close">${ICONS.close}</button>
 			</div>
 			<div id="sb-view" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>
@@ -1592,7 +1593,11 @@
 		toggle.addEventListener('lostpointercapture', () => endDrag(true));
 		addEventListener('blur', () => endDrag(true));
 		addEventListener('resize', place);
-		$('sb-quit').addEventListener('click', askQuit);
+		$('sb-dnd').addEventListener('click', () => {
+			setDnd(!opts.dnd);
+			notify(opts.dnd ? '🔕 Do not disturb: no sounds or pop-ups until you turn it off' : '🔔 Sounds and pop-ups are back');
+		});
+		setDnd(opts.dnd);
 		$('sb-close').addEventListener('click', () => setOpen(false));
 		$('sb-moon').addEventListener('click', () => setNight(!opts.night));
 		setNight(opts.night);
@@ -3905,7 +3910,7 @@
 				for (const h of unseen.slice(-3)) {
 					announce(h);
 				}
-			} else {
+			} else if (!opts.dnd) {
 				card({
 					icon: groupAv({}),
 					title: `👥 ${g.name}`,
@@ -4750,11 +4755,25 @@
 		}
 	}
 	/**
+	 * Turns Do not disturb on or off and shows it on the 🔔/🔕 header button.
+	 * @param {boolean} on
+	 */
+	function setDnd(on) {
+		setOpt('dnd', on);
+		const b = $('sb-dnd');
+		if (b) {
+			b.textContent = on ? '🔕' : '🔔';
+			b.title = on ? 'Do not disturb is on: no sounds or pop-ups (click to turn off)' : 'Do not disturb';
+			b.classList.toggle('on', on);
+		}
+	}
+	/**
 	 * Shows a new message: a card (unless that chat is open) and, with opts.desktop, a system notification.
+	 * Nothing with Do not disturb on.
 	 * @param {HistEntry} h
 	 */
 	function announce(h) {
-		if (!h.group && isOpen() && thread === h.MemberNumber && !document.hidden) {
+		if (opts.dnd || (!h.group && isOpen() && thread === h.MemberNumber && !document.hidden)) {
 			return;
 		}
 		const text = textOf(h);
@@ -5016,11 +5035,11 @@
 	 */
 	const isMuted = (key) => Array.isArray(opts.muted) && opts.muted.includes(key);
 	/**
-	 * Chimes for new messages unless all of them are from muted chats.
+	 * Chimes for new messages unless all of them are from muted chats, or Do not disturb is on.
 	 * @param {HistEntry[]} list
 	 */
 	const ding = (list) => {
-		if (opts.sound && list.some((h) => !isMuted(muteKey(h)))) {
+		if (opts.sound && !opts.dnd && list.some((h) => !isMuted(muteKey(h)))) {
 			chime();
 		}
 	};
@@ -7992,6 +8011,7 @@
 			<label><input type="checkbox" id="sb-o-remember" ${checked(opts.remember)}>Remember who I picked for WaveBeeps</label>
 			<label>Wait <input type="number" id="sb-o-gap" min="1" max="10" step="0.5" value="${opts.gap}"> seconds between WaveBeeps</label>
 			<label>Drag the slime to move it, the window by its top bar, and the window's edges to resize it. <button class="sb-pill" id="sb-o-reset">Put it back</button></label>
+			<label>⏻ Turn SlimeBeep off until the game reloads. <button class="sb-pill" id="sb-o-quit">Quit</button></label>
 			<div class="sb-hint" style="margin:10px 4px">SlimeBeep v${VERSION} updates itself: a reload always runs the newest version.</div>
 		</div>`;
 	}
@@ -8033,6 +8053,10 @@
 		$('sb-o-clear').addEventListener('click', (e) => {
 			e.preventDefault();
 			clearKept();
+		});
+		$('sb-o-quit').addEventListener('click', (e) => {
+			e.preventDefault();
+			askQuit();
 		});
 		if ($('sb-o-untrust')) {
 			$('sb-o-untrust').addEventListener('click', (e) => {

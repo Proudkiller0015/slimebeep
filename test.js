@@ -1682,17 +1682,22 @@ const check = (ok, what) => {
 		check(r.off === false && r.offBg !== 'rgb(255, 240, 224)', 'api.matchTheme(false) (for theme add-ons) turns it back off');
 	}
 
-	// ---- ⏻ Quit: everything goes until the next reload, and the bookmarklet can start it again.
+	// ---- ⏻ Quit (in ⚙ Options): everything goes until the next reload, and the bookmarklet can start it again.
 	{
+		if (await p.evaluate(() => document.getElementById('sb-panel').style.display !== 'flex')) {
+			await p.click('#sb-toggle');
+		}
+		await p.click('#sb-gear');
+		await wait(200);
 		const r = await p.evaluate(async () => {
-			document.getElementById('sb-quit').click();
+			document.getElementById('sb-o-quit').click();
 			const asked =
 				!!document.querySelector('#sb-ask') &&
 				!!document.getElementById('sb-toggle') &&
 				/bookmark again/.test(document.querySelector('#sb-ask .sb-warn').textContent);
 			document.querySelector('#sb-ask [data-act=keep]').click();
 			const kept = !document.querySelector('#sb-ask') && !!document.getElementById('sb-toggle');
-			document.getElementById('sb-quit').click();
+			document.getElementById('sb-o-quit').click();
 			document.querySelector('#sb-ask [data-act=quit]').click();
 			await new Promise((res) => setTimeout(res, 300));
 			if (!asked || !kept) {
@@ -2439,6 +2444,30 @@ const check = (ok, what) => {
 		await beepFrom(11, 'Ann', 'not muted');
 		await wait(1800);
 		check((await p.evaluate(() => window.dings)) > 0, 'a beep from anyone else still dings');
+		// 🔕 Do not disturb in the header: no sound and no card for anyone, but the beep still arrives.
+		await p.click('#sb-dnd');
+		await wait(150);
+		const dndOn = await p.evaluate(() => {
+			window.dings = 0;
+			return { label: document.getElementById('sb-dnd').textContent, saved: JSON.parse(localStorage.getItem('slimebeep.options')).dnd };
+		});
+		await beepFrom(11, 'Ann', 'quiet please');
+		await wait(1800);
+		const dnd = await p.evaluate(() => ({
+			dings: window.dings,
+			card: [...document.querySelectorAll('.sb-card')].some((x) => /quiet please/.test(x.textContent)),
+		}));
+		await p.evaluate(() => SlimeBeep.api.openChat(11));
+		await wait(250);
+		const arrived = /quiet please/.test(await p.$eval('#sb-msgs', (e) => e.textContent));
+		check(
+			dndOn.label === '🔕' && dndOn.saved === true && dnd.dings === 0 && !dnd.card && arrived,
+			`🔕 Do not disturb: no sound, no pop-up, and the beep is still in the chat (${JSON.stringify({ dndOn, dnd, arrived })})`,
+		);
+		await p.click('#sb-dnd');
+		await wait(150);
+		check((await p.$eval('#sb-dnd', (e) => e.textContent)) === '🔔', 'and 🔔 turns it back off');
+		await tap('#sb-back');
 		await p.evaluate(() => SlimeBeep.api.openChat(12));
 		await wait(250);
 		await p.click('#sb-mute');

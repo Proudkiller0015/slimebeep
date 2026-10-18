@@ -262,5 +262,11 @@
     "date": "17 Oct 2026",
     "title": "📢 SlimeBeep 3.1.1",
     "text": "🤫 Whispers in a chat room now show in that person's chat too, and while you're in the same room, replying from there whispers back."
+  },
+  {
+    "id": "3.1.2",
+    "date": "17 Oct 2026",
+    "title": "📢 SlimeBeep 3.1.2",
+    "text": "🔕 Do not disturb is in the top bar now: one tap and SlimeBeep makes no sounds or pop-ups (messages still arrive). Quit moved to ⚙ Options."
   }
 ]
