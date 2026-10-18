@@ -1266,7 +1266,8 @@
 		.sb-tr-pick { display: flex; align-items: center; gap: 6px; }
 		.sb-tr-pick select { flex: 1; min-width: 0; font: inherit; border: 2px solid #ffb3d9; border-radius: 10px; padding: 3px 6px; background: #fff; color: inherit; }
 		.sb-achbtn { flex: none; font-size: 11px; padding: 2px 8px; }
-		.sb-trophy { font-style: normal; margin-right: 4px; }
+		.sb-trophy { font: inherit; font-style: normal; margin-right: 4px; border: 0; padding: 0 5px; border-radius: 8px; background: #fff4c2; color: #a8740a; cursor: pointer; }
+		html.sb-night .sb-trophy { background: #3a2f0c; color: #ffd23f; }
 		.sb-ach-card { width: 300px; align-items: stretch; max-height: calc(100% - 90px); }
 		.sb-ach-list { overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
 		.sb-ach { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 12px; background: #f6eef3; opacity: .55; }
@@ -1723,6 +1724,18 @@
 			},
 			true,
 		);
+		// A friend's 🏆 shows their achievements (before the row under it opens their chat).
+		panel.addEventListener(
+			'click',
+			(e) => {
+				const b = /** @type {HTMLElement | null} */ (targetOf(e).closest('[data-ach]'));
+				if (b) {
+					e.stopPropagation();
+					openAchievements(Number(b.dataset.ach));
+				}
+			},
+			true,
+		);
 		addEventListener('pointerdown', leavePanel, true);
 		addEventListener('keydown', escAfterClick);
 		toggle.addEventListener(
@@ -2175,8 +2188,8 @@
 	 * @property {string[]} a the ids of their achievements
 	 */
 	/**
-	 * An achievement: id (two letters, since every status carries them), emoji, name, how to get it, and
-	 * whether it stays a secret until unlocked.
+	 * An achievement: id (two letters, since every status carries them), emoji, name, how to get it (a secret
+	 * one never says), and whether its name stays hidden until unlocked.
 	 * @typedef {[string, string, string, string, boolean]} Achievement
 	 */
 	/** @type {Achievement[]} */
@@ -2193,9 +2206,9 @@
 		['js', '🎧', 'Jam Session', 'Listen along with someone', false],
 		['dj', '🎶', 'DJ', 'Have 3 people listen along to your music at once', false],
 		['rl', '🎵', 'Request Line', "Hear a song you added play in someone else's listen-along", false],
-		['ah', '👑', 'All Hail', 'Crown the slime (click it 10 times fast)', true],
-		['no', '🌙', 'Night Owl', 'Use night mode between midnight and 4 am', true],
-		['lq', '✨', 'Long Live the Queen', 'Be the Slime Queen', true],
+		['ah', '👑', 'All Hail', 'Secret achievement', true],
+		['no', '🌙', 'Night Owl', 'Secret achievement', true],
+		['lq', '✨', 'Long Live the Queen', 'Secret achievement', true],
 	];
 	/** Seconds in a room with the Slime Queen for Royal Audience. */
 	const ROYAL_SECONDS = 300;
@@ -2822,7 +2835,8 @@
 	function achTick() {
 		const me = Player.MemberNumber;
 		if (me === OWNER) {
-			unlock('lq');
+			crownCreator();
+			return;
 		}
 		if (opts.night && new Date().getHours() < 4) {
 			unlock('no');
@@ -2843,25 +2857,55 @@
 			}
 		}
 	}
-	/** Your achievements, unlocked ones first; secrets stay ??? until you have them. */
-	function openAchievements() {
+	/** SlimeBeep's maker has every achievement: one pop-up says so the first time. */
+	function crownCreator() {
+		const a = loadAch();
+		const notYet = ACHIEVEMENTS.filter(([id]) => !a.got[id]);
+		if (!notYet.length) {
+			return;
+		}
+		for (const [id] of notYet) {
+			a.got[id] = Date.now();
+		}
+		saveAch();
+		if (isOpen()) {
+			render(true);
+		}
+		if (!opts.dnd) {
+			fanfare(TADA);
+			const text = 'Every achievement is yours: you made SlimeBeep';
+			if (gameToasts()) {
+				gameToast({ title: '👑 Slime Queen', text, ms: 7000, category: 'SlimeBeep-ach' });
+			} else {
+				notify(`👑 ${text}`);
+			}
+		}
+	}
+	/**
+	 * Your achievements, or a friend's (from their status), unlocked ones first; secrets stay ??? until unlocked.
+	 * @param {number} [n] a friend's member number; 0 for yours
+	 */
+	function openAchievements(n = 0) {
 		if ($('sb-ask')) {
 			return;
 		}
-		const got = loadAch().got;
-		const list = [...ACHIEVEMENTS].sort((x, y) => Number(!!got[y[0]]) - Number(!!got[x[0]]));
+		const theirs = n ? statuses.get(n) : undefined;
+		/** @type {Record<string, number>} Theirs come without dates. */
+		const got = theirs ? Object.fromEntries(theirs.a.map((id) => [id, 0])) : loadAch().got;
+		const has = (/** @type {string} */ id) => Object.hasOwn(got, id);
+		const list = [...ACHIEVEMENTS].sort((x, y) => Number(has(y[0])) - Number(has(x[0])));
 		const box = document.createElement('div');
 		box.id = 'sb-ask';
 		setHtml(
 			box,
 			html`<div class="sb-crop-card sb-ach-card">
-			<b>🏆 Achievements · ${Object.keys(got).length} / ${ACHIEVEMENTS.length}</b>
+			<b>🏆 ${n ? `${nameOf(n)}'s achievements` : 'Achievements'} · ${Object.keys(got).length} / ${ACHIEVEMENTS.length}</b>
 			<div class="sb-ach-list">${list.map(([id, emoji, name, how, secret]) => {
 				const when = got[id];
-				const hidden = secret && !when;
-				return html`<div class="sb-ach${when ? ' on' : ''}"><span class="sb-ach-emoji">${hidden ? '❔' : emoji}</span><span class="sb-main"><span class="sb-name">${hidden ? '???' : name}</span><span class="sb-sub">${hidden ? 'A secret' : how}${!!when && ` · ${new Date(when).toLocaleDateString()}`}</span></span></div>`;
+				const hidden = secret && !has(id);
+				return html`<div class="sb-ach${has(id) ? ' on' : ''}"><span class="sb-ach-emoji">${hidden ? '❔' : emoji}</span><span class="sb-main"><span class="sb-name">${hidden ? '???' : name}</span><span class="sb-sub">${how}${!!when && ` · ${new Date(when).toLocaleDateString()}`}</span></span></div>`;
 			})}</div>
-			<span class="sb-hint" style="text-align:center">SlimeBeep friends and your group chats see how many you have.</span>
+			${!n && html`<span class="sb-hint" style="text-align:center">SlimeBeep friends and your group chats see them too.</span>`}
 			<button class="sb-go" data-act="close">Close</button>
 		</div>`,
 		);
@@ -2953,7 +2997,7 @@
 		}
 		const text = [s.t, s.l && `🎵 ${s.l}`].filter(Boolean).join(' · ');
 		const names = ACHIEVEMENTS.filter((x) => s.a.includes(x[0])).map((x) => `${x[1]} ${x[2]}`);
-		return html`<div class="sb-status" title="${[text, ...names].filter(Boolean).join('\n')}">${!!names.length && html`<span class="sb-trophy">🏆 ${names.length}</span>`}${text}</div>`;
+		return html`<div class="sb-status" title="${[text, ...names].filter(Boolean).join('\n')}">${!!names.length && html`<button class="sb-trophy" data-ach="${n}" title="See their achievements">🏆 ${names.length}</button>`}${text}</div>`;
 	}
 	/** Your own row at the top of 💖, like Discord's: your picture, name and status (tap it to change the status). */
 	function meRow() {
@@ -2964,7 +3008,7 @@
 			${text ? html`<div class="sb-status" title="${text}">${text}</div>` : html`<div class="sb-sub">💬 Set a status…</div>`}</div>
 			<button class="sb-pill sb-achbtn" id="sb-achbtn" title="Your achievements">🏆 ${st.a.length}/${ACHIEVEMENTS.length}</button></div>`;
 	}
-	/** The box for your status (your picture at the top, or your row in 💖, opens it). */
+	/** The box for your status and achievements (your picture at the top, or your row in 💖, opens it). */
 	function openStatus() {
 		if ($('sb-ask')) {
 			return;
@@ -2978,7 +3022,8 @@
 			<input class="sb-search" id="sb-status-text" maxlength="${STATUS_MAX}" placeholder="What's up? (like king of the swamp)" aria-label="Your status">
 			<label class="sb-hint"><input type="checkbox" id="sb-status-music"> Show what I'm listening to</label>
 			<span class="sb-hint" style="text-align:center">SlimeBeep friends and your group chats see it.</span>
-			<div class="sb-crop-btns" style="flex-wrap:wrap;justify-content:center"><button class="sb-pill" data-act="clear">Clear</button><button class="sb-pill" data-act="pic">🖼 Picture and settings</button><button class="sb-go" data-act="save">Save</button></div>
+			<div class="sb-crop-btns" style="flex-wrap:wrap;justify-content:center"><button class="sb-pill" data-act="ach">🏆 Achievements · ${myStatus().a.length}/${ACHIEVEMENTS.length}</button><button class="sb-pill" data-act="pic">🖼 Picture and settings</button></div>
+			<div class="sb-crop-btns" style="justify-content:center"><button class="sb-pill" data-act="clear">Clear</button><button class="sb-go" data-act="save">Save</button></div>
 		</div>`,
 		);
 		const text = /** @type {HTMLInputElement} */ (box.querySelector('#sb-status-text'));
@@ -3021,6 +3066,9 @@
 			} else if (act === 'pic') {
 				close();
 				openSettings();
+			} else if (act === 'ach') {
+				close();
+				openAchievements();
 			}
 		});
 		document.addEventListener('keydown', onKey, true);

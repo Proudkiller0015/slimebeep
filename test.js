@@ -1895,6 +1895,18 @@ const check = (ok, what) => {
 		const secret = await p.$$eval('#sb-ask .sb-ach:not(.on) .sb-name', (e) => e.map((x) => x.textContent));
 		await p.click('#sb-ask [data-act=close]');
 		check(secret.includes('???') && !secret.includes('All Hail'), 'secret achievements stay ??? until unlocked');
+		await p.click('#sb-me');
+		await wait(200);
+		await p.click('#sb-ask [data-act=ach]');
+		await wait(200);
+		const fromPicture = await p.$$eval('#sb-ask .sb-ach', (e) =>
+			e.filter((x) => x.querySelector('.sb-name').textContent === '???').map((x) => x.querySelector('.sb-sub').textContent),
+		);
+		await p.click('#sb-ask [data-act=close]');
+		check(
+			fromPicture.length === 3 && fromPicture.every((x) => x === 'Secret achievement'),
+			`your picture's box opens the achievements too, and secrets only say "Secret achievement" (${JSON.stringify(fromPicture)})`,
+		);
 		await wait(6000);
 		const sentA = await p.evaluate(() =>
 			hidden
@@ -1912,6 +1924,19 @@ const check = (ok, what) => {
 		check(
 			catTrophy[0] === '🏆 2' && /Slimed!/.test(catTrophy[1]) && /Royal Audience/.test(catTrophy[1]),
 			`a friend's achievements show as 🏆 and a count, the names on hover; unknown ones are left out (${JSON.stringify(catTrophy)})`,
+		);
+		await p.click('[data-open="13"] .sb-trophy');
+		await wait(200);
+		const catAch = await p.evaluate(() => ({
+			title: document.querySelector('#sb-ask b').textContent,
+			on: [...document.querySelectorAll('#sb-ask .sb-ach.on .sb-name')].map((e) => e.textContent),
+			chat: !!document.querySelector('.sb-thead'),
+		}));
+		await shot('achievements-friend');
+		await p.click('#sb-ask [data-act=close]');
+		check(
+			catAch.title === "🏆 Cat's achievements · 2 / 15" && JSON.stringify(catAch.on) === '["Slimed!","Royal Audience"]' && !catAch.chat,
+			`tapping a friend's 🏆 shows their achievements, not their chat (${JSON.stringify(catAch)})`,
 		);
 		// Royal Audience counts seconds in a room with the Slime Queen.
 		await wait(11000);
