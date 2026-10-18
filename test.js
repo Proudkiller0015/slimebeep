@@ -649,7 +649,7 @@ const check = (ok, what) => {
 	await tap('#sb-back');
 	await p.click('[data-tab=friends]');
 	await wait(200);
-	const fr = await p.$$eval('#sb-body .sb-row', (rows) => rows.map((r) => r.textContent.replace(/\s+/g, ' ').trim()));
+	const fr = await p.$$eval('#sb-body .sb-row[data-open]', (rows) => rows.map((r) => r.textContent.replace(/\s+/g, ' ').trim()));
 	check(
 		fr.length === 4 && /Ann.*Pokepark.*4\/10/.test(fr[0]) && /Bea.*💞.*Private/.test(fr[1]),
 		`friends with where they are (${fr.join(' / ')})`,
@@ -660,7 +660,7 @@ const check = (ok, what) => {
 	);
 	await p.type('#sb-search', 'cafe');
 	await wait(100);
-	check((await p.$$eval('#sb-body .sb-row', (e) => e.length)) === 1, 'search finds by room name too');
+	check((await p.$$eval('#sb-body .sb-row[data-open]', (e) => e.length)) === 1, 'search finds by room name too');
 	await shot('friends');
 
 	await p.click('[data-tab=wave]');
@@ -1794,7 +1794,18 @@ const check = (ok, what) => {
 				statusToGroup.n === 1,
 			`your picture opens Set status; once saved it goes to SlimeBeep friends and your groups (${JSON.stringify({ sentStatus, statusToGroup })})`,
 		);
-		await p.click('#sb-me');
+		while (!(await p.$('[data-tab=friends]'))) {
+			await p.click('#sb-back');
+			await wait(200);
+		}
+		await p.click('[data-tab=friends]');
+		await wait(300);
+		check(
+			(await p.$eval('#sb-merow .sb-status', (e) => e.textContent)) === 'king of the swamp',
+			'you see your own status at the top of 💖, like Discord',
+		);
+		await shot('status-mine');
+		await p.click('#sb-merow');
 		await wait(200);
 		await p.click('#sb-ask [data-act=clear]');
 		await wait(8000);

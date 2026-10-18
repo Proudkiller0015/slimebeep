@@ -1250,6 +1250,7 @@
 		.sb-mu-row.on { background: #ffe6f3; }
 		.sb-mu-song { flex: 1; min-width: 0; border: 0; background: none; color: inherit; padding: 4px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
 		.sb-status { font-size: 11px; font-style: italic; color: #b0628f; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+		.sb-merow { margin-bottom: 6px; }
 		.sb-status-card { width: 280px; align-items: stretch; }
 		.sb-status-card .sb-search { margin: 0; }
 		.sb-status-card label { display: flex; align-items: center; gap: 6px; }
@@ -2721,7 +2722,15 @@
 		const text = [s.t, s.l && `🎵 ${s.l}`].filter(Boolean).join(' · ');
 		return html`<div class="sb-status" title="${text}">${text}</div>`;
 	}
-	/** The box for your status (your picture at the top opens it). */
+	/** Your own row at the top of 💖, like Discord's: your picture, name and status (tap it to change the status). */
+	function meRow() {
+		const st = myStatus();
+		const text = [st.t, st.l && `🎵 ${st.l}`].filter(Boolean).join(' · ');
+		return html`<div class="sb-row sb-merow" id="sb-merow" title="Set your status">${avatar(Player.MemberNumber, myName())}
+			<div class="sb-main"><div class="sb-name">${myName()} <small class="sb-hint">(you)</small></div>
+			${text ? html`<div class="sb-status" title="${text}">${text}</div>` : html`<div class="sb-sub">💬 Set a status…</div>`}</div></div>`;
+	}
+	/** The box for your status (your picture at the top, or your row in 💖, opens it). */
 	function openStatus() {
 		if ($('sb-ask')) {
 			return;
@@ -2751,6 +2760,7 @@
 			setOpt('showListening', showSong.checked);
 			close();
 			notify(opts.status ? `💬 Status set: ${opts.status}` : '💬 Status cleared');
+			render(true);
 		};
 		/** @param {KeyboardEvent} e */
 		const onKey = (e) => {
@@ -5464,6 +5474,7 @@
 				view,
 				html`${tabs}<div class="sb-body" id="sb-body">
 				${tab === 'groups' && groupsTop()}
+				${tab === 'friends' && loggedIn() && meRow()}
 				<input class="sb-search" id="sb-search" placeholder="🔍 Search ${what}…" value="${search}">
 				${rows.length ? rows : html`<div class="sb-empty">${empty}</div>`}
 			</div>`,
@@ -5494,6 +5505,9 @@
 				threadPin = undefined;
 				render();
 			});
+		}
+		if ($('sb-merow')) {
+			$('sb-merow').addEventListener('click', openStatus);
 		}
 		if ($('sb-newgc')) {
 			$('sb-newgc').addEventListener('click', () => {
