@@ -3299,6 +3299,74 @@ const check = (ok, what) => {
 		localStorage.setItem('slimebeep.options', JSON.stringify(o));
 	});
 
+	// ---- 💤 AFK: beeps and whispers get one auto-reply each, never one to another auto-reply.
+	{
+		await p.evaluate(() => {
+			document.getElementById('sb-afk').click();
+		});
+		await wait(150);
+		await p.evaluate(() => {
+			const input = document.getElementById('sb-afk-text');
+			input.value = 'Making plushies, back soon';
+			document.querySelector('#sb-ask [data-act=go]').click();
+		});
+		await wait(150);
+		const afkOn = await p.evaluate(() => ({
+			on: document.getElementById('sb-afk').classList.contains('on'),
+			status: JSON.parse(localStorage.getItem('slimebeep.options')).status,
+		}));
+		const beepIn = (n, name, msg) =>
+			p.evaluate(
+				(n, name, msg) =>
+					FriendListBeepLog.push({
+						MemberNumber: n,
+						MemberName: name,
+						Sent: false,
+						Read: false,
+						Time: new Date(),
+						Message: msg,
+						Id: `afk${Math.random()}`,
+					}),
+				n,
+				name,
+				msg,
+			);
+		await p.evaluate(() => {
+			beeps.length = 0;
+		});
+		await beepIn(11, 'Ann', 'you there?');
+		await wait(1600);
+		await beepIn(11, 'Ann', 'hello??');
+		await beepIn(13, 'Cat', '💤 Auto-reply: away too');
+		await wait(1600);
+		const replies = await p.evaluate(() => beeps.map((b) => [b[0], b[1]]));
+		await p.evaluate(() => {
+			ChatRoomCharacter.push({ MemberNumber: 12, Name: 'Bea' });
+			chats.length = 0;
+			fire('ChatRoomMessage', { Type: 'Whisper', Sender: 12, Content: 'psst' });
+		});
+		await wait(300);
+		const whispered = await p.evaluate(() => chats.filter((c) => c.Type === 'Whisper').map((c) => [c.Target, c.Content]));
+		check(
+			afkOn.on &&
+				JSON.stringify(replies) === JSON.stringify([[11, '💤 Auto-reply: Making plushies, back soon']]) &&
+				JSON.stringify(whispered) === JSON.stringify([[12, '💤 Auto-reply: Making plushies, back soon']]),
+			`AFK answers a beep and a whisper once each, and not another auto-reply (${JSON.stringify({ afkOn, replies, whispered })})`,
+		);
+		check(!afkOn.status, "AFK is separate from your status: friends' status lines don't change");
+		await p.evaluate(() => {
+			document.getElementById('sb-afk').click();
+			ChatRoomCharacter.length = 0;
+		});
+		await wait(150);
+		check(
+			await p.evaluate(
+				() => !document.getElementById('sb-afk').classList.contains('on') && !JSON.parse(localStorage.getItem('slimebeep.options')).afk,
+			),
+			'clicking 💤 again turns AFK off',
+		);
+	}
+
 	// ---- 🍞 The game's toasts (R133): cards and notes go through ToastManager in SlimeBeep's colours,
 	// and ten quick clicks on the slime crown it (tada and confetti).
 	{

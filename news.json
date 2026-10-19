@@ -304,5 +304,11 @@
     "date": "19 Oct 2026",
     "title": "📢 SlimeBeep 3.3",
     "text": "🏆 More achievements: The Cabaret, Care for a Drink?, A Treat for the Road, Secured, a new secret one, and two that only show if you use Echo's Clothing Mod or LSCG. Tap 🏆 in 💖 to see them."
+  },
+  {
+    "id": "3.4.0",
+    "date": "19 Oct 2026",
+    "title": "📢 SlimeBeep 3.4",
+    "text": "💤 AFK: click 💤 at the top of SlimeBeep, write your auto-reply, and anyone who beeps or whispers you gets it (once every 10 minutes each) until you click 💤 again. It doesn't change your status."
   }
 ]

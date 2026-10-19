@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.3.2';
+	const VERSION = '3.4.0';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -69,6 +69,10 @@
 		musicPos: null,
 		/** Version and missing game parts already warned about by gameCheck. */
 		gameWarned: '',
+		/** AFK: beeps and whispers get an automatic reply (afkMsg), once per person every AFK_GAP. Not part of your status. */
+		afk: false,
+		/** The AFK auto-reply. */
+		afkMsg: "I'm away right now, I'll answer when I'm back!",
 		/** Whether to warn when SlimeBeep's server can't be reached (off once its card was clicked). */
 		relayWarn: true,
 		/** Your status: a short line of your own (like "king of the swamp") that SlimeBeep friends and your groups see. */
@@ -1533,7 +1537,7 @@
 		.sb-confetti i { position: absolute; width: 7px; height: 11px; border-radius: 2px; opacity: 0; animation: sb-confetti 1.4s ease-out forwards; }
 		@keyframes sb-confetti { 0% { transform: translate(0, 0) rotate(0); opacity: 1; } 70% { opacity: 1; } 100% { transform: translate(var(--dx), calc(var(--dy) + 140px)) rotate(var(--r)); opacity: 0; } }
 		@keyframes sb-boing { 30% { transform: scale(1.25, .8); } 60% { transform: scale(.9, 1.15); } }
-		.sb-head #sb-dnd.on { background: #fff; box-shadow: 0 0 0 2px #ff4fa3; }
+		.sb-head #sb-dnd.on, .sb-head #sb-afk.on { background: #fff; box-shadow: 0 0 0 2px #ff4fa3; }
 	`;
 
 	/** Creates the toggle, panel, toast and card stack, wires them up and starts the 1 s tick. */
@@ -1580,6 +1584,7 @@
 				<button id="sb-music" title="Music player">🎵</button>
 				<button id="sb-moon" title="Night mode">🌙</button>
 				<button id="sb-gear" title="Settings">${ICONS.gear}</button>
+				<button id="sb-afk"></button>
 				<button id="sb-dnd"></button>
 				<button id="sb-close" title="Close">${ICONS.close}</button>
 			</div>
@@ -1679,6 +1684,15 @@
 			notify(opts.dnd ? '🔕 Do not disturb: no sounds or pop-ups until you turn it off' : '🔔 Sounds and pop-ups are back');
 		});
 		setDnd(opts.dnd);
+		$('sb-afk').addEventListener('click', () => {
+			if (opts.afk) {
+				setAfk(false);
+				notify('👋 Welcome back: auto-reply is off');
+			} else {
+				openAfk();
+			}
+		});
+		setAfk(opts.afk);
 		$('sb-close').addEventListener('click', () => setOpen(false));
 		$('sb-moon').addEventListener('click', () => setNight(!opts.night));
 		setNight(opts.night);
@@ -1911,6 +1925,9 @@
 		});
 		histKeys.add(k);
 		saveHistory();
+		if (!sent) {
+			afkReply(other, text, true);
+		}
 		if (isOpen() && tab !== 'wave') {
 			render(true);
 		}
@@ -5526,6 +5543,100 @@
 			b.classList.toggle('on', on);
 		}
 	}
+	/** How long before the same person gets the AFK auto-reply again. */
+	const AFK_GAP = 10 * 60 * 1000;
+	/** What every AFK auto-reply starts with, so two players away don't reply to each other. */
+	const AFK_MARK = '💤 Auto-reply: ';
+	/** @type {Map<number, number>} Member -> when they last got the auto-reply. */
+	const afkTold = new Map();
+	/**
+	 * Turns AFK on or off and shows it on the 💤 header button.
+	 * @param {boolean} on
+	 */
+	function setAfk(on) {
+		setOpt('afk', on);
+		afkTold.clear();
+		const b = $('sb-afk');
+		if (b) {
+			b.textContent = '💤';
+			b.title = on ? `AFK: beeps and whispers get "${opts.afkMsg}" (click when you're back)` : 'Go AFK (auto-reply)';
+			b.classList.toggle('on', on);
+		}
+	}
+	/** The box for going AFK: the auto-reply to send. */
+	function openAfk() {
+		if ($('sb-ask')) {
+			return;
+		}
+		const box = document.createElement('div');
+		box.id = 'sb-ask';
+		setHtml(
+			box,
+			html`<div class="sb-crop-card sb-status-card">
+			<b>💤 Go AFK</b>
+			<input class="sb-search" id="sb-afk-text" maxlength="200" placeholder="Your auto-reply" aria-label="Your auto-reply">
+			<span class="sb-hint" style="text-align:center">Anyone who beeps or whispers you gets this reply, once every 10 minutes each, until you click 💤 again.</span>
+			<div class="sb-crop-btns" style="justify-content:center"><button class="sb-pill" data-act="cancel">Cancel</button><button class="sb-go" data-act="go">Go AFK</button></div>
+		</div>`,
+		);
+		const text = /** @type {HTMLInputElement} */ (box.querySelector('#sb-afk-text'));
+		text.value = opts.afkMsg;
+		const close = () => {
+			box.remove();
+			document.removeEventListener('keydown', onKey, true);
+		};
+		const go = () => {
+			setOpt('afkMsg', clean(text.value, 200) || "I'm away right now, I'll answer when I'm back!");
+			setAfk(true);
+			close();
+			notify(`💤 AFK: "${opts.afkMsg}"`);
+		};
+		/** @param {KeyboardEvent} e */
+		const onKey = (e) => {
+			if (e.key === 'Escape') {
+				e.stopPropagation();
+				close();
+			} else if (e.key === 'Enter' && e.target === text) {
+				e.preventDefault();
+				go();
+			}
+		};
+		box.addEventListener('click', (e) => {
+			const act = targetOf(e).dataset.act;
+			if (targetOf(e) === box || act === 'cancel') {
+				close();
+			} else if (act === 'go') {
+				go();
+			}
+		});
+		document.addEventListener('keydown', onKey, true);
+		$('sb-panel').appendChild(box);
+		text.focus();
+	}
+	/**
+	 * While AFK, answers a beep or whisper with the auto-reply: once per person every AFK_GAP, never to
+	 * another auto-reply, a reaction or a group chat.
+	 * @param {number} n who wrote
+	 * @param {string} text what they wrote
+	 * @param {boolean} whisper it came as a room whisper (the reply goes the same way)
+	 */
+	function afkReply(n, text, whisper) {
+		if (!opts.afk || !loggedIn() || !isNum(n) || n === Player.MemberNumber || String(text).startsWith(AFK_MARK)) {
+			return;
+		}
+		if (Date.now() - (afkTold.get(n) || 0) < AFK_GAP) {
+			return;
+		}
+		afkTold.set(n, Date.now());
+		const reply = AFK_MARK + opts.afkMsg;
+		if (whisper) {
+			if (typeof ChatRoomSendWhisper === 'function') {
+				ChatRoomSendWhisper(n, reply);
+			}
+		} else {
+			beep(n, reply, false);
+		}
+	}
 	/**
 	 * Shows a new message: a card (unless that chat is open) and, with opts.desktop, a system notification.
 	 * Nothing with Do not disturb on.
@@ -5851,6 +5962,11 @@
 	 * @param {HistEntry[]} list
 	 */
 	const ding = (list) => {
+		for (const h of list) {
+			if (!h.Sent && !h.group && !isReaction(h) && typeof h.Message === 'string') {
+				afkReply(h.MemberNumber, h.Message, false);
+			}
+		}
 		if (opts.sound && !opts.dnd && list.some((h) => !isMuted(muteKey(h)))) {
 			chime();
 		}
