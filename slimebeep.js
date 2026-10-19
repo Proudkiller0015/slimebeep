@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.2.3';
+	const VERSION = '3.2.4';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -6755,7 +6755,6 @@
 			// 📍 applies to one beep.
 			threadPin = false;
 			sync();
-			notify(`✓ Beep sent to ${nameOf(n)}${invite ? ' 📍' : ''}`);
 			setTimeout(() => render(true), 50);
 		};
 		$('sb-send').addEventListener('click', send);
@@ -8971,7 +8970,10 @@
 				$input('sb-gmsg').value = '';
 			}
 			status(`✨ Done: beeped ${done} friend${done === 1 ? '' : 's'}.`);
-			notify(`✓ Beep sent to ${done === 1 ? nameOf(targets[0]) : `${done} friends`}`);
+			// The status line says it already; the note is for a wave that finished with the tab out of sight.
+			if (!isOpen() || !$('sb-gstatus')) {
+				notify(`✓ Beep sent to ${done === 1 ? nameOf(targets[0]) : `${done} friends`}`);
+			}
 			if ($('sb-gsend')) {
 				count();
 			}

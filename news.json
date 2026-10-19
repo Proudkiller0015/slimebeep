@@ -292,5 +292,11 @@
     "date": "18 Oct 2026",
     "title": "📢 SlimeBeep 3.2.3",
     "text": "Fewer pop-ups: after an update you get just this one note, even if you skipped a version, and you can turn it off in Settings > Extensions > SlimeBeep (\"Tell me what's new after an update\"). Night mode now also darkens the status, achievements and other small windows."
+  },
+  {
+    "id": "3.2.4",
+    "date": "18 Oct 2026",
+    "title": "📢 SlimeBeep 3.2.4",
+    "text": "No more \"✓ Beep sent\" pop-up every time you send a beep: it's already in the chat. A WaveBeep still tells you when it's done if you've closed the panel."
   }
 ]

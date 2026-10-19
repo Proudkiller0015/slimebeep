@@ -516,10 +516,7 @@ const check = (ok, what) => {
 	await wait(300);
 	check(JSON.stringify(await p.evaluate(() => beeps)) === JSON.stringify([[13, 'on my way!', true]]), 'Enter sends to Cat with my room');
 	check((await p.$$eval('.sb-b.me', (e) => e.length)) === 1, 'and it shows as my bubble');
-	check(
-		await p.$eval('#sb-toast', (e) => e.classList.contains('show') && e.textContent),
-		`and a toast says so: ${await p.$eval('#sb-toast', (e) => e.textContent)}`,
-	);
+	check(!(await p.$eval('#sb-toast', (e) => e.classList.contains('show'))), 'and no note pops up for it (the bubble is enough)');
 	check((await p.evaluate(() => gameKeys())) === 0, 'typing never reached the game');
 	await shot('thread');
 	await p.click('#sb-moon');
@@ -738,6 +735,11 @@ const check = (ok, what) => {
 				[13, 'Party in 10!', true],
 			]),
 		`group beep to Ann and Cat (${JSON.stringify(sent)})`,
+	);
+	check(
+		/Done: beeped 2 friends/.test(await p.$eval('#sb-gstatus', (e) => e.textContent)) &&
+			!(await p.$eval('#sb-toast', (e) => e.classList.contains('show'))),
+		'the WaveBeep status line says it is done, with no note on top while the tab is open',
 	);
 
 	// ---- Group chats: SlimeBeep users only, roles, passing on, and nothing a stranger or a forgery can do.
