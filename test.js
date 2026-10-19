@@ -802,7 +802,8 @@ const check = (ok, what) => {
 	if (!relayUp) {
 		console.log('skip group chats: no relay running (cd relay && npm run dev:test)');
 	} else {
-		// A relay a blocker stops (NoScript, uMatrix...) never opens: the player is told what to allow.
+		// A connection that fails once, after the relay worked this visit, is a dropped connection, not a
+		// blocker: no "allow this address" card.
 		await p.evaluate(() => localStorage.setItem('slimebeep.relay', 'ws://localhost:9'));
 		await p.click('#sb-back').catch(() => {});
 		await p.click('[data-tab=groups]');
@@ -811,24 +812,11 @@ const check = (ok, what) => {
 		await wait(150);
 		await p.type('#sb-gc-name', 'Blocked');
 		await p.click('#sb-gc-make');
-		const blockCard = await waitFor(
-			() =>
-				p.evaluate(() =>
-					[...document.querySelectorAll('.sb-card')].some((c) =>
-						/allow slimebeep-relay\.slimebeep-relay\.workers\.dev/.test(c.textContent || ''),
-					),
-				),
-			5000,
+		const failToast = await waitFor(() => p.$eval('#sb-toast', (e) => /server/.test(e.textContent || '')), 5000);
+		const dropCard = await p.evaluate(() =>
+			[...document.querySelectorAll('.sb-card')].some((c) => /allow slimebeep-relay/.test(c.textContent || '')),
 		);
-		check(
-			blockCard && /server/.test(await p.$eval('#sb-toast', (e) => e.textContent)),
-			'a relay that never opens (blocked) tells the player which address to allow',
-		);
-		await p.evaluate(() => {
-			for (const c of document.querySelectorAll('.sb-card')) {
-				c.remove();
-			}
-		});
+		check(failToast && !dropCard, 'a dropped relay connection after it worked says "could not reach", but no blocker card');
 		await p.evaluate((u) => localStorage.setItem('slimebeep.relay', u), RELAY_URL);
 		const ann = await relayUser(11, 'Ann'),
 			zed = await relayUser(99, 'Zed'),
@@ -3527,6 +3515,36 @@ const check = (ok, what) => {
 		await wait(500);
 		check(await p.evaluate(() => beeps.some((b) => b[0] === 11 && b[1] === 'still beeping')), 'beeps work as usual');
 		host.ws.close();
+	}
+	// ---- A relay a blocker stops (NoScript, uMatrix...) from the start: after three failed tries the player
+	// is told which address to allow, and clicking the card turns that warning off for good.
+	if (relayUp) {
+		await p.evaluate(() => localStorage.setItem('slimebeep.relay', 'ws://localhost:9'));
+		await p.reload();
+		await p.evaluate(stub);
+		await p.evaluate(() => makeLog());
+		await p.addScriptTag({ content: src });
+		const blockCard = await waitFor(
+			() =>
+				p.evaluate(() =>
+					[...document.querySelectorAll('.sb-card')].some((c) =>
+						/allow slimebeep-relay\.slimebeep-relay\.workers\.dev/.test(c.textContent || ''),
+					),
+				),
+			40000,
+		);
+		check(blockCard, 'a relay that never opens (blocked) tells the player which address to allow');
+		await p.evaluate(() => {
+			const c = [...document.querySelectorAll('.sb-card')].find((x) => /allow slimebeep-relay/.test(x.textContent || ''));
+			if (c) {
+				c.click();
+			}
+		});
+		await wait(400);
+		check(
+			(await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.options')).relayWarn)) === false,
+			'clicking that card turns the warning off for good',
+		);
 	}
 	await b.close();
 	console.log(failed ? `\n${failed} FAILED` : '\nall passed');

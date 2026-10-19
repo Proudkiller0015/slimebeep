@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.2.5';
+	const VERSION = '3.2.6';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -69,6 +69,8 @@
 		musicPos: null,
 		/** Version and missing game parts already warned about by gameCheck. */
 		gameWarned: '',
+		/** Whether to warn when SlimeBeep's server can't be reached (off once its card was clicked). */
+		relayWarn: true,
 		/** Your status: a short line of your own (like "king of the swamp") that SlimeBeep friends and your groups see. */
 		status: '',
 		/** Whether your status also says what you listen to in the music player. */
@@ -3681,12 +3683,22 @@
 
 	/** Whether relayBlocked has shown its card. */
 	let blockTold = false;
+	/** Whether any relay connection has opened this visit (then nothing is blocking it). */
+	let relayReached = false;
+	/** Relay connections in a row that closed without opening. */
+	let relayMisses = 0;
+	/** A relay connection opened: whatever failed before was a passing drop. */
+	function relayOpened() {
+		relayReached = true;
+		relayMisses = 0;
+	}
 	/**
-	 * A relay connection closed without ever opening: something on the player's side (NoScript, uMatrix,
-	 * a strict blocker or firewall) stops it, or they are offline. Tells them, once per visit, what to allow.
+	 * A relay connection closed without ever opening. Once is a dropped connection (a reconnect, a laptop
+	 * waking up); three in a row with none ever opening means something on the player's side (NoScript,
+	 * uMatrix, a strict blocker or firewall) stops it. Tells them, once per visit, what to allow.
 	 */
 	function relayBlocked() {
-		if (blockTold || !navigator.onLine) {
+		if (blockTold || relayReached || !opts.relayWarn || !navigator.onLine || ++relayMisses < 3) {
 			return;
 		}
 		blockTold = true;
@@ -3694,8 +3706,13 @@
 			icon: logoIcon(),
 			title: '🛡 SlimeBeep',
 			text: `Group chats can't reach SlimeBeep's server. If you use NoScript, uMatrix or another blocker, allow ${RELAY.replace('wss://', '')} and reload.`,
+			sub: 'Click to not show this again',
 			ms: 0,
 			cls: 'news',
+			onClick: () => {
+				setOpt('relayWarn', false);
+				notify("✓ That message won't show again");
+			},
 		});
 	}
 
@@ -3780,6 +3797,7 @@
 			let opened = false;
 			sock.onopen = () => {
 				opened = true;
+				relayOpened();
 			};
 			sock.onclose = () => {
 				if (!opened) {
@@ -4060,6 +4078,7 @@
 		let opened = false;
 		sock.onopen = () => {
 			opened = true;
+			relayOpened();
 		};
 		sock.onmessage = (e) => {
 			/** @type {RelayMessage} */
