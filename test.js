@@ -1883,8 +1883,13 @@ const check = (ok, what) => {
 		await wait(200);
 		await shot('achievements');
 		const secret = await p.$$eval('#sb-ask .sb-ach:not(.on) .sb-name', (e) => e.map((x) => x.textContent));
+		const listed = await p.$$eval('#sb-ask .sb-ach .sb-name', (e) => e.map((x) => x.textContent));
 		await p.click('#sb-ask [data-act=close]');
 		check(secret.includes('???') && !secret.includes('All Hail'), 'secret achievements stay ??? until unlocked');
+		check(
+			listed.includes('The Cabaret') && !listed.includes('The Chosen Weapon') && !listed.includes('The Era of Magic'),
+			"achievements for Echo's Clothing Mod and LSCG items only show for players who have those add-ons",
+		);
 		await p.click('#sb-me');
 		await wait(200);
 		await p.click('#sb-ask [data-act=ach]');
@@ -1894,8 +1899,10 @@ const check = (ok, what) => {
 		);
 		await p.click('#sb-ask [data-act=close]');
 		check(
-			fromPicture.length === 3 && fromPicture.every((x) => x === 'Secret achievement'),
-			`your picture's box opens the achievements too, and secrets only say "Secret achievement" (${JSON.stringify(fromPicture)})`,
+			fromPicture.length === 4 &&
+				fromPicture.filter((x) => x === 'Secret achievement').length === 3 &&
+				fromPicture.includes('Enter the Konami code'),
+			`your picture's box opens the achievements too; secrets say "Secret achievement", Arcade Queen hints at the Konami code (${JSON.stringify(fromPicture)})`,
 		);
 		await wait(6000);
 		const sentA = await p.evaluate(() =>
@@ -1925,7 +1932,7 @@ const check = (ok, what) => {
 		await shot('achievements-friend');
 		await p.click('#sb-ask [data-act=close]');
 		check(
-			catAch.title === "🏆 Cat's achievements · 2 / 15" && JSON.stringify(catAch.on) === '["Slimed!","Royal Audience"]' && !catAch.chat,
+			catAch.title === "🏆 Cat's achievements · 2 / 20" && JSON.stringify(catAch.on) === '["Slimed!","Royal Audience"]' && !catAch.chat,
 			`tapping a friend's 🏆 shows their achievements, not their chat (${JSON.stringify(catAch)})`,
 		);
 		// Royal Audience counts seconds in a room with the Slime Queen.
@@ -3443,6 +3450,107 @@ const check = (ok, what) => {
 		check(!hailEarly && hail, 'the nickname Slime Queen Samantha (any case) unlocks All Hail; a near miss does not');
 		await p.evaluate(() => {
 			delete Player.Nickname;
+		});
+		// Arcade Queen: the Konami code on the keyboard.
+		await p.evaluate(() => {
+			for (const key of ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'b', 'a']) {
+				window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+			}
+		});
+		await wait(300);
+		check(
+			await p.evaluate(() => toasts.some((t) => t.category === 'SlimeBeep-ach' && /Arcade Queen/.test(t.msg))),
+			'the Konami code on the keyboard unlocks Arcade Queen',
+		);
+		// The rest on a second account, so each starts locked.
+		const gotAs2 = () => p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.ach.2') || '{"got":{}}').got);
+		await p.evaluate(() => {
+			Player.MemberNumber = 2;
+			ServerSend('ChatRoomChat', { Type: 'Whisper', Target: 11, Content: 'up up down down left right' });
+		});
+		await wait(300);
+		const notYet = (await gotAs2()).aq;
+		await p.evaluate(() => ServerSend('ChatRoomChat', { Type: 'Whisper', Target: 11, Content: '↑↑↓↓←→←→BA' }));
+		await wait(300);
+		check(
+			!notYet && !!(await gotAs2()).aq,
+			'the Konami code written in a whisper unlocks it too (for mobile players); half of it does not',
+		);
+		await p.evaluate(() => {
+			window.ChatRoomData = { Name: 'Velvet Bunny Cabaret Night' };
+			fire('ChatRoomMessage', {
+				Type: 'Activity',
+				Sender: 2,
+				Content: 'ChatSelf-ItemMouth-SipItem',
+				Dictionary: [{ TargetCharacter: 2 }],
+			});
+			fire('ChatRoomMessage', {
+				Type: 'Activity',
+				Sender: 11,
+				Content: 'ChatOther-ItemMouth-EatItem',
+				Dictionary: [{ TargetCharacter: 2 }],
+			});
+			Player.Appearance = [{ Asset: { Name: '武器组合', Group: { Name: 'ItemHandheld' } }, Property: { TypeRecord: { t: 1 } } }];
+		});
+		await wait(1300);
+		const sword = await gotAs2();
+		await p.evaluate(() => {
+			Player.Appearance[0].Property.TypeRecord.t = 4;
+		});
+		await wait(1300);
+		const as2 = await gotAs2();
+		check(!!as2.vc, 'being in a Velvet Cabaret room unlocks The Cabaret');
+		check(!!as2.cd, 'taking a sip of a drink unlocks Care for a Drink?');
+		check(!!as2.tr, 'being fed a bite of food unlocks A Treat for the Road');
+		check(!sword.cw && !!as2.cw, "holding Echo's scythe (not its sword) unlocks The Chosen Weapon");
+		// Secured: every item slot used (here, two slots: one filled, then the other).
+		await p.evaluate(() => {
+			window.AssetGroup = [
+				{ Name: 'ItemArms', Category: 'Item', Zone: [[0, 0, 1, 1]] },
+				{ Name: 'ItemFeet', Category: 'Item', Zone: [[0, 0, 1, 1]] },
+				{ Name: 'Cloth', Category: 'Appearance' },
+			];
+			window.worn = { ItemArms: { Asset: { Name: 'Rope' } } };
+			window.InventoryGet = (C, g) => window.worn[g] || null;
+		});
+		await wait(1300);
+		const half = (await gotAs2()).se;
+		await p.evaluate(() => {
+			window.worn.ItemFeet = { Asset: { Name: 'Rope' } };
+		});
+		await wait(1300);
+		check(!half && !!(await gotAs2()).se, 'having every item slot used unlocks Secured; one empty slot does not');
+		await p.evaluate(() => {
+			delete window.AssetGroup;
+			delete window.InventoryGet;
+		});
+		// LSCG loads and SlimeBeep registers through its extension queue; casting a spell unlocks The Era of Magic.
+		await p.evaluate(() => {
+			const fake = {
+				getModApi: (info) => ({
+					info,
+					events: {
+						on: (name, fn) => {
+							if (name === 'spell.cast') {
+								window.lscgCast = fn;
+							}
+						},
+					},
+				}),
+			};
+			for (const fn of window.LSCG_OnLoad || []) {
+				fn(fake);
+			}
+			if (window.lscgCast) {
+				window.lscgCast({ spell: { name: 'Sleep' }, target: 11 });
+			}
+		});
+		await wait(300);
+		check(!!(await gotAs2()).em, "casting an LSCG spell unlocks The Era of Magic (through LSCG's extension API)");
+		await p.evaluate(() => {
+			Player.MemberNumber = 1;
+			delete Player.Appearance;
+			window.ChatRoomData = { Name: 'Velvet Lounge' };
 		});
 		await p.evaluate(() => {
 			delete window.ToastManager;

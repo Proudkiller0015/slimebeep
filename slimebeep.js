@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.2.6';
+	const VERSION = '3.3.0';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -1749,6 +1749,8 @@
 		);
 		addEventListener('pointerdown', leavePanel, true);
 		addEventListener('keydown', escAfterClick);
+		addEventListener('keydown', konamiKey, true);
+		hookLscg();
 		toggle.addEventListener(
 			'pointerdown',
 			() => {
@@ -1793,6 +1795,9 @@
 				const m = /** @type {{ Type?: string, Sender?: number, Content?: unknown, Dictionary?: unknown } | null} */ (data);
 				if (m && m.Type === 'Whisper' && isNum(m.Sender)) {
 					takeWhisper(Number(m.Sender), m.Content, false);
+				}
+				if (m && m.Type === 'Activity') {
+					drinkNews(m);
 				}
 				if (m && m.Type === 'Action') {
 					slimeNews(m);
@@ -1861,6 +1866,12 @@
 			const m = /** @type {{ Type?: string, Target?: number, Content?: unknown } | null} */ (data);
 			if (event === 'ChatRoomChat' && m && m.Type === 'Whisper' && isNum(m.Target)) {
 				takeWhisper(Number(m.Target), m.Content, true);
+			}
+			const b = /** @type {{ BeepType?: string, Message?: unknown } | null} */ (data);
+			if (event === 'ChatRoomChat' && m) {
+				konamiText(m.Content);
+			} else if (event === 'AccountBeep' && b && !b.BeepType) {
+				konamiText(b.Message);
 			}
 		} catch (e) {
 			warn(e, 'whisper');
@@ -2220,13 +2231,102 @@
 		['ah', '👑', 'All Hail', 'Secret achievement', true],
 		['no', '🌙', 'Night Owl', 'Secret achievement', true],
 		['lq', '✨', 'Long Live the Queen', 'Secret achievement', true],
+		['aq', '🕹️', 'Arcade Queen', 'Enter the Konami code', true],
+		['vc', '🐰', 'The Cabaret', 'Join a Velvet Cabaret room', false],
+		['cd', '🍹', 'Care for a Drink?', 'Drink any beverage', false],
+		['tr', '🍪', 'A Treat for the Road', 'Eat any food', false],
+		['cw', '⚔️', 'The Chosen Weapon', 'Hold a scythe', false],
+		['em', '🪄', 'The Era of Magic', 'Cast any LSCG spell', false],
+		['se', '🔒', 'Secured', 'Have every item slot used', false],
 	];
+	/** Whether an add-on is loaded, by its ModSDK name. */
+	const hasMod = (/** @type {string} */ name) => {
+		try {
+			const sdk = window.bcModSdk;
+			return !!sdk && typeof sdk.getModsInfo === 'function' && sdk.getModsInfo().some((m) => m.name === name);
+		} catch (e) {
+			return false;
+		}
+	};
+	/** @type {Record<string, string>} Achievements for another add-on's things: listed only with it loaded (or once got). */
+	const MOD_ONLY = { cw: '服装拓展', em: 'LSCG' };
 	/** Seconds in a room with the Slime Queen for Royal Audience. */
 	const ROYAL_SECONDS = 300;
 	/** Members the Slime Queen gave Long Live the Queen to. */
 	const QUEEN_GIFTS = [217488];
 	/** The nickname that unlocks All Hail (any case). */
 	const QUEEN_NAME = 'slime queen samantha';
+	/** The Konami code as keys (KeyboardEvent.key, lower case). */
+	const KONAMI_KEYS = ['arrowup', 'arrowup', 'arrowdown', 'arrowdown', 'arrowleft', 'arrowright', 'arrowleft', 'arrowright', 'b', 'a'];
+	/** @type {string[]} The last keys pressed, for the Konami code. */
+	const konamiKeys = [];
+	/**
+	 * Whether a message spells out the Konami code, for players without arrow keys: "up up down down left
+	 * right left right b a", "↑↑↓↓←→←→BA" or "uuddlrlrba", with or without spaces, commas and a "start".
+	 * @param {unknown} text
+	 */
+	function isKonami(text) {
+		if (typeof text !== 'string' || text.length > 200) {
+			return false;
+		}
+		const t = text
+			.toLowerCase()
+			.replace(/↑/g, 'u')
+			.replace(/↓/g, 'd')
+			.replace(/←/g, 'l')
+			.replace(/→/g, 'r')
+			.replace(/up/g, 'u')
+			.replace(/down/g, 'd')
+			.replace(/left/g, 'l')
+			.replace(/right/g, 'r')
+			.replace(/[^a-z]/g, '');
+		return t.includes('uuddlrlrba');
+	}
+	/**
+	 * LSCG's extension API (LSCG_OnLoad): casting any spell unlocks The Era of Magic. The callback may run
+	 * again when a player ticks SlimeBeep back on in LSCG's list, and older LSCG versions have no API at all.
+	 */
+	function hookLscg() {
+		const w = /** @type {any} */ (window);
+		(w.LSCG_OnLoad = w.LSCG_OnLoad || []).push((/** @type {any} */ lscg) => {
+			if (!lscg || typeof lscg.getModApi !== 'function') {
+				return;
+			}
+			try {
+				const api = lscg.getModApi({ id: 'slimebeep', name: 'SlimeBeep', version: VERSION });
+				api.events.on('spell.cast', () => unlock('em'));
+			} catch (e) {
+				// Turned off in LSCG's list, or registered already.
+			}
+		});
+	}
+	/**
+	 * A key press: the Konami code (↑↑↓↓←→←→BA) unlocks Arcade Queen.
+	 * @param {KeyboardEvent} e
+	 */
+	function konamiKey(e) {
+		if (!e.key || e.repeat) {
+			return;
+		}
+		konamiKeys.push(e.key.toLowerCase());
+		if (konamiKeys.length > KONAMI_KEYS.length) {
+			konamiKeys.shift();
+		}
+		if (konamiKeys.join() === KONAMI_KEYS.join()) {
+			konamiKeys.length = 0;
+			unlock('aq');
+		}
+	}
+	/**
+	 * Something you wrote (a beep, a whisper, the room chat or a group message): the Konami code written out
+	 * unlocks Arcade Queen too.
+	 * @param {unknown} text
+	 */
+	function konamiText(text) {
+		if (isKonami(text)) {
+			unlock('aq');
+		}
+	}
 	/**
 	 * Your achievements, for the account logged in.
 	 * @typedef {object} Achievements
@@ -2808,6 +2908,29 @@
 		}
 	}
 	/**
+	 * An activity in the room: a sip of a drink unlocks Care for a Drink?, a bite of food A Treat for the Road
+	 * (yourself, or given one).
+	 * @param {{ Sender?: number, Content?: unknown, Dictionary?: unknown }} m the game's chat message
+	 */
+	function drinkNews(m) {
+		const what = typeof m.Content === 'string' ? m.Content : '';
+		let id = '';
+		if (/SipItem|Drink/i.test(what)) {
+			id = 'cd';
+		} else if (/EatItem/i.test(what)) {
+			id = 'tr';
+		}
+		if (!id || !loggedIn()) {
+			return;
+		}
+		const me = Player.MemberNumber;
+		const dict = Array.isArray(m.Dictionary) ? /** @type {({ TargetCharacter?: unknown } | null)[]} */ (m.Dictionary) : [];
+		const target = dict.find((x) => x && isNum(x.TargetCharacter));
+		if ((/^ChatSelf/.test(what) && m.Sender === me) || (target && Number(target.TargetCharacter) === me)) {
+			unlock(id);
+		}
+	}
+	/**
 	 * An item used in the room: Slime on someone counts toward achievements.
 	 * @param {{ Sender?: number, Dictionary?: unknown }} m the game's chat message
 	 */
@@ -2863,6 +2986,26 @@
 		if (nick.toLowerCase() === QUEEN_NAME) {
 			unlock('ah');
 		}
+		if (myRoom() && /velvet.*cabaret/i.test(String(ChatRoomData && ChatRoomData.Name))) {
+			unlock('vc');
+		}
+		if (allSlotsUsed()) {
+			unlock('se');
+		}
+		// Echo's weapon set (武器组合) in the hands, on its La Pluma scythe (type 4).
+		const held = Array.isArray(Player.Appearance)
+			? Player.Appearance.find((x) => x && x.Asset && x.Asset.Group && x.Asset.Group.Name === 'ItemHandheld')
+			: undefined;
+		if (
+			held &&
+			held.Asset &&
+			held.Asset.Name === '武器组合' &&
+			held.Property &&
+			held.Property.TypeRecord &&
+			held.Property.TypeRecord.t === 4
+		) {
+			unlock('cw');
+		}
 		const a = loadAch();
 		const withQueen =
 			me !== OWNER &&
@@ -2904,6 +3047,26 @@
 		}
 	}
 	/**
+	 * Whether every item slot on your body (each item group with a zone to click) holds an item, or is blocked
+	 * by one (a hood covering the mouth slots, say).
+	 */
+	function allSlotsUsed() {
+		const w = /** @type {any} */ (window);
+		if (!Array.isArray(w.AssetGroup) || typeof w.InventoryGet !== 'function') {
+			return false;
+		}
+		const slots = w.AssetGroup.filter(
+			(/** @type {any} */ g) => g && g.Category === 'Item' && g.Zone && (!g.Family || g.Family === Player.AssetFamily),
+		);
+		if (!slots.length) {
+			return false;
+		}
+		return slots.every(
+			(/** @type {any} */ g) =>
+				w.InventoryGet(Player, g.Name) || (typeof w.InventoryGroupIsBlocked === 'function' && w.InventoryGroupIsBlocked(Player, g.Name)),
+		);
+	}
+	/**
 	 * Your achievements, or a friend's (from their status), unlocked ones first; secrets stay ??? until unlocked.
 	 * @param {number} [n] a friend's member number; 0 for yours
 	 */
@@ -2915,13 +3078,14 @@
 		/** @type {Record<string, number>} Theirs come without dates. */
 		const got = theirs ? Object.fromEntries(theirs.a.map((id) => [id, 0])) : loadAch().got;
 		const has = (/** @type {string} */ id) => Object.hasOwn(got, id);
-		const list = [...ACHIEVEMENTS].sort((x, y) => Number(has(y[0])) - Number(has(x[0])));
+		const shown = ACHIEVEMENTS.filter(([id]) => !MOD_ONLY[id] || hasMod(MOD_ONLY[id]) || has(id));
+		const list = shown.sort((x, y) => Number(has(y[0])) - Number(has(x[0])));
 		const box = document.createElement('div');
 		box.id = 'sb-ask';
 		setHtml(
 			box,
 			html`<div class="sb-crop-card sb-ach-card">
-			<b>🏆 ${n ? `${nameOf(n)}'s achievements` : 'Achievements'} · ${Object.keys(got).length} / ${ACHIEVEMENTS.length}</b>
+			<b>🏆 ${n ? `${nameOf(n)}'s achievements` : 'Achievements'} · ${shown.filter(([id]) => has(id)).length} / ${shown.length}</b>
 			<div class="sb-ach-list">${list.map(([id, emoji, name, how, secret]) => {
 				const when = got[id];
 				const hidden = secret && !has(id);
@@ -3635,6 +3799,7 @@
 	 * @param {string} text
 	 */
 	async function sendGroup(gid, text) {
+		konamiText(text);
 		const t0 = Date.now();
 		let told = false;
 		for (;;) {

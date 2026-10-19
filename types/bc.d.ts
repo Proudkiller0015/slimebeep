@@ -16,6 +16,10 @@ interface BcPlayer {
 	IsSlow(): boolean;
 	/** The CATS add-on's settings, when it is installed (SlimeBeep reads its translation language). */
 	CATS?: { TranslatorModule?: { google?: { incomingTargetLang?: unknown } } };
+	/** The asset family (body type), e.g. "Female3DCG". */
+	AssetFamily?: string;
+	/** What the character wears and holds. */
+	Appearance?: { Asset?: { Name?: string; Group?: { Name?: string } }; Property?: { TypeRecord?: Record<string, number> } }[];
 }
 
 /** A beep in the game's beep log, as FriendListBeepLog keeps it. */
