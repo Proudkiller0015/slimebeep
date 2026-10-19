@@ -1932,7 +1932,7 @@ const check = (ok, what) => {
 		await shot('achievements-friend');
 		await p.click('#sb-ask [data-act=close]');
 		check(
-			catAch.title === "🏆 Cat's achievements · 2 / 20" && JSON.stringify(catAch.on) === '["Slimed!","Royal Audience"]' && !catAch.chat,
+			catAch.title === "🏆 Cat's achievements · 2 / 21" && JSON.stringify(catAch.on) === '["Slimed!","Royal Audience"]' && !catAch.chat,
 			`tapping a friend's 🏆 shows their achievements, not their chat (${JSON.stringify(catAch)})`,
 		);
 		// Royal Audience counts seconds in a room with the Slime Queen.
@@ -3515,6 +3515,25 @@ const check = (ok, what) => {
 			return { inHand: !!inHand, inMouth: !!inMouth };
 		});
 		check(!fed.inHand && fed.inMouth, `an Echo cookie in the mouth counts as eating (in the hand doesn't) (${JSON.stringify(fed)})`);
+		const cuddle = await p.evaluate(async () => {
+			Player.MemberNumber = 4;
+			const got = () => !!JSON.parse(localStorage.getItem('slimebeep.ach.4') || '{"got":{}}').got.rc;
+			Player.Appearance = [
+				{ Asset: { Name: 'Plushie', Group: { Name: 'ItemHandheld' } }, Property: { TypeRecord: { VelvetBunnyCabaret: 2 } } },
+			];
+			await new Promise((r) => setTimeout(r, 1300));
+			const snow = got();
+			Player.Appearance[0].Property.TypeRecord.VelvetBunnyCabaret = 1;
+			await new Promise((r) => setTimeout(r, 1300));
+			const queen = got();
+			Player.MemberNumber = 2;
+			Player.Appearance = [{ Asset: { Name: '武器组合', Group: { Name: 'ItemHandheld' } }, Property: { TypeRecord: { t: 1 } } }];
+			return { snow, queen };
+		});
+		check(
+			!cuddle.snow && cuddle.queen,
+			`holding the Slime Queen Samantha plushie (not another) unlocks Marketable Queen (${JSON.stringify(cuddle)})`,
+		);
 		check(!sword.cw && !!as2.cw, "holding Echo's scythe (not its sword) unlocks The Chosen Weapon");
 		// Secured: every item slot used (here, two slots: one filled, then the other).
 		await p.evaluate(() => {

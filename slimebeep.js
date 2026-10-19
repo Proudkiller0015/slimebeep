@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.3.1';
+	const VERSION = '3.3.2';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -2238,6 +2238,7 @@
 		['cw', '⚔️', 'The Chosen Weapon', 'Hold a scythe', false],
 		['em', '🪄', 'The Era of Magic', 'Cast any LSCG spell', false],
 		['se', '🔒', 'Secured', 'Have every item slot used', false],
+		['rc', '🧸', 'Marketable Queen', 'Hold the Slime Queen Samantha plushie', false],
 	];
 	/** Whether an add-on is loaded, by its ModSDK name. */
 	const hasMod = (/** @type {string} */ name) => {
@@ -3014,6 +3015,17 @@
 		const held = Array.isArray(Player.Appearance)
 			? Player.Appearance.find((x) => x && x.Asset && x.Asset.Group && x.Asset.Group.Name === 'ItemHandheld')
 			: undefined;
+		// The game's Plushie, Velvet Bunny Cabaret group, option 1: Slime Queen Samantha.
+		if (
+			held &&
+			held.Asset &&
+			held.Asset.Name === 'Plushie' &&
+			held.Property &&
+			held.Property.TypeRecord &&
+			held.Property.TypeRecord.VelvetBunnyCabaret === 1
+		) {
+			unlock('rc');
+		}
 		if (
 			held &&
 			held.Asset &&
