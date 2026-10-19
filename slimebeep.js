@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.2.4';
+	const VERSION = '3.2.5';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -2223,6 +2223,8 @@
 	const ROYAL_SECONDS = 300;
 	/** Members the Slime Queen gave Long Live the Queen to. */
 	const QUEEN_GIFTS = [217488];
+	/** The nickname that unlocks All Hail (any case). */
+	const QUEEN_NAME = 'slime queen samantha';
 	/**
 	 * Your achievements, for the account logged in.
 	 * @typedef {object} Achievements
@@ -2854,6 +2856,10 @@
 		}
 		if (QUEEN_GIFTS.includes(me)) {
 			unlock('lq');
+		}
+		const nick = String(Player.Nickname || '').trim();
+		if (nick.toLowerCase() === QUEEN_NAME) {
+			unlock('ah');
 		}
 		const a = loadAch();
 		const withQueen =
@@ -5520,6 +5526,12 @@
 		}
 		const item = newsItems.find((i) => i.id === VERSION);
 		const first = !opts.lastVersion;
+		// A version with no news item is a quiet fix: no note.
+		if (!first && !item) {
+			opts.lastVersion = VERSION;
+			saveOpts();
+			return;
+		}
 		const head = first ? `SlimeBeep v${VERSION} is ready!` : `SlimeBeep updated to v${VERSION}`;
 		let body = first ? 'Click the pink slime to beep your friends.' : '';
 		if (item) {
@@ -8735,7 +8747,6 @@
 		} else {
 			notify(`👑 ${text}`);
 		}
-		unlock('ah');
 	}
 	/** @type {[number, number, number][]} A little fanfare for the crown: C E G, then a high C (Hz, start s, length s). */
 	const TADA = [

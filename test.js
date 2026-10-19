@@ -3270,6 +3270,20 @@ const check = (ok, what) => {
 		'a skipped version shows nothing, and no card repeats the room note',
 	);
 	await shot('reload');
+	// A version with no news item is a quiet fix: no room note, and it counts as seen.
+	await p.evaluate(() => {
+		const o = JSON.parse(localStorage.getItem('slimebeep.options'));
+		o.lastVersion = '0.0.1';
+		localStorage.setItem('slimebeep.options', JSON.stringify(o));
+	});
+	newsBody = JSON.stringify([{ id: '0.0.2', text: 'Skipped things.' }]);
+	await p.reload();
+	await p.evaluate(stub);
+	await p.evaluate(() => makeLog());
+	await p.addScriptTag({ content: src });
+	await wait(5000);
+	const silent = await p.evaluate(() => ({ notes: local.length, last: JSON.parse(localStorage.getItem('slimebeep.options')).lastVersion }));
+	check(silent.notes === 0 && silent.last === ver, `a version with no news item updates quietly (${JSON.stringify(silent)})`);
 	// "Tell me what's new after an update" off: no note at all.
 	await p.evaluate(() => {
 		const o = JSON.parse(localStorage.getItem('slimebeep.options'));
@@ -3421,13 +3435,27 @@ const check = (ok, what) => {
 		}));
 		check(!crownedBefore && !nine, 'nine clicks on the slime do nothing special');
 		check(
-			crowned.crown && crowned.confetti === 40 && crowned.toast && crowned.achievement && crowned.tada === 6,
-			`the tenth click crowns the slime, with a tada, confetti, a toast and the All Hail achievement (4 + 2 notes) (${JSON.stringify(crowned)})`,
+			crowned.crown && crowned.confetti === 40 && crowned.toast && !crowned.achievement && crowned.tada === 4,
+			`the tenth click crowns the slime, with a tada, confetti and a toast, but no achievement (${JSON.stringify(crowned)})`,
 		);
 		await shot('crown');
 		await wait(1800);
 		await shot('crowned');
 		check(await p.evaluate(() => !document.querySelector('.sb-confetti')), 'the confetti cleans itself up');
+		await p.evaluate(() => {
+			Player.Nickname = 'Slime Queen Sam';
+		});
+		await wait(1200);
+		const hailEarly = await p.evaluate(() => toasts.some((t) => /All Hail/.test(t.msg)));
+		await p.evaluate(() => {
+			Player.Nickname = '  slime QUEEN samantha ';
+		});
+		await wait(1200);
+		const hail = await p.evaluate(() => toasts.some((t) => t.category === 'SlimeBeep-ach' && /All Hail/.test(t.msg)));
+		check(!hailEarly && hail, 'the nickname Slime Queen Samantha (any case) unlocks All Hail; a near miss does not');
+		await p.evaluate(() => {
+			delete Player.Nickname;
+		});
 		await p.evaluate(() => {
 			delete window.ToastManager;
 			document.querySelector('.toast-container')?.remove();
