@@ -3502,6 +3502,19 @@ const check = (ok, what) => {
 		check(!!as2.vc, 'being in a Velvet Cabaret room unlocks The Cabaret');
 		check(!!as2.cd, 'taking a sip of a drink unlocks Care for a Drink?');
 		check(!!as2.tr, 'being fed a bite of food unlocks A Treat for the Road');
+		const fed = await p.evaluate(async () => {
+			Player.MemberNumber = 3;
+			Player.Appearance = [{ Asset: { Name: '曲奇', Group: { Name: 'ItemHandheld' } } }];
+			await new Promise((r) => setTimeout(r, 1300));
+			const inHand = JSON.parse(localStorage.getItem('slimebeep.ach.3') || '{"got":{}}').got.tr;
+			Player.Appearance = [{ Asset: { Name: '曲奇', Group: { Name: 'ItemMouth' } } }];
+			await new Promise((r) => setTimeout(r, 1300));
+			const inMouth = JSON.parse(localStorage.getItem('slimebeep.ach.3') || '{"got":{}}').got.tr;
+			Player.MemberNumber = 2;
+			Player.Appearance = [{ Asset: { Name: '武器组合', Group: { Name: 'ItemHandheld' } }, Property: { TypeRecord: { t: 1 } } }];
+			return { inHand: !!inHand, inMouth: !!inMouth };
+		});
+		check(!fed.inHand && fed.inMouth, `an Echo cookie in the mouth counts as eating (in the hand doesn't) (${JSON.stringify(fed)})`);
 		check(!sword.cw && !!as2.cw, "holding Echo's scythe (not its sword) unlocks The Chosen Weapon");
 		// Secured: every item slot used (here, two slots: one filled, then the other).
 		await p.evaluate(() => {

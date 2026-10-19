@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.3.0';
+	const VERSION = '3.3.1';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -2248,6 +2248,11 @@
 			return false;
 		}
 	};
+	/**
+	 * Echo's Clothing Mod foods: eating one is wearing it in a mouth slot (it has no "eat" activity). Cake roll,
+	 * lollipop, grilled fish, chicken leg, fried bun, cookie, toast, egg tart, mooncake; the burger sits on the hood slot.
+	 */
+	const ECHO_FOODS = ['蛋糕卷', '棒棒糖', '烤鱼', '鸡腿', '煎包', '曲奇', '吐司', '蛋挞', '月饼', '汉堡'];
 	/** @type {Record<string, string>} Achievements for another add-on's things: listed only with it loaded (or once got). */
 	const MOD_ONLY = { cw: '服装拓展', em: 'LSCG' };
 	/** Seconds in a room with the Slime Queen for Royal Audience. */
@@ -2991,6 +2996,19 @@
 		}
 		if (allSlotsUsed()) {
 			unlock('se');
+		}
+		const eating =
+			Array.isArray(Player.Appearance) &&
+			Player.Appearance.some(
+				(x) =>
+					x &&
+					x.Asset &&
+					x.Asset.Group &&
+					/^Item(Mouth[23]?|Hood)$/.test(String(x.Asset.Group.Name)) &&
+					ECHO_FOODS.includes(String(x.Asset.Name)),
+			);
+		if (eating) {
+			unlock('tr');
 		}
 		// Echo's weapon set (武器组合) in the hands, on its La Pluma scythe (type 4).
 		const held = Array.isArray(Player.Appearance)
