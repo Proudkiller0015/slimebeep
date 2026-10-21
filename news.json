@@ -310,5 +310,11 @@
     "date": "19 Oct 2026",
     "title": "📢 SlimeBeep 3.4",
     "text": "💤 AFK: click 💤 at the top of SlimeBeep, write your auto-reply, and anyone who beeps or whispers you gets it (once every 10 minutes each) until you click 💤 again. It doesn't change your status."
+  },
+  {
+    "id": "3.5.0",
+    "date": "21 Oct 2026",
+    "title": "📢 SlimeBeep 3.5",
+    "text": "Delete single messages, clear a chat, pin your favourite chats. Point at a message (or tap it) for its 🗑; the ⋯ at the top of a chat pins it or clears it. Deleting is just for you: the others keep their copy."
   }
 ]

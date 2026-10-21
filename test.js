@@ -1100,6 +1100,41 @@ const check = (ok, what) => {
 				(await p.$$eval('#sb-body .sb-dot', (e) => e.some((x) => Number(x.textContent) >= 2))),
 			'and Slime Squad shows them as unread',
 		);
+		// 🗑 in a group deletes a message for you only: nothing goes to the relay, and it stays gone.
+		await p.evaluate((g) => SlimeBeep.api.openGroup(g), gid);
+		await wait(250);
+		const relayMsgs = a.got.filter((x) => x.t === 'msg').length;
+		await shot('group-thread');
+		await p.evaluate(() => {
+			const bubble = [...document.querySelectorAll('#sb-msgs .sb-b')].find((x) => /while you were away 1/.test(x.textContent));
+			bubble.querySelector('.sb-del').click();
+		});
+		await wait(150);
+		const groupAsk = await p.$eval('#sb-ask', (e) => e.textContent).catch(() => '');
+		await tap('#sb-ask [data-act=go]');
+		await wait(300);
+		const groupDel = await p.evaluate(
+			(g) => ({
+				shown: document.getElementById('sb-msgs').textContent,
+				kept: (JSON.parse(localStorage.getItem('slimebeep.history.1')) || []).filter((h) => h.group === g).map((h) => h.text),
+				deleted: (JSON.parse(localStorage.getItem('slimebeep.deleted.1')) || []).filter((k) => k.startsWith(`g:${g}:`)).length,
+			}),
+			gid,
+		);
+		check(
+			/everyone else in the group still has it/.test(groupAsk) &&
+				!/while you were away 1/.test(groupDel.shown) &&
+				/while you were away 2/.test(groupDel.shown) &&
+				!groupDel.kept.includes('while you were away 1') &&
+				groupDel.kept.includes('while you were away 2') &&
+				groupDel.deleted === 1 &&
+				a.got.filter((x) => x.t === 'msg').length === relayMsgs,
+			`🗑 deletes one group message from your view only, saved, with nothing sent to the group (${JSON.stringify({ groupAsk, groupDel })})`,
+		);
+		await tap('#sb-back');
+		await wait(150);
+		await p.click('[data-tab=groups]');
+		await wait(150);
 		// A friend you never beeped (on the friend list only, offline, no name known): their invite still arrives.
 		await p.evaluate(() => {
 			Player.FriendList = [11, 12, 13, 14, 77];
@@ -3661,6 +3696,201 @@ const check = (ok, what) => {
 			}
 		});
 		await wait(200);
+	}
+
+	// ---- 🗑 Delete one message, clear a chat, 📌 pin chats: for you only, kept across a reload, and a deleted
+	// beep the game's log still has stays hidden.
+	{
+		const dee = [
+			{
+				Id: 'del1',
+				MemberNumber: 14,
+				MemberName: 'Dee',
+				Sent: false,
+				Read: true,
+				Time: new Date(Date.now() - 120000).toISOString(),
+				Message: 'delete me please',
+			},
+			{
+				Id: 'del2',
+				MemberNumber: 14,
+				MemberName: 'Dee',
+				Sent: false,
+				Read: true,
+				Time: new Date(Date.now() - 60000).toISOString(),
+				Message: 'keep me',
+			},
+		];
+		const pushDee = () => p.evaluate((list) => FriendListBeepLog.push(...list.map((b) => ({ ...b, Time: new Date(b.Time) }))), dee);
+		await pushDee();
+		await wait(1500);
+		await p.evaluate(() => SlimeBeep.api.openChat(14));
+		await wait(300);
+		const deeBubble = () =>
+			p.evaluateHandle(() => [...document.querySelectorAll('#sb-msgs .sb-b')].find((x) => /delete me please/.test(x.textContent)));
+		const delShown = () =>
+			p.evaluate(() => {
+				const b = [...document.querySelectorAll('#sb-msgs .sb-b')].find((x) => /delete me please/.test(x.textContent));
+				return getComputedStyle(b.querySelector('.sb-del')).display;
+			});
+		const hiddenAtFirst = await delShown();
+		await (await deeBubble()).hover();
+		await wait(100);
+		const onHover = await delShown();
+		await shot('delete-hover');
+		await p.mouse.move(5, 5);
+		await p.evaluate(() =>
+			[...document.querySelectorAll('#sb-msgs .sb-b')]
+				.find((x) => /delete me please/.test(x.textContent))
+				.dispatchEvent(new MouseEvent('click', { bubbles: true })),
+		);
+		const onTap = await delShown();
+		check(
+			hiddenAtFirst === 'none' && onHover === 'flex' && onTap === 'flex',
+			`a message's 🗑 shows on hover, and on a tap for touch screens (${hiddenAtFirst}, ${onHover}, ${onTap})`,
+		);
+		await p.evaluate(() =>
+			[...document.querySelectorAll('#sb-msgs .sb-b')]
+				.find((x) => /delete me please/.test(x.textContent))
+				.querySelector('.sb-del')
+				.click(),
+		);
+		await wait(150);
+		const ask = await p.$eval('#sb-ask', (e) => e.textContent).catch(() => '');
+		await shot('delete-confirm');
+		await p.keyboard.press('Escape');
+		await wait(150);
+		const afterEsc = await p.evaluate(() => ({
+			ask: !!document.getElementById('sb-ask'),
+			shown: document.getElementById('sb-msgs').textContent,
+		}));
+		check(
+			/delete me please/.test(ask) && /Dee still has it/.test(ask) && !afterEsc.ask && /delete me please/.test(afterEsc.shown),
+			`🗑 asks first, quoting the message; Esc keeps it (${JSON.stringify({ ask, afterEsc: afterEsc.ask })})`,
+		);
+		await p.evaluate(() =>
+			[...document.querySelectorAll('#sb-msgs .sb-b')]
+				.find((x) => /delete me please/.test(x.textContent))
+				.querySelector('.sb-del')
+				.click(),
+		);
+		await wait(150);
+		await tap('#sb-ask [data-act=go]');
+		await wait(300);
+		const deleted = await p.evaluate(() => ({
+			shown: document.getElementById('sb-msgs').textContent,
+			kept: (JSON.parse(localStorage.getItem('slimebeep.history.1')) || []).filter((h) => h.MemberNumber === 14).map((h) => h.Message),
+			keys: JSON.parse(localStorage.getItem('slimebeep.deleted.1')) || [],
+		}));
+		check(
+			!/delete me please/.test(deleted.shown) &&
+				/keep me/.test(deleted.shown) &&
+				!deleted.kept.includes('delete me please') &&
+				deleted.kept.includes('keep me') &&
+				deleted.keys.includes('id:del1'),
+			`confirming deletes only that message, from the saved chats too (${JSON.stringify(deleted)})`,
+		);
+		// 📌 the two chats at the bottom of 💬 Chats: they go to the top, newest of them first.
+		await tap('#sb-back');
+		await wait(150);
+		await p.click('[data-tab=chats]');
+		await wait(150);
+		const order = () => p.$$eval('#sb-body .sb-row[data-open]', (e) => e.map((x) => x.dataset.open));
+		const before = await order();
+		const [older, newer] = before.slice(-2).reverse();
+		const pin = async (n) => {
+			await p.evaluate((n) => SlimeBeep.api.openChat(n), Number(n));
+			await wait(200);
+			await tap('#sb-more');
+			await wait(100);
+			await shot('chat-menu');
+			await tap('#sb-ask [data-act=pin]');
+			await wait(150);
+			await tap('#sb-back');
+			await wait(150);
+		};
+		await pin(older);
+		await pin(newer);
+		await p.click('[data-tab=chats]');
+		await wait(150);
+		const pinnedOrder = await order();
+		const marks = await p.$$eval('#sb-body .sb-row[data-open]', (e) => e.map((x) => !!x.querySelector('.sb-pinned')));
+		await shot('pinned');
+		check(
+			before.length > 3 &&
+				pinnedOrder[0] === newer &&
+				pinnedOrder[1] === older &&
+				JSON.stringify(pinnedOrder.slice(2)) === JSON.stringify(before.filter((n) => n !== older && n !== newer)) &&
+				marks[0] &&
+				marks[1] &&
+				!marks.slice(2).some(Boolean),
+			`📌 pinned chats go to the top with a 📌, newest first, the rest as before (${before.join(',')} -> ${pinnedOrder.join(',')})`,
+		);
+		// A reload: the game's log still has Dee's beeps, and the deleted one stays deleted.
+		await p.reload();
+		await p.evaluate(stub);
+		await p.evaluate(() => makeLog());
+		await pushDee();
+		await p.addScriptTag({ content: src });
+		await wait(1500);
+		await p.evaluate(() => SlimeBeep.api.openChat(14));
+		await wait(300);
+		const reloaded = await p.$eval('#sb-msgs', (e) => e.textContent);
+		check(
+			!/delete me please/.test(reloaded) && /keep me/.test(reloaded),
+			"after a reload the deleted beep stays gone, though the game's log still has it",
+		);
+		await tap('#sb-back');
+		await wait(150);
+		await p.click('[data-tab=chats]');
+		await wait(150);
+		check(
+			JSON.stringify((await order()).slice(0, 2)) === JSON.stringify([newer, older]),
+			`and the pinned chats are still at the top (${(await order()).join(',')})`,
+		);
+		// 🗑 Clear this chat, from the ⋯ in its header: asks, then the whole chat goes, for good.
+		await p.evaluate(() => SlimeBeep.api.openChat(14));
+		await wait(200);
+		await tap('#sb-more');
+		await wait(100);
+		await tap('#sb-ask [data-act=clear]');
+		await wait(150);
+		const clearAsk = await p.$eval('#sb-ask', (e) => e.textContent).catch(() => '');
+		await shot('clear-confirm');
+		await tap('#sb-ask [data-act=go]');
+		await wait(300);
+		await tap('#sb-back');
+		await wait(150);
+		await p.click('[data-tab=chats]');
+		await wait(150);
+		// Another account and back reloads the history and reads the game's log afresh.
+		await p.evaluate(() => {
+			Player.MemberNumber = 2;
+		});
+		await wait(1500);
+		await p.evaluate(() => {
+			Player.MemberNumber = 1;
+		});
+		await wait(1500);
+		await p.click('[data-tab=chats]');
+		await wait(150);
+		const cleared = await p.evaluate(() => ({
+			rows: [...document.querySelectorAll('#sb-body .sb-row[data-open]')].map((x) => x.dataset.open),
+			kept: (JSON.parse(localStorage.getItem('slimebeep.history.1')) || []).filter((h) => h.MemberNumber === 14 && !h.group).length,
+			keys: JSON.parse(localStorage.getItem('slimebeep.deleted.1')) || [],
+		}));
+		check(
+			/Clear your chat with Dee\?/.test(clearAsk) &&
+				/Dee keeps them/.test(clearAsk) &&
+				!cleared.rows.includes('14') &&
+				cleared.kept === 0 &&
+				cleared.keys.includes('id:del2'),
+			`🗑 Clear this chat asks, then empties it for you, and the game's log can't bring it back (${JSON.stringify({ clearAsk, cleared })})`,
+		);
+		// Unpinning puts the lists back as they were.
+		await pin(older);
+		await pin(newer);
+		check((await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.options')).pinned)).length === 0, 'pressing 📌 again unpins');
 	}
 
 	// ---- A plain http:// page (no crypto.subtle): group chats and mailboxes say to use the https address and

@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.4.0';
+	const VERSION = '3.5.0';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -57,6 +57,8 @@
 		recentEmoji: [],
 		/** @type {string[]} Chats that make no sound: 'n:<member number>' or 'g:<group id>'. */
 		muted: [],
+		/** @type {string[]} Chats kept at the top of 💬 Chats and 👥 Groups: 'n:<member number>' or 'g:<group id>'. */
+		pinned: [],
 		/** Do not disturb: no sounds, message cards or desktop notifications (messages still arrive, unread). */
 		dnd: false,
 		/** @type {string[]} Sites besides EMBED_HOSTS whose pictures show in chats without asking. */
@@ -165,6 +167,15 @@
 	/** @type {Map<string, BcBeepLogEntry>} Key -> the game's own beep, so opening a chat can set its Read flag. */
 	const live = new Map();
 	const histKey = () => `slimebeep.history.${Player.MemberNumber}`;
+	/**
+	 * Keys of messages you deleted that the game's log, the relay or a mailbox could hand over again, so they
+	 * stay deleted. Saved per account under deletedKey(), the newest DELETED_MAX.
+	 * @type {Set<string>}
+	 */
+	const deletedKeys = new Set();
+	const deletedKey = () => `slimebeep.deleted.${Player.MemberNumber}`;
+	/** Most keys kept in `deletedKeys`. */
+	const DELETED_MAX = 2000;
 
 	/** BeepType of the hidden beeps SlimeBeep friends exchange (see onHidden). */
 	const PROTO = 'SlimeBeep';
@@ -628,6 +639,19 @@
 		live.clear();
 		histOwner = Player.MemberNumber;
 		loadGC();
+		deletedKeys.clear();
+		try {
+			const keys = JSON.parse(localStorage.getItem(deletedKey()) || '[]');
+			if (Array.isArray(keys)) {
+				for (const k of keys) {
+					if (typeof k === 'string') {
+						deletedKeys.add(k);
+					}
+				}
+			}
+		} catch (e) {
+			/* unreadable: nothing hidden */
+		}
 		if (!opts.keep) {
 			return;
 		}
@@ -635,7 +659,7 @@
 			const saved = JSON.parse(localStorage.getItem(histKey()) || '[]');
 			if (Array.isArray(saved)) {
 				for (const h of saved) {
-					if (h && h.k && !histKeys.has(h.k) && (h.group ? !!groups[h.group] : !isSignal(h.Message))) {
+					if (h && h.k && !histKeys.has(h.k) && !deletedKeys.has(h.k) && (h.group ? !!groups[h.group] : !isSignal(h.Message))) {
 						hist.push(h);
 						histKeys.add(h.k);
 					}
@@ -664,6 +688,37 @@
 	}
 
 	/**
+	 * Deletes messages from your chats, for you only: nothing is sent, so everyone else keeps theirs. Keys
+	 * that could come back (from the game's log, the relay or a mailbox) go into `deletedKeys`. Whispers ('w:')
+	 * and beeps SlimeBeep caught itself ('raw:') are keyed by when they arrived, so they can't.
+	 * @param {(h: HistEntry) => boolean} which
+	 */
+	function deleteMessages(which) {
+		const gone = new Set(hist.filter(which).map((h) => h.k));
+		if (!gone.size) {
+			return;
+		}
+		hist = hist.filter((h) => !gone.has(h.k));
+		for (const k of gone) {
+			histKeys.delete(k);
+			if (!/^(w|raw):/.test(k)) {
+				deletedKeys.add(k);
+			}
+		}
+		const kept = [...deletedKeys].slice(-DELETED_MAX);
+		deletedKeys.clear();
+		for (const k of kept) {
+			deletedKeys.add(k);
+		}
+		try {
+			localStorage.setItem(deletedKey(), JSON.stringify(kept));
+		} catch (e) {
+			/* hidden this visit only */
+		}
+		saveHistory();
+	}
+
+	/**
 	 * Copies beeps from the game's log into `hist`.
 	 * @returns {HistEntry[]} the received beeps added this time (no reactions)
 	 */
@@ -685,7 +740,7 @@
 				continue;
 			}
 			live.set(k, b);
-			if (histKeys.has(k) || isSignal(b.Message)) {
+			if (histKeys.has(k) || deletedKeys.has(k) || isSignal(b.Message)) {
 				continue;
 			}
 			/** @type {HistEntry} */
@@ -1307,7 +1362,18 @@
 		.sb-card .sb-x { display: inline-flex; align-items: center; justify-content: center; }
 		.sb-msgs { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 6px;
 			background: radial-gradient(circle at 20% 10%, #fff 0, #fff7fb 60%); }
-		.sb-b { max-width: 78%; padding: 7px 11px; border-radius: 18px; white-space: pre-wrap; word-wrap: break-word; }
+		.sb-b { position: relative; max-width: 78%; padding: 7px 11px; border-radius: 18px; white-space: pre-wrap; word-wrap: break-word; }
+		/* A message's 🗑 sits beside the bubble, touching it so the hover holds on the way there. */
+		#sb-panel .sb-del { position: absolute; top: 50%; transform: translateY(-50%); width: 30px; height: 26px; padding: 0; border: none; background: none;
+			font-size: 13px; line-height: 1; display: none; align-items: center; justify-content: center; opacity: .6; }
+		#sb-panel .sb-del:hover { opacity: 1; }
+		.sb-b.me .sb-del { right: 100%; }
+		.sb-b.them .sb-del { left: 100%; }
+		#sb-panel .sb-b:hover .sb-del, #sb-panel .sb-b.sb-tap .sb-del { display: flex; }
+		.sb-pinned { font-size: 10px; }
+		#sb-ask .sb-menu-card { min-width: 220px; align-items: stretch; }
+		#sb-ask .sb-quote { max-width: 260px; max-height: 90px; overflow: hidden; padding: 6px 10px; border-radius: 12px; background: #fff0f8; font-style: italic;
+			white-space: pre-wrap; word-break: break-word; }
 		.sb-b.them { align-self: flex-start; background: #fff; border: 1px solid #ffd1e8; border-bottom-left-radius: 6px; }
 		.sb-b.me { align-self: flex-end; background: linear-gradient(135deg, #ff6fb5, #ff4fa3); color: #fff; border-bottom-right-radius: 6px; }
 		.sb-b em { display: block; font-style: normal; font-size: 10px; opacity: .7; margin-top: 2px; }
@@ -1389,6 +1455,7 @@
 		.sb-sys { align-self: center; font-size: 11px; color: #a0638a; background: #ffe6f3; padding: 2px 10px; border-radius: 10px; }
 		.sb-thead > button#sb-leave { margin-left: auto; }
 		.sb-thead > button#sb-mute { flex: none; font-size: 13px; }
+		.sb-thead > button#sb-more { flex: none; }
 		html.sb-night .sb-gav { background: linear-gradient(135deg, #4f6bd8, #7a5cd6); }
 		html.sb-night .sb-from { color: #8fb3ff; }
 		html.sb-night .sb-sys { background: #1d2550; color: #8f9fd6; }
@@ -1450,6 +1517,7 @@
 		html.sb-night #sb-crop .sb-crop-x { background: #253064; color: #a9c1ff; }
 		html.sb-night #sb-crop input[type=range] { accent-color: #5b8cff; }
 		html.sb-night #sb-ask .sb-warn { background: #3a1420; color: #ffb3bd; }
+		html.sb-night #sb-ask .sb-quote { background: #1d2550; }
 		html.sb-night .sb-tr-pick select { background: #141a33; border-color: #2f3b75; }
 		html.sb-night #sb-panel input[type=checkbox] { accent-color: #5b8cff; }
 		html.sb-night .sb-line[style] { background: #141a33 !important; }
@@ -4155,7 +4223,7 @@
 				text = '';
 			}
 			const k = `mail:${m.id}`;
-			if (!text.trim() || histKeys.has(k)) {
+			if (!text.trim() || histKeys.has(k) || deletedKeys.has(k)) {
 				continue;
 			}
 			const h = {
@@ -4622,7 +4690,7 @@
 				continue;
 			}
 			const k = `g:${gid}:${m.id}`;
-			if (histKeys.has(k)) {
+			if (histKeys.has(k) || deletedKeys.has(k)) {
 				continue;
 			}
 			const sys = m.sys === true;
@@ -5990,6 +6058,157 @@
 	 */
 	const muteButton = (key) =>
 		html`<button id="sb-mute" title="${isMuted(key) ? 'Muted: no sound for this chat. Click for sound again' : 'Mute: no sound for this chat'}">${isMuted(key) ? '🔕' : '🔔'}</button>`;
+	/**
+	 * Whether a chat is pinned to the top of its list.
+	 * @param {string} key a muteKey
+	 */
+	const isPinned = (key) => Array.isArray(opts.pinned) && opts.pinned.includes(key);
+	/**
+	 * Pins a chat to the top of its list, or unpins it.
+	 * @param {string} key a muteKey
+	 * @param {string} name for the toast
+	 */
+	function togglePin(key, name) {
+		const on = !isPinned(key);
+		setOpt('pinned', [...(Array.isArray(opts.pinned) ? opts.pinned : []).filter((k) => k !== key), ...(on ? [key] : [])].slice(-100));
+		notify(on ? `📌 ${name} stays at the top` : `${name} is no longer pinned`);
+	}
+	/**
+	 * Order of the chat lists: pinned chats first, then the rest, each newest message first.
+	 * @param {{ pinned: boolean, time: number }} a
+	 * @param {{ pinned: boolean, time: number }} b
+	 */
+	const pinnedFirst = (a, b) => Number(b.pinned) - Number(a.pinned) || b.time - a.time;
+	/**
+	 * Shows a box over the window. Esc, a Cancel button (data-act="cancel") or a click beside the card
+	 * closes it; any other data-act button goes to `onAct`.
+	 * @param {SafeHtml} content the card
+	 * @param {(act: string, close: () => void) => void} onAct
+	 */
+	function askBox(content, onAct) {
+		if ($('sb-ask')) {
+			return;
+		}
+		const box = document.createElement('div');
+		box.id = 'sb-ask';
+		setHtml(box, content);
+		const close = () => {
+			box.remove();
+			document.removeEventListener('keydown', onKey, true);
+		};
+		/** @param {KeyboardEvent} e */
+		const onKey = (e) => {
+			if (e.key === 'Escape') {
+				e.stopPropagation();
+				close();
+			}
+		};
+		box.addEventListener('click', (e) => {
+			const act = targetOf(e).dataset.act;
+			if (targetOf(e) === box || act === 'cancel') {
+				close();
+			} else if (act) {
+				onAct(act, close);
+			}
+		});
+		document.addEventListener('keydown', onKey, true);
+		$('sb-panel').appendChild(box);
+	}
+	/**
+	 * The ⋯ button of a chat header (pin, clear).
+	 * @param {string} chat a muteKey
+	 */
+	const moreButton = (chat) =>
+		html`<button id="sb-more" title="${isPinned(chat) ? 'Pinned. More: unpin, clear this chat' : 'More: pin, clear this chat'}">⋯</button>`;
+	/**
+	 * The ⋯ box of an open chat: pin it to the top of its list (or unpin it), or clear it.
+	 * @param {string} chat a muteKey
+	 */
+	function openChatMenu(chat) {
+		const g = chat.startsWith('g:') ? groups[chat.slice(2)] : undefined;
+		const name = g ? g.name : nameOf(Number(chat.slice(2)));
+		const list = g ? '👥 Groups' : '💬 Chats';
+		askBox(
+			html`<div class="sb-crop-card sb-menu-card">
+			<b>${name}</b>
+			<button class="sb-pill" data-act="pin">${isPinned(chat) ? `📌 Unpin from ${list}` : `📌 Pin to the top of ${list}`}</button>
+			<button class="sb-pill" data-act="clear">🗑 Clear this chat</button>
+			<button class="sb-pill" data-act="cancel">Cancel</button>
+		</div>`,
+			(act, close) => {
+				close();
+				if (act === 'pin') {
+					togglePin(chat, name);
+					render(true);
+				} else if (act === 'clear') {
+					askClear(chat, name);
+				}
+			},
+		);
+	}
+	/**
+	 * Asks before clearing a chat, then deletes all its messages for you (see deleteMessages).
+	 * @param {string} chat a muteKey
+	 * @param {string} name the person or group
+	 */
+	function askClear(chat, name) {
+		const isGroup = chat.startsWith('g:');
+		const keeps = isGroup ? 'everyone else in the group keeps them' : `${name} keeps them`;
+		askBox(
+			html`<div class="sb-crop-card">
+			<b>🗑 Clear ${isGroup ? name : `your chat with ${name}`}?</b>
+			<span class="sb-hint" style="text-align:center">All its messages go from your SlimeBeep only: ${keeps}. It can't be undone.</span>
+			<div class="sb-crop-btns"><button class="sb-pill" data-act="cancel">Cancel</button><button class="sb-go sb-danger" data-act="go">🗑 Clear chat</button></div>
+		</div>`,
+			(act, close) => {
+				if (act !== 'go') {
+					return;
+				}
+				close();
+				deleteMessages((h) => muteKey(h) === chat);
+				notify(`🗑 Cleared ${name}`);
+				render();
+			},
+		);
+	}
+	/**
+	 * The 🗑 of a message bubble, shown on hover (or after a tap on touch screens).
+	 * @param {HistEntry} h
+	 */
+	const deleteButton = (h) => html`<button class="sb-del" data-del="${h.k}" title="Delete this message (for you only)">🗑</button>`;
+	/**
+	 * Asks before deleting one message, then deletes it for you (see deleteMessages).
+	 * @param {string} k its key
+	 */
+	function askDelete(k) {
+		const h = hist.find((x) => x.k === k);
+		if (!h) {
+			return;
+		}
+		let keeps = `${nameOf(h.MemberNumber)} still has it`;
+		if (h.group) {
+			keeps = 'everyone else in the group still has it';
+		} else if (h.whisper) {
+			keeps = `${nameOf(h.MemberNumber)} and the room's chat still have it`;
+		}
+		const text = textOf(h);
+		askBox(
+			html`<div class="sb-crop-card">
+			<b>🗑 Delete this message?</b>
+			<span class="sb-quote">${text.length > 120 ? `${text.slice(0, 120)}…` : text}</span>
+			<span class="sb-hint" style="text-align:center">It goes from your SlimeBeep only: ${keeps}.</span>
+			<div class="sb-crop-btns"><button class="sb-pill" data-act="cancel">Cancel</button><button class="sb-go sb-danger" data-act="go">🗑 Delete</button></div>
+		</div>`,
+			(act, close) => {
+				if (act !== 'go') {
+					return;
+				}
+				close();
+				deleteMessages((x) => x.k === k);
+				render(true);
+			},
+		);
+	}
 	/** @type {AudioContext | null} Made on the first chime. */
 	let audioCtx = null;
 	/** Plays a short two-note sound. */
@@ -6232,8 +6451,10 @@
 		body.scrollTop = state.scroll;
 	}
 
+	/** The 📌 by a pinned chat's time in the lists. */
+	const pinMark = html`<span class="sb-pinned" title="Pinned">📌</span> `;
 	/**
-	 * Rows of the 💬 Chats tab, filtered by search `q`.
+	 * Rows of the 💬 Chats tab, pinned first, filtered by search `q`.
 	 * @param {string} q
 	 */
 	function chatRows(q) {
@@ -6242,19 +6463,21 @@
 			.map((c) => {
 				const online = friends.some((f) => f.MemberNumber === c.n);
 				const text = textOf(c.last);
+				const pinned = isPinned(`n:${c.n}`);
 				return {
+					pinned,
 					time: new Date(c.last.Time).getTime(),
 					html: html`<div class="sb-row" data-open="${c.n}">${avatar(c.n, c.name)}
 				<div class="sb-main"><div class="sb-name">${online ? html`<span class="sb-on" title="Online"></span>` : html`<span class="sb-off" title="Offline"></span>`}${c.name}</div>
 				<div class="sb-sub">${c.last.Sent && 'You: '}${text}</div></div>
-				<div class="sb-side">${timeOf(c.last.Time)}${c.unread > 0 && html`<br><span class="sb-dot">${c.unread}</span>`}</div></div>`,
+				<div class="sb-side">${pinned && pinMark}${timeOf(c.last.Time)}${c.unread > 0 && html`<br><span class="sb-dot">${c.unread}</span>`}</div></div>`,
 				};
 			});
-		return rows.sort((a, b) => b.time - a.time).map((r) => r.html);
+		return rows.sort(pinnedFirst).map((r) => r.html);
 	}
 
 	/**
-	 * Rows of the 👥 Groups tab, newest message first, filtered by `q`.
+	 * Rows of the 👥 Groups tab, pinned first, then newest message first, filtered by `q`.
 	 * @param {string} q
 	 */
 	function groupRows(q) {
@@ -6266,15 +6489,17 @@
 			const msgs = hist.filter((h) => h.group === g.id);
 			const last = msgs[msgs.length - 1];
 			const n = msgs.filter(unread).length;
+			const pinned = isPinned(`g:${g.id}`);
 			rows.push({
+				pinned,
 				time: last ? last.Time : 0,
 				html: html`<div class="sb-row" data-open="g:${g.id}">${groupAv(g)}
 				<div class="sb-main"><div class="sb-name">${g.name} <small style="font-weight:normal;color:#c08aaa">${g.members.length}</small></div>
 				<div class="sb-sub">${lastLine(last)}</div></div>
-				<div class="sb-side">${last && timeOf(last.Time)}${n > 0 && html`<br><span class="sb-dot">${n}</span>`}</div></div>`,
+				<div class="sb-side">${pinned && pinMark}${last && timeOf(last.Time)}${n > 0 && html`<br><span class="sb-dot">${n}</span>`}</div></div>`,
 			});
 		}
-		return rows.sort((a, b) => b.time - a.time).map((r) => r.html);
+		return rows.sort(pinnedFirst).map((r) => r.html);
 	}
 	/**
 	 * The preview line of a group: "Name: text" of its last message.
@@ -6717,6 +6942,23 @@
 				render(true);
 			});
 		}
+		for (const b of $$(box, '[data-del]')) {
+			b.addEventListener('click', () => askDelete(b.dataset.del || ''));
+		}
+		// Touch screens have no hover: tapping a message shows its 🗑.
+		box.addEventListener('click', (e) => {
+			const t = targetOf(e);
+			const bubble = t.closest('.sb-b');
+			if (!bubble || !bubble.querySelector('.sb-del') || t.closest('a, button, img')) {
+				return;
+			}
+			for (const other of $$(box, '.sb-b.sb-tap')) {
+				if (other !== bubble) {
+					other.classList.remove('sb-tap');
+				}
+			}
+			bubble.classList.toggle('sb-tap');
+		});
 		return box;
 	}
 
@@ -6759,7 +7001,7 @@
 			const act = asAction(textOf(h), name);
 			const from = !h.Sent && !act && html`<span class="sb-from">${name}</span>`;
 			const tr = !h.Sent && trLine(textOf(h), `g:${id}`, i >= msgs.length - AUTO_RECENT);
-			return html`<div class="sb-b ${h.Sent ? 'me' : 'them'}${act && ' sb-act'}">${from}${rich(act ?? textOf(h))}${tr}<em>${!h.Sent && trButton(textOf(h))}${timeOf(h.Time)}</em></div>`;
+			return html`<div class="sb-b ${h.Sent ? 'me' : 'them'}${act && ' sb-act'}">${from}${rich(act ?? textOf(h))}${tr}<em>${!h.Sent && trButton(textOf(h))}${timeOf(h.Time)}</em>${deleteButton(h)}</div>`;
 		};
 		setHtml(
 			view,
@@ -6767,7 +7009,7 @@
 			<div class="sb-thead"><button id="sb-back" title="Back">${ICONS.back}</button>${groupAv(g)}
 				<div class="sb-main"><div class="sb-name">${g.name}</div>
 				<div class="sb-sub" title="${names.join(', ')}">${status}${g.members.length} members: You${names.length > 0 && `, ${names.join(', ')}`}</div></div>
-				${trSettingsButton(`g:${id}`)}${muteButton(`g:${id}`)}<button id="sb-members" title="Members and invites">👥</button><button id="sb-leave" title="${g.owner === Player.MemberNumber ? 'Leave or delete the group' : 'Leave the group'}">🚪</button></div>
+				${trSettingsButton(`g:${id}`)}${muteButton(`g:${id}`)}${moreButton(`g:${id}`)}<button id="sb-members" title="Members and invites">👥</button><button id="sb-leave" title="${g.owner === Player.MemberNumber ? 'Leave or delete the group' : 'Leave the group'}">🚪</button></div>
 			${jamLine(`g:${id}`)}
 			<div class="sb-msgwrap"><div class="sb-msgs" id="sb-msgs">${msgs.length ? msgs.map(bubble) : html`<div class="sb-empty">🫧 Say hi to the group!</div>`}</div>
 				<button class="sb-pill sb-jump" id="sb-jump"></button></div>
@@ -6790,6 +7032,7 @@
 			render();
 		});
 		$('sb-mute').addEventListener('click', () => toggleMute(`g:${id}`, g.name));
+		$('sb-more').addEventListener('click', () => openChatMenu(`g:${id}`));
 		$('sb-trset').addEventListener('click', () => openTranslate(`g:${id}`));
 		if ($('sb-trw')) {
 			$('sb-trw').addEventListener('click', () => translateDraft(`g:${id}`));
@@ -7003,7 +7246,7 @@
 			bubbles = msgs.map((b, i) => {
 				const act = actionOf(b);
 				const tr = !b.Sent && trLine(textOf(b), `n:${n}`, i >= msgs.length - AUTO_RECENT);
-				return html`<div class="sb-b ${b.Sent ? 'me' : 'them'}${act && ' sb-act'}">${rich(act ?? textOf(b))}${tr}${roomLine(b, msgs, i)}<em>${!b.Sent && trButton(textOf(b))}${mailMark(b)}${whisperMark(b)}${uncheckedMark(b)}${timeOf(b.Time)}</em></div>`;
+				return html`<div class="sb-b ${b.Sent ? 'me' : 'them'}${act && ' sb-act'}">${rich(act ?? textOf(b))}${tr}${roomLine(b, msgs, i)}<em>${!b.Sent && trButton(textOf(b))}${mailMark(b)}${whisperMark(b)}${uncheckedMark(b)}${timeOf(b.Time)}</em>${deleteButton(b)}</div>`;
 			});
 		}
 		const waitingBubbles = waitingHere.map(
@@ -7023,7 +7266,7 @@
 			html`
 			<div class="sb-thead"><button id="sb-back" title="Back">${ICONS.back}</button>${avatar(n, nameOf(n))}
 				<div class="sb-main"><div class="sb-name">${nameOf(n)} <small style="font-weight:normal;color:#c08aaa">#${n}</small></div>
-				<div class="sb-sub">${f && html`<span class="sb-on"></span>`}${where(f)}</div>${!!f && statusLine(n)}</div>${trSettingsButton(`n:${n}`)}${muteButton(`n:${n}`)}</div>
+				<div class="sb-sub">${f && html`<span class="sb-on"></span>`}${where(f)}</div>${!!f && statusLine(n)}</div>${trSettingsButton(`n:${n}`)}${muteButton(`n:${n}`)}${moreButton(`n:${n}`)}</div>
 			${jamLine(`n:${n}`)}
 			<div class="sb-msgwrap"><div class="sb-msgs" id="sb-msgs">${bubbles}${waitingBubbles}</div>
 				<button class="sb-pill sb-jump" id="sb-jump"></button></div>
@@ -7048,6 +7291,7 @@
 			render(true);
 		});
 		$('sb-mute').addEventListener('click', () => toggleMute(`n:${n}`, nameOf(n)));
+		$('sb-more').addEventListener('click', () => openChatMenu(`n:${n}`));
 		$('sb-trset').addEventListener('click', () => openTranslate(`n:${n}`));
 		if ($('sb-trw')) {
 			$('sb-trw').addEventListener('click', () => translateDraft(`n:${n}`));
