@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.5.0';
+	const VERSION = '3.5.1';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -75,6 +75,8 @@
 		afk: false,
 		/** The AFK auto-reply. */
 		afkMsg: "I'm away right now, I'll answer when I'm back!",
+		/** In the same chat room, a chat's replies whisper (otherwise they beep). */
+		roomWhisper: true,
 		/** Whether to warn when SlimeBeep's server can't be reached (off once its card was clicked). */
 		relayWarn: true,
 		/** Your status: a short line of your own (like "king of the swamp") that SlimeBeep friends and your groups see. */
@@ -872,10 +874,11 @@
 	};
 	/**
 	 * Whether a received entry is unread: the game's Read flag when the game has the beep, else `h.unread`.
+	 * Whispers never are: the room chat showed them.
 	 * @param {HistEntry} h
 	 */
 	const unread = (h) => {
-		if (h.Sent || isReaction(h)) {
+		if (h.Sent || h.whisper || isReaction(h)) {
 			return false;
 		}
 		const b = live.get(h.k);
@@ -1961,7 +1964,7 @@
 	};
 	/**
 	 * Adds a chat room whisper to that person's chat. It also shows in the room's chat, so there is no
-	 * sound or card for it.
+	 * sound, card or unread badge for it.
 	 * @param {number} other who it was with
 	 * @param {unknown} content
 	 * @param {boolean} sent
@@ -1989,7 +1992,6 @@
 			Time: now,
 			Message: text,
 			whisper: true,
-			unread: !sent && !(isOpen() && thread === other),
 		});
 		histKeys.add(k);
 		saveHistory();
@@ -7255,8 +7257,9 @@
 		);
 		const pinTitle = room ? `Let them join me: adds a button to join you in "${room}"` : "You're not in a chat room";
 		const near = sameRoom(n);
+		const whisper = near && opts.roomWhisper;
 		let placeholder = `Beep ${nameOf(n)}…`;
-		if (near) {
+		if (whisper) {
 			placeholder = `Whisper ${nameOf(n)}…`;
 		} else if (offline) {
 			placeholder = `${nameOf(n)} is offline…`;
@@ -7272,7 +7275,7 @@
 				<button class="sb-pill sb-jump" id="sb-jump"></button></div>
 			<div class="sb-compose">
 				<button class="pin ${pinOn && 'on'}" id="sb-pin" ${!room && 'disabled'} title="${pinTitle}">📍</button>
-				<button class="pin" id="sb-emo" title="Emoji">😊</button>${trWriteButton(`n:${n}`)}
+				<button class="pin" id="sb-emo" title="Emoji">😊</button>${trWriteButton(`n:${n}`)}${near && html`<button class="pin ${whisper && 'on'}" id="sb-whisper" title="${whisper ? 'Whispering (click to beep instead)' : 'Beeping (click to whisper instead)'}">🤫</button>`}
 				<textarea id="sb-text" maxlength="1000" placeholder="${placeholder}"></textarea>
 				<button id="sb-send" title="Send (Enter)">${ICONS.send}</button>
 			</div>`,
@@ -7290,6 +7293,13 @@
 			threadPin = !pinOn;
 			render(true);
 		});
+		if ($('sb-whisper')) {
+			$('sb-whisper').addEventListener('click', () => {
+				opts.roomWhisper = !opts.roomWhisper;
+				saveOpts();
+				render(true);
+			});
+		}
 		$('sb-mute').addEventListener('click', () => toggleMute(`n:${n}`, nameOf(n)));
 		$('sb-more').addEventListener('click', () => openChatMenu(`n:${n}`));
 		$('sb-trset').addEventListener('click', () => openTranslate(`n:${n}`));
@@ -7326,8 +7336,8 @@
 			box.scrollTop = box.scrollHeight;
 			// Cleared first: a whisper redraws the chat while it is sent, and the redraw keeps what is in the box.
 			ta.value = '';
-			// In the same room, it's a whisper (outListener adds it to this chat).
-			if (sameRoom(n) && ChatRoomSendWhisper(n, text) === true) {
+			// In the same room, it's a whisper unless 🤫 is off (outListener adds it to this chat).
+			if (opts.roomWhisper && sameRoom(n) && ChatRoomSendWhisper(n, text) === true) {
 				return;
 			}
 			if (isOffline(n)) {

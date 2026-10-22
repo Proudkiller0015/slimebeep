@@ -2866,6 +2866,7 @@ const check = (ok, what) => {
 
 	// ---- 🤫 Whispers in a chat room show in that person's chat; there, replying whispers while you share the room.
 	{
+		const badgeBefore = await p.$eval('#sb-badge', (e) => e.textContent);
 		await p.evaluate(() => {
 			window.ChatRoomCharacter = [
 				{ MemberNumber: 1, Name: 'Me' },
@@ -2877,6 +2878,7 @@ const check = (ok, what) => {
 			fire('ChatRoomMessage', { Sender: 11, Type: 'Chat', Content: 'said out loud' });
 		});
 		await wait(300);
+		check((await p.$eval('#sb-badge', (e) => e.textContent)) === badgeBefore, 'a whisper is not unread: the room chat already showed it');
 		await p.evaluate(() => SlimeBeep.api.openChat(11));
 		await wait(250);
 		const wThread = await p.$eval('#sb-msgs', (e) => e.innerHTML);
@@ -2885,6 +2887,7 @@ const check = (ok, what) => {
 			"a whisper from Ann in the room shows in her chat, marked 🤫 (room chat doesn't)",
 		);
 		check(/^Whisper Ann…$/.test(await p.$eval('#sb-text', (e) => e.placeholder)), 'in the same room, the chat offers to whisper');
+		await shot('whisper');
 		const fits = await p.$eval('#sb-text', (e) => ({ empty: e.value === '', scroll: e.scrollHeight, height: e.clientHeight }));
 		check(fits.empty && fits.scroll <= fits.height, `and that line fits the box, with nothing to scroll (${JSON.stringify(fits)})`);
 		await p.type('#sb-text', 'whispering back');
@@ -2901,6 +2904,17 @@ const check = (ok, what) => {
 				/whispering back/.test(wBack),
 			`replying there whispers to Ann (no beep), empties the box and shows in her chat (${JSON.stringify(sentW)})`,
 		);
+		await p.click('#sb-whisper');
+		await wait(200);
+		check(/^Beep Ann…$/.test(await p.$eval('#sb-text', (e) => e.placeholder)), 'with 🤫 off, the chat offers to beep instead');
+		await p.type('#sb-text', 'beeping instead');
+		await p.keyboard.press('Enter');
+		await wait(300);
+		const sentB = await p.evaluate(() => ({ chats: chats.length, beeps: beeps.length }));
+		check(sentB.chats === 1 && sentB.beeps === 1, `and replying beeps Ann, even in the same room (${JSON.stringify(sentB)})`);
+		await p.click('#sb-whisper');
+		await wait(200);
+		check(/^Whisper Ann…$/.test(await p.$eval('#sb-text', (e) => e.placeholder)), '🤫 again goes back to whispering');
 		// A whisper typed in the game's own chat lands here too.
 		await p.evaluate(() => ServerSend('ChatRoomChat', { Content: 'typed in the room', Type: 'Whisper', Target: 11 }));
 		await wait(300);
