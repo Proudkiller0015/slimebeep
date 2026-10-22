@@ -150,7 +150,9 @@ function keyed(c, who, gid) {
 					out.push(m.text);
 				} else if (m.enc && c.keys[m.enc.e]) {
 					try {
-						out.push(dec.decode(await unseal(await aesKey(c.keys[m.enc.e]), m.enc, `${gid}|${m.enc.e}|${m.from}`)));
+						// Messages come padded with NULs (see `padded` in slimebeep.js).
+						// eslint-disable-next-line no-control-regex -- removing the padding is the point
+						out.push(dec.decode(await unseal(await aesKey(c.keys[m.enc.e]), m.enc, `${gid}|${m.enc.e}|${m.from}`)).replace(/\u0000+$/, ''));
 					} catch (e) {
 						/* not ours */
 					}

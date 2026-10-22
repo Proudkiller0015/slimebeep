@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.6.0';
+	const VERSION = '3.7.0';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -904,6 +904,21 @@
 			saveHistory();
 		}
 	};
+	/** Marks every message read, chats and groups, in the game's log too, without deleting any. */
+	function markAllRead() {
+		for (const h of hist) {
+			if (!unread(h)) {
+				continue;
+			}
+			const b = live.get(h.k);
+			if (b) {
+				b.Read = true;
+			}
+			h.unread = false;
+		}
+		saveHistory();
+		render(true);
+	}
 	/**
 	 * A member's name: from the online friends, the friend list, or the last beep they sent.
 	 * @param {number} n
@@ -1271,6 +1286,7 @@
 		.sb-tabs button.on i { background: #fff; color: #ff2e8a; }
 		.sb-body { flex: 1; overflow-y: auto; padding: 6px 10px 10px; }
 		.sb-body::-webkit-scrollbar { width: 6px; } .sb-body::-webkit-scrollbar-thumb { background: #ffb3d9; border-radius: 3px; }
+		#sb-panel .sb-readall { display: block; margin: -2px 0 6px auto; font-size: 11px; }
 		.sb-search { width: 100%; border: 2px solid #ffd1e8; border-radius: 14px; padding: 5px 10px; margin: 2px 0 6px; background: #fff; color: #4a2340; font: inherit; }
 		.sb-row { display: flex; align-items: center; gap: 8px; padding: 7px 8px; margin: 4px 0; border-radius: 16px; background: #fff;
 			border: 1px solid #ffe0ef; cursor: pointer; }
@@ -3563,7 +3579,7 @@
 	 * @property {string} [ti] musicAdd: its title
 	 * @property {number} [id] musicSkip: the number of the song a member asks you, the host, to skip
 	 * @property {number} [epoch] keys: the group key's current epoch (0: none yet)
-	 * @property {boolean} [rekey] keys: a member left, so a new key is needed
+	 * @property {boolean} [rekey] keys: a member left or the key is old, so a new key is needed
 	 * @property {{ e: number, w: { to: number, by: number, ek: string, iv: string, ct: string, sig: string } }[]} [mine] keys: the wraps sent to you
 	 * @property {number[]} [needs] keys: members who don't have the current key yet
 	 */
@@ -3630,6 +3646,8 @@
 	 */
 	/** @type {KeyPair | null} Cached result of getKey. */
 	let myKey = null;
+	/** @type {{ owner: number, p: Promise<KeyPair> } | null} getKey while it runs, so two callers get the same keys. */
+	let keyLoading = null;
 	/**
 	 * Bytes as base64url (no padding).
 	 * @param {ArrayBuffer} buf
@@ -4021,6 +4039,18 @@
 		waitingKey.delete(gid);
 		takeSealed(gid, waits, false).catch((e) => warn(e, 'key'));
 	}
+	/** Group messages are sealed padded to a multiple of this many bytes, so their size says little about them. */
+	const PAD = 128;
+	/**
+	 * A message as UTF-8, padded with NULs to a multiple of PAD bytes (clean strips them when it is read).
+	 * @param {string} text
+	 */
+	const padded = (text) => {
+		const bytes = new TextEncoder().encode(text);
+		const out = new Uint8Array(Math.ceil((bytes.length + 1) / PAD) * PAD);
+		out.set(bytes);
+		return out;
+	};
 	/**
 	 * Seals a message with the group's current key and sends it; waits up to 20 s for the key.
 	 * @param {string} gid
@@ -4034,7 +4064,7 @@
 			const st = keyState[gid];
 			const key = st && st.epoch > 0 && !st.rekey ? await groupKey(gid, st.epoch) : null;
 			if (st && key) {
-				const enc = { e: st.epoch, ...(await seal(key, new TextEncoder().encode(text), `${gid}|${st.epoch}|${Player.MemberNumber}`)) };
+				const enc = { e: st.epoch, ...(await seal(key, padded(text), `${gid}|${st.epoch}|${Player.MemberNumber}`)) };
 				relaySend(gid, { t: 'say', enc });
 				return;
 			}
@@ -4375,15 +4405,56 @@
 	}
 
 	/**
-	 * This account's keys in this browser, stored as JWK fields under slimebeep.key.<member number> (x, y, d
-	 * for signing; ex, ey, ed for encryption); made on first use. `kf` is the first 16 chars of the signing
-	 * key's public x, the fingerprint friends compare.
+	 * Runs one request on SlimeBeep's IndexedDB store of private keys and resolves with its result once saved.
+	 * @param {(store: IDBObjectStore) => IDBRequest} fn
+	 * @returns {Promise<any>}
 	 */
-	async function getKey() {
+	const keyStore = (fn) =>
+		new Promise((resolve, reject) => {
+			const open = indexedDB.open('slimebeep', 1);
+			open.onupgradeneeded = () => open.result.createObjectStore('keys');
+			open.onerror = () => reject(open.error);
+			open.onsuccess = () => {
+				const db = open.result;
+				const tx = db.transaction('keys', 'readwrite');
+				const req = fn(tx.objectStore('keys'));
+				tx.oncomplete = () => {
+					db.close();
+					resolve(req.result);
+				};
+				tx.onerror = tx.onabort = () => {
+					db.close();
+					reject(tx.error);
+				};
+			};
+		});
+	/**
+	 * This account's keys in this browser; made on first use. The private keys are CryptoKeys that can't be
+	 * exported, kept in IndexedDB (keyStore, "key.<member number>"); localStorage keeps the public halves under
+	 * slimebeep.key.<member number> (x, y for signing; ex, ey for encryption). Keys from older versions, kept
+	 * whole in localStorage (d, ed), move there; without IndexedDB they stay as they were. `kf` is the first
+	 * 16 chars of the signing key's public x, the fingerprint friends compare.
+	 * @returns {Promise<KeyPair>}
+	 */
+	function getKey() {
 		const me = Player.MemberNumber;
 		if (myKey && myKey.owner === me) {
-			return myKey;
+			return Promise.resolve(myKey);
 		}
+		if (!keyLoading || keyLoading.owner !== me) {
+			keyLoading = { owner: me, p: loadKey(me) };
+			keyLoading.p.catch(() => {
+				keyLoading = null;
+			});
+		}
+		return keyLoading.p;
+	}
+	/**
+	 * Loads or makes the keys of member `me` (see getKey).
+	 * @param {number} me
+	 * @returns {Promise<KeyPair>}
+	 */
+	async function loadKey(me) {
 		const k = `slimebeep.key.${me}`;
 		if (!secure()) {
 			throw new Error('no WebCrypto on this page (http)');
@@ -4394,6 +4465,30 @@
 			saved = JSON.parse(localStorage.getItem(k) || 'null');
 		} catch (e) {
 			saved = null;
+		}
+		/** @type {{ priv: CryptoKey, epriv: CryptoKey, x: string, y: string, ex: string, ey: string } | null} */
+		let stored = null;
+		try {
+			stored = await keyStore((st) => st.get(`key.${me}`));
+		} catch (e) {
+			stored = null;
+		}
+		if (stored && stored.priv && stored.epriv && (!saved || !saved.x || saved.x === stored.x)) {
+			if (!saved || saved.x !== stored.x || saved.ex !== stored.ex || saved.d) {
+				try {
+					localStorage.setItem(k, JSON.stringify({ x: stored.x, y: stored.y, ex: stored.ex, ey: stored.ey }));
+				} catch (e) {
+					/* the public halves come back from IndexedDB next time */
+				}
+			}
+			return (myKey = {
+				owner: me,
+				priv: stored.priv,
+				pub: { x: stored.x, y: stored.y },
+				kf: stored.x.slice(0, 16),
+				epriv: stored.epriv,
+				ek: `${stored.ex}.${stored.ey}`,
+			});
 		}
 		/** @type {{ x: string, y: string, d: string, ex: string, ey: string, ed: string }} */
 		let all;
@@ -4410,13 +4505,6 @@
 			const jwk = await crypto.subtle.exportKey('jwk', pair.privateKey);
 			Object.assign(all, { ex: jwk.x || '', ey: jwk.y || '', ed: jwk.d || '' });
 		}
-		if (!saved || saved.ed !== all.ed || saved.d !== all.d) {
-			try {
-				localStorage.setItem(k, JSON.stringify(all));
-			} catch (e) {
-				/* this visit only */
-			}
-		}
 		const priv = await crypto.subtle.importKey(
 			'jwk',
 			{ kty: 'EC', crv: 'P-256', x: all.x, y: all.y, d: all.d, ext: true },
@@ -4431,6 +4519,25 @@
 			false,
 			['deriveBits'],
 		);
+		/** @type {Record<string, string>} What localStorage keeps: the public halves, or everything without IndexedDB. */
+		let keep = all;
+		try {
+			const pub = { x: all.x, y: all.y, ex: all.ex, ey: all.ey };
+			await keyStore((st) => st.put({ priv, epriv, ...pub }, `key.${me}`));
+			const back = await keyStore((st) => st.get(`key.${me}`));
+			if (back && back.x === all.x && back.priv && back.epriv) {
+				keep = pub;
+			}
+		} catch (e) {
+			/* no IndexedDB here: the keys stay in localStorage */
+		}
+		if (!saved || JSON.stringify(saved) !== JSON.stringify(keep)) {
+			try {
+				localStorage.setItem(k, JSON.stringify(keep));
+			} catch (e) {
+				/* this visit only */
+			}
+		}
 		return (myKey = { owner: me, priv, pub: { x: all.x, y: all.y }, kf: all.x.slice(0, 16), epriv, ek: `${all.ex}.${all.ey}` });
 	}
 
@@ -6616,9 +6723,13 @@
 				${tab === 'groups' && groupsTop()}
 				${tab === 'friends' && loggedIn() && meRow()}
 				<input class="sb-search" id="sb-search" placeholder="🔍 Search ${what}…" value="${search}">
+				${(tab === 'chats' || tab === 'groups') && hist.some(unread) && html`<button class="sb-pill sb-readall" id="sb-readall">✓ Mark all as read</button>`}
 				${rows.length ? rows : html`<div class="sb-empty">${empty}</div>`}
 			</div>`,
 			);
+			if ($('sb-readall')) {
+				$('sb-readall').addEventListener('click', markAllRead);
+			}
 			const s = $input('sb-search');
 			s.addEventListener('input', () => {
 				search = s.value;

@@ -417,6 +417,20 @@ const check = (ok, what) => {
 		}
 	};
 	await p.evaluate(stub);
+	// Keys from before 3.7, whole in localStorage: SlimeBeep moves the private halves to IndexedDB (checked below).
+	const oldKey = await p.evaluate(async () => {
+		const sign = await crypto.subtle.exportKey(
+			'jwk',
+			(await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign'])).privateKey,
+		);
+		const enc = await crypto.subtle.exportKey(
+			'jwk',
+			(await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits'])).privateKey,
+		);
+		const k = { x: sign.x, y: sign.y, d: sign.d, ex: enc.x, ey: enc.y, ed: enc.d };
+		localStorage.setItem('slimebeep.key.1', JSON.stringify(k));
+		return { x: k.x, ex: k.ex };
+	});
 	await p.addScriptTag({ content: src });
 	await p.addScriptTag({ content: src });
 	await wait(400);
@@ -1012,6 +1026,11 @@ const check = (ok, what) => {
 				quote.barGone,
 			`↩ replies to a message: it goes with the line it answers, shown quoted above the bubble (${JSON.stringify({ bar, replied, quote })})`,
 		);
+		// 3.7 pads group messages with NULs; the reading side (this version and older ones alike) strips them.
+		await a.say(`padded hello${'\u0000'.repeat(40)}`);
+		await wait(700);
+		const pad = await p.$eval('#sb-msgs', (e) => ({ shown: /padded hello/.test(e.textContent), nul: e.textContent.includes('\u0000') }));
+		check(pad.shown && !pad.nul, `a message padded with NULs shows without them (${JSON.stringify(pad)})`);
 		// A code for anyone: Zed, nobody's friend, joins with it.
 		await p.click('#sb-members');
 		await wait(200);
@@ -2885,6 +2904,34 @@ const check = (ok, what) => {
 			'a beep for an offline SlimeBeep friend is left in their mailbox (📬), not kept waiting here and no game beep',
 		);
 		const myKf = await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.key.1')).x.slice(0, 16));
+		const moved = await p.evaluate(
+			() =>
+				new Promise((resolve) => {
+					const open = indexedDB.open('slimebeep', 1);
+					open.onsuccess = () => {
+						const get = open.result.transaction('keys').objectStore('keys').get('key.1');
+						get.onsuccess = () => {
+							const v = get.result;
+							const ls = JSON.parse(localStorage.getItem('slimebeep.key.1'));
+							resolve({
+								x: v && v.x,
+								ex: v && v.ex,
+								extractable: v && [v.priv.extractable, v.epriv.extractable],
+								lsKeys: Object.keys(ls).sort().join(),
+								lsX: ls.x,
+							});
+						};
+					};
+				}),
+		);
+		check(
+			moved.x === oldKey.x &&
+				moved.ex === oldKey.ex &&
+				moved.lsX === oldKey.x &&
+				moved.extractable.join() === 'false,false' &&
+				moved.lsKeys === 'ex,ey,x,y',
+			`keys from before 3.7 move to IndexedDB unchanged and can't be exported; localStorage keeps only the public halves (${JSON.stringify(moved)})`,
+		);
 		const catBox = await mailConnect(13, cat);
 		const inbox = catBox.last('mail') ? catBox.last('mail').list : [];
 		check(
@@ -4125,6 +4172,59 @@ const check = (ok, what) => {
 		await wait(500);
 		check(await p.evaluate(() => beeps.some((b) => b[0] === 11 && b[1] === 'still beeping')), 'beeps work as usual');
 		host.ws.close();
+	}
+	// ---- ✓ Mark all as read: every unread message, chats and groups, is read at once; none is deleted.
+	{
+		await p.evaluate(() => {
+			for (const [n, name] of [
+				[11, 'Ann'],
+				[12, 'Bea'],
+			]) {
+				FriendListBeepLog.push({
+					MemberNumber: n,
+					MemberName: name,
+					Sent: false,
+					Read: false,
+					Time: new Date(),
+					Message: `unread from ${name}`,
+					Id: `ra${n}`,
+				});
+			}
+		});
+		await wait(1500);
+		await p.evaluate(() => {
+			if (document.getElementById('sb-panel').style.display !== 'flex') {
+				document.getElementById('sb-toggle').click();
+			}
+		});
+		for (let i = 0; i < 4 && !(await p.$('[data-tab=chats]')); i++) {
+			await tap('#sb-back');
+			await wait(200);
+		}
+		await p.click('[data-tab=chats]');
+		await wait(300);
+		const unreadBefore = await p.evaluate(() => ({
+			button: !!document.getElementById('sb-readall'),
+			dots: document.querySelectorAll('#sb-body .sb-dot').length,
+		}));
+		await p.click('#sb-readall');
+		// The badge is redrawn every second.
+		await wait(1300);
+		const readAfter = await p.evaluate(() => ({
+			button: !!document.getElementById('sb-readall'),
+			dots: document.querySelectorAll('#sb-body .sb-dot').length,
+			badge: document.getElementById('sb-badge').style.display,
+			kept: /unread from Bea/.test(document.getElementById('sb-body').textContent),
+		}));
+		check(
+			unreadBefore.button &&
+				unreadBefore.dots > 0 &&
+				!readAfter.button &&
+				readAfter.dots === 0 &&
+				readAfter.badge === 'none' &&
+				readAfter.kept,
+			`✓ Mark all as read clears every unread dot and the badge, and keeps the messages (${JSON.stringify({ unreadBefore, readAfter })})`,
+		);
 	}
 	// ---- A relay a blocker stops (NoScript, uMatrix...) from the start: after three failed tries the player
 	// is told which address to allow, and clicking the card turns that warning off for good.

@@ -45,6 +45,8 @@ const sealed = (x, max) => typeof x === 'string' && x.length >= 22 && x.length <
 const CT_MAX = 6000;
 /** Group key epochs kept, so history from before a rekey stays readable. */
 const EPOCHS = 10;
+/** A group gets a new key after this many messages with one key, or this long (ms), so one leaked key reads little. */
+const ROTATE = { msgs: 500, ms: 7 * 24 * 3600 * 1000 };
 /** Group limits. */
 const LIMITS = {
 	/** Longest group or member name. */
@@ -176,6 +178,8 @@ export default {
 export class Group extends DurableObject {
 	constructor(ctx, env) {
 		super(ctx, env);
+		// ROTATE_MSGS is set only by the local test server.
+		this.rotateMsgs = Number(env.ROTATE_MSGS) || ROTATE.msgs;
 		// Pings are answered without waking the object.
 		ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('{"t":"ping"}', '{"t":"pong"}'));
 		ctx.blockConcurrencyWhile(async () => {
@@ -481,6 +485,12 @@ export class Group extends DurableObject {
 			enc: { e: enc.e, iv: enc.iv, ct: enc.ct },
 			ref: typeof p.ref === 'string' ? p.ref.slice(0, 24) : undefined,
 		});
+		// Counted from the message numbers, which are stored anyway. Keys from before rotation have no `since`: they get a new one now.
+		if (!k.rekey && (this.seq - (k.fromSeq || 0) >= this.rotateMsgs || Date.now() - (k.since || 0) > ROTATE.ms)) {
+			k.rekey = true;
+			await this.ctx.storage.put('keys', k);
+			this.sendKeys();
+		}
 	}
 
 	/** Posts a system line ("X joined"). */
@@ -884,6 +894,8 @@ export class Group extends DurableObject {
 			}
 			k.epoch = p.e;
 			k.rekey = false;
+			k.since = Date.now();
+			k.fromSeq = this.seq;
 			k.eps[p.e] = {};
 			for (const e of Object.keys(k.eps)) {
 				if (Number(e) <= p.e - EPOCHS) {

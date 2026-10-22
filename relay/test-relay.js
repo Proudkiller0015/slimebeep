@@ -162,6 +162,21 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 	const caught = (await c3.texts()).filter((t) => !/joined/.test(t));
 	check(caught.join() === 'one,two,three', `coming back, Cat gets exactly what she missed (${caught})`);
 
+	// A key is used for at most ROTATE_MSGS messages, then the group gets a new one (npm run dev:rotate makes it 5).
+	const rotate = Number(process.env.ROTATE_MSGS);
+	if (rotate) {
+		// Cat sends them: Ann has sent close to the flood limit.
+		const before = c3.epoch;
+		for (let i = 0; i < rotate; i++) {
+			await c3.say(`rotate ${i}`);
+		}
+		await wait(2500);
+		check(
+			c3.epoch > before && !c3.rekey,
+			`after ${rotate} messages with one key, the group gets a new key (epoch ${before} -> ${c3.epoch})`,
+		);
+	}
+
 	// Roles.
 	z.send({ t: 'kick', member: 13 });
 	z.send({ t: 'invite' });
