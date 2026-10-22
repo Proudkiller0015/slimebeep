@@ -347,6 +347,26 @@ const check = (ok, what) => {
 			MouseY = r[1] + r[3] / 2;
 			x.click();
 		};
+		/** Turns SlimeBeep's settings to page n (1 or 2) with the page switch's Next half. */
+		window.settingsPage = (n) => {
+			const x = PreferenceExtensionsSettings.SlimeBeep;
+			for (let i = 0; i < 3; i++) {
+				buttons = {};
+				x.run();
+				const label = Object.keys(buttons).find((k) => /^Page \d\/\d$/.test(k));
+				if (!label) {
+					throw new Error(`no page switch (${Object.keys(buttons)})`);
+				}
+				if (label.startsWith(`Page ${n}/`)) {
+					return;
+				}
+				const r = buttons[label];
+				MouseX = r[0] + r[2] - 10;
+				MouseY = r[1] + r[3] / 2;
+				x.click();
+			}
+			throw new Error(`no page ${n}`);
+		};
 		// A stand-in for the game's 2000x1000 canvas: draws what the real Draw* calls would, roughly, to look at.
 		window.MouseX = 0;
 		window.MouseY = 0;
@@ -386,6 +406,7 @@ const check = (ok, what) => {
 				MainCanvas.fillRect(l + 16, t + 16, w - 32, h - 32);
 			}
 		};
+		window.DrawBackNextButton = (l, t, w, h, label, color) => DrawButton(l, t, w, h, label, color);
 		window.DrawCheckbox = (l, t, w, h, text, on) => {
 			DrawText(text, l + 100, t + 33, 'Black');
 			DrawButton(l, t, w, h, '', 'White', on ? 'Icons/Checked.png' : '');
@@ -460,25 +481,47 @@ const check = (ok, what) => {
 	);
 	check(await p.evaluate(() => MainCanvas.textAlign === 'center'), 'and it leaves the canvas text alignment as it found it');
 	await shot('settings');
-	check(
-		await p.evaluate(() => {
+	// Both pages, the WaveBeep gap with them, inside the 2000x1000 screen, and no label running under the buttons on the right.
+	const fits = await p.evaluate(() => {
+		const out = [];
+		for (const n of [1, 2]) {
+			settingsPage(n);
+			drawn.length = 0;
 			const ys = [];
-			const real = DrawButton;
+			const rights = [];
+			const realButton = DrawButton;
+			const realText = DrawText;
 			window.DrawButton = (l, tp, w, h, ...r) => {
 				ys.push(tp + h);
-				return real(l, tp, w, h, ...r);
+				return realButton(l, tp, w, h, ...r);
+			};
+			window.DrawText = (t, x, y, ...r) => {
+				if (x < 1000) {
+					MainCanvas.font = '36px Arial';
+					rights.push(x + MainCanvas.measureText(t).width);
+				}
+				return realText(t, x, y, ...r);
 			};
 			PreferenceExtensionsSettings.SlimeBeep.run();
-			window.DrawButton = real;
-			return Math.max(...ys) <= 1000;
-		}),
-		'everything on the settings page fits the game screen',
+			window.DrawButton = realButton;
+			window.DrawText = realText;
+			out.push({ page: n, bottom: Math.max(...ys), right: Math.round(Math.max(...rights)), text: drawn.join('|') });
+		}
+		settingsPage(1);
+		return out;
+	});
+	check(
+		fits.every((f) => f.bottom <= 1000 && f.right < 1346) &&
+			/Pop sound/.test(fits[0].text) &&
+			/Night mode/.test(fits[1].text) &&
+			/Wait [\d.]+ seconds between WaveBeeps/.test(fits[1].text),
+		`two settings pages, everything on screen and clear of the buttons (${JSON.stringify(fits.map(({ page: n, bottom, right }) => ({ n, bottom, right })))})`,
 	);
-	// Click the second checkbox (pop sound, after night mode; no theme add-on, so no theme box): rows start at 160, 70 apart.
-	check(!/Match my/.test(page), 'without a theme add-on there is no theme toggle');
+	// Click the first checkbox (pop sound) on page 1: rows start at 160, 70 apart.
+	check(!/Match my/.test(fits[1].text), 'without a theme add-on there is no theme toggle');
 	await p.evaluate(() => {
 		MouseX = 520;
-		MouseY = 160 + 70 + 20;
+		MouseY = 160 + 20;
 		PreferenceExtensionsSettings.SlimeBeep.click();
 	});
 	check(
@@ -508,11 +551,12 @@ const check = (ok, what) => {
 		await p.evaluate(() => openedSettings.join() === 'SlimeBeep' && document.getElementById('sb-panel').style.display === 'none'),
 		"⚙ opens SlimeBeep's page in the game's Settings > Extensions (and gets the window out of the way)",
 	);
-	// "Let them join me" starts off; the room tests below switch it on (its box is the 7th on the page).
+	// "Let them join me" starts off; the room tests below switch it on (its box is the 2nd on page 2, after night mode).
 	check(await p.evaluate(() => !JSON.parse(localStorage.getItem('slimebeep.options')).shareRoom), '"Let them join me" starts off');
 	await p.evaluate(() => {
+		settingsPage(2);
 		MouseX = 520;
-		MouseY = 160 + 6 * 70 + 20;
+		MouseY = 160 + 70 + 20;
 		PreferenceExtensionsSettings.SlimeBeep.click();
 	});
 	check(await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.options')).shareRoom === true), 'and is switched on there');
@@ -742,11 +786,12 @@ const check = (ok, what) => {
 	await p.click('#sb-body label:nth-of-type(4) input');
 	await p.type('#sb-gmsg', 'Party in 10!');
 	await p.click('#sb-gear');
-	// The WaveBeep gap: its - button sits under the 11 checkboxes.
+	// The WaveBeep gap: its - button sits under page 2's 4 checkboxes.
 	await p.evaluate(() => {
+		settingsPage(2);
 		for (let i = 0; i < 20; i++) {
 			MouseX = 520;
-			MouseY = 160 + 11 * 70 + 20;
+			MouseY = 160 + 4 * 70 + 20;
 			PreferenceExtensionsSettings.SlimeBeep.click();
 		}
 	});
@@ -2261,9 +2306,10 @@ const check = (ok, what) => {
 			st.textContent =
 				':root { --tmd-main: #102030; --tmd-element: #203040; --tmd-element-hover: #304050; --tmd-element-disabled: #0a1520; --tmd-accent: #aa3366; --tmd-accent-hover: #cc4488; --tmd-accent-disabled: #551a33; --tmd-text: #eeeeee; --tmd-text-disabled: #999999; }';
 			document.head.appendChild(st);
+			settingsPage(2);
 			out.themedLabel = /Match my Themed colours/.test(settingsTexts());
 			out.notYet = !document.documentElement.classList.contains('sb-themed');
-			// Its box is the second one (after night mode): ticking it there.
+			// Its box is the second one on page 2 (after night mode): ticking it there.
 			MouseX = 520;
 			MouseY = 160 + 70 + 20;
 			PreferenceExtensionsSettings.SlimeBeep.click();

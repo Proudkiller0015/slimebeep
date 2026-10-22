@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.7.0';
+	const VERSION = '3.7.1';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -10074,7 +10074,8 @@
 	}
 	/**
 	 * Registers SlimeBeep's page in the game's Settings > Extensions, drawn on the game's canvas with its
-	 * own checkbox and button helpers: every option, checkboxes on the left and buttons on the right.
+	 * own checkbox and button helpers: checkboxes on the left, over two pages (they don't all fit the
+	 * screen), and buttons on the right.
 	 */
 	function registerSettings() {
 		if (typeof PreferenceRegisterExtensionSetting !== 'function') {
@@ -10086,46 +10087,54 @@
 		/** @typedef {[number, number, number, number]} Rect x, y, width, height on the canvas */
 		/** @type {Rect} */
 		const EXIT = [1815, 75, 90, 90];
+		// The page switch, beside the exit, like the game's own Back / Next button.
+		/** @type {Rect} */
+		const PAGE = [1590, 75, 200, 90];
+		/** @type {Rect} */
+		const BACK = [1590, 75, 100, 90];
+		/** @type {Rect} */
+		const NEXT = [1690, 75, 100, 90];
 		const LEFT = 500,
 			TOP = 160,
 			ROW = 70;
-		/** @type {[string, string | (() => string), () => unknown, (on: boolean) => void, (() => boolean)?][]} id, label, get, set, shown */
-		const boxes = [
-			['night', 'Night mode (a night blue slime)', () => opts.night, (on) => setNight(on)],
-			// Listed only while a theme add-on is running.
+		/** @typedef {[string, string | (() => string), () => unknown, (on: boolean) => void, (() => boolean)?]} Box id, label, get, set, shown */
+		/** @type {Box[][]} Notifications first, then the look, rooms and WaveBeeps (the gap setting goes under them). */
+		const pages = [
 			[
-				'themed',
-				() => `Match my ${(themeSource() || {}).name || 'theme'} colours`,
-				() => opts.themed,
-				(on) => setThemed(on),
-				() => !!themeSource(),
+				['sound', 'Pop sound for new beeps', () => opts.sound, (on) => setOpt('sound', on)],
+				['popups', 'Show new beeps in a pop-up (click to reply)', () => opts.popups, (on) => setOpt('popups', on)],
+				['groupAll', 'Group chats notify me of every message', () => opts.groupAll, (on) => setOpt('groupAll', on)],
+				['quietOpen', 'No sound or pop-up while SlimeBeep is open', () => opts.quietOpen, (on) => setOpt('quietOpen', on)],
+				['desktop', 'Desktop notification when in the background', () => opts.desktop, (on) => setDesktop(on)],
+				['dnd', 'Do not disturb (no sounds or pop-ups)', () => opts.dnd, (on) => setDnd(on)],
+				['updateNotes', "Tell me what's new after an update", () => opts.updateNotes, (on) => setOpt('updateNotes', on)],
 			],
-			['sound', 'Pop sound for new beeps', () => opts.sound, (on) => setOpt('sound', on)],
-			['popups', 'Show new beeps in a pop-up (click to reply)', () => opts.popups, (on) => setOpt('popups', on)],
 			[
-				'groupAll',
-				'Group chats notify me of every message (otherwise only @mentions and replies)',
-				() => opts.groupAll,
-				(on) => setOpt('groupAll', on),
+				['night', 'Night mode (a night blue slime)', () => opts.night, (on) => setNight(on)],
+				// Listed only while a theme add-on is running.
+				[
+					'themed',
+					() => `Match my ${(themeSource() || {}).name || 'theme'} colours`,
+					() => opts.themed,
+					(on) => setThemed(on),
+					() => !!themeSource(),
+				],
+				['share', '"Let them join me" starts on', () => opts.shareRoom, (on) => setOpt('shareRoom', on)],
+				[
+					'remember',
+					'Remember who I picked for WaveBeeps',
+					() => opts.remember,
+					(on) => {
+						setOpt('remember', on);
+						if (!on) {
+							setOpt('picked', []);
+						}
+					},
+				],
+				['keep', 'Keep my beeps in this browser after I log out', () => opts.keep, (on) => setKeep(on)],
 			],
-			['quietOpen', 'No sound or pop-up while SlimeBeep is open', () => opts.quietOpen, (on) => setOpt('quietOpen', on)],
-			['desktop', 'Desktop notification when in the background', () => opts.desktop, (on) => setDesktop(on)],
-			['share', '"Let them join me" starts on', () => opts.shareRoom, (on) => setOpt('shareRoom', on)],
-			[
-				'remember',
-				'Remember who I picked for WaveBeeps',
-				() => opts.remember,
-				(on) => {
-					setOpt('remember', on);
-					if (!on) {
-						setOpt('picked', []);
-					}
-				},
-			],
-			['keep', 'Keep my beeps in this browser after I log out', () => opts.keep, (on) => setKeep(on)],
-			['dnd', 'Do not disturb (no sounds or pop-ups)', () => opts.dnd, (on) => setDnd(on)],
-			['updateNotes', "Tell me what's new after an update", () => opts.updateNotes, (on) => setOpt('updateNotes', on)],
 		];
+		let page = 0;
 		/** @type {[() => string, () => void, (() => boolean)?][]} The buttons on the right, top to bottom: label, action, shown. */
 		const buttons = [
 			[() => (myPfp() ? 'Change profile picture' : 'Choose profile picture'), () => pickPicture()],
@@ -10153,14 +10162,17 @@
 		];
 		const RIGHT = 1430,
 			BUTTON_W = 440;
-		// Boxes and buttons shown right now (an entry's last, optional item decides).
-		const shown = () => boxes.filter((b) => !b[4] || b[4]());
+		// This page's boxes and the buttons shown right now (an entry's last, optional item decides).
+		const shown = () => pages[page].filter((b) => !b[4] || b[4]());
 		const shownButtons = () => buttons.filter((b) => !b[2] || b[2]());
 		/**
-		 * Recomputed every frame: the shown boxes can change.
-		 * @returns {{ g: number, MINUS: Rect, PLUS: Rect }}
+		 * Recomputed every frame: the shown boxes can change. The WaveBeep gap is on the last page only.
+		 * @returns {{ g: number, MINUS: Rect, PLUS: Rect } | null}
 		 */
 		const layout = () => {
+			if (page !== pages.length - 1) {
+				return null;
+			}
 			const g = TOP + shown().length * ROW;
 			return { g, MINUS: [LEFT, g, 64, 64], PLUS: [LEFT + 80, g, 64, 64] };
 		};
@@ -10176,24 +10188,36 @@
 			Identifier: 'SlimeBeep',
 			ButtonText: 'SlimeBeep',
 			Image: ICON,
-			// The game turns a page down without load, run and click (nothing to load here).
-			load: () => {},
+			// The game turns a page down without load, run and click. Opening it starts on the first page.
+			load: () => {
+				page = 0;
+			},
 			run: () => {
 				try {
 					DrawCharacter(Player, 50, 50, 0.9);
 					MainCanvas.textAlign = 'left';
 					DrawText(`- SlimeBeep Settings - v${VERSION}`, LEFT, 125, 'Black', 'Gray');
-					const { g, MINUS, PLUS } = layout();
 					shown().forEach(([, label, get], i) =>
 						DrawCheckbox(LEFT, TOP + i * ROW, 64, 64, typeof label === 'function' ? label() : label, !!get()),
 					);
+					const gap = layout();
 					// The game centres button labels with the current textAlign.
 					MainCanvas.textAlign = 'center';
-					DrawButton(...MINUS, '-', 'White');
-					DrawButton(...PLUS, '+', 'White');
-					MainCanvas.textAlign = 'left';
-					DrawText(`Wait ${opts.gap} seconds between WaveBeeps`, LEFT + 180, g + 33, 'Black', 'Gray');
-					MainCanvas.textAlign = 'center';
+					if (gap) {
+						DrawButton(...gap.MINUS, '-', 'White');
+						DrawButton(...gap.PLUS, '+', 'White');
+						MainCanvas.textAlign = 'left';
+						DrawText(`Wait ${opts.gap} seconds between WaveBeeps`, LEFT + 180, gap.g + 33, 'Black', 'Gray');
+						MainCanvas.textAlign = 'center';
+					}
+					DrawBackNextButton(
+						...PAGE,
+						`Page ${page + 1}/${pages.length}`,
+						'White',
+						'',
+						() => '',
+						() => '',
+					);
 					shownButtons().forEach(([label], i) => DrawButton(...buttonAt(i), label(), 'White'));
 					drawMyPic(RIGHT - 84, TOP, 64);
 					DrawButton(...EXIT, '', 'White', 'Icons/Exit.png');
@@ -10213,16 +10237,21 @@
 						}
 						return;
 					}
-					const { MINUS, PLUS } = layout();
+					// Back on the left half, Next on the right, both going round.
+					if (mouse(BACK) || mouse(NEXT)) {
+						page = (page + (mouse(BACK) ? pages.length - 1 : 1)) % pages.length;
+						return;
+					}
+					const gap = layout();
 					shown().forEach(([, , get, set], i) => {
 						if (mouse([LEFT, TOP + i * ROW, 64, 64])) {
 							set(!get());
 						}
 					});
-					if (mouse(MINUS)) {
+					if (gap && mouse(gap.MINUS)) {
 						setOpt('gap', Math.max(1, opts.gap - 0.5));
 					}
-					if (mouse(PLUS)) {
+					if (gap && mouse(gap.PLUS)) {
 						setOpt('gap', Math.min(10, opts.gap + 0.5));
 					}
 					const hit = shownButtons().find((b, i) => mouse(buttonAt(i)));

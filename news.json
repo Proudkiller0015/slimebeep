@@ -340,5 +340,11 @@
     "date": "22 Oct 2026",
     "title": "📢 SlimeBeep 3.7",
     "text": "✓ Mark all as read, at the top of 💬 Chats and 👥 Groups: every unread dot and the badge clear at once, and the messages stay. Also security improvements."
+  },
+  {
+    "id": "3.7.1",
+    "date": "22 Oct 2026",
+    "title": "📢 SlimeBeep 3.7.1",
+    "text": "⚙ SlimeBeep's settings fit the screen again: they're on two pages now, notifications on the first. Switch with the Page 1/2 button at the top right."
   }
 ]

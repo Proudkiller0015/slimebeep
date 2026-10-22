@@ -121,6 +121,19 @@ declare function DrawButton(
 	hoveringText?: string | null,
 	disabled?: boolean,
 ): void;
+/** A button split in two: clicking its left half goes back, its right half forward. */
+declare function DrawBackNextButton(
+	left: number,
+	top: number,
+	width: number,
+	height: number,
+	label: string,
+	color: string,
+	image?: string | null,
+	backText?: () => string,
+	nextText?: () => string,
+	disabled?: boolean,
+): void;
 declare function DrawCheckbox(
 	left: number,
 	top: number,
