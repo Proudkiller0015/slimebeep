@@ -170,6 +170,19 @@ const check = (ok, what) => {
 			]),
 		};
 		window.ChatRoomData = { Name: 'Velvet Lounge' };
+		// The mod SDK: hooks are kept so a test can call them; drawing is recorded.
+		window.hooks = {};
+		window.bcModSdk = {
+			registerMod: () => ({
+				hookFunction: (name, priority, fn) => {
+					hooks[name] = fn;
+				},
+			}),
+		};
+		window.drawn = [];
+		window.ChatRoomHideIconState = 0;
+		window.DrawImageResize = (src, x, y, w) => drawn.push(['img', src.slice(0, 22), Math.round(x), Math.round(y), Math.round(w)]);
+		window.DrawTextFit = (text, x, y) => drawn.push(['text', text, Math.round(x), Math.round(y)]);
 		// The real game's settings marker, after a new line.
 		const SEP = '\uf124';
 		window.FriendListBeepParseMessage = (m) => {
@@ -447,11 +460,11 @@ const check = (ok, what) => {
 		}),
 		'everything on the settings page fits the game screen',
 	);
-	// Click the second checkbox (pop sound, after night mode; no theme add-on, so no theme box): rows start at 190, 72 apart.
+	// Click the second checkbox (pop sound, after night mode; no theme add-on, so no theme box): rows start at 160, 70 apart.
 	check(!/Match my/.test(page), 'without a theme add-on there is no theme toggle');
 	await p.evaluate(() => {
 		MouseX = 520;
-		MouseY = 190 + 72 + 20;
+		MouseY = 160 + 70 + 20;
 		PreferenceExtensionsSettings.SlimeBeep.click();
 	});
 	check(
@@ -481,11 +494,11 @@ const check = (ok, what) => {
 		await p.evaluate(() => openedSettings.join() === 'SlimeBeep' && document.getElementById('sb-panel').style.display === 'none'),
 		"⚙ opens SlimeBeep's page in the game's Settings > Extensions (and gets the window out of the way)",
 	);
-	// "Let them join me" starts off; the room tests below switch it on (its box is the 5th on the page).
+	// "Let them join me" starts off; the room tests below switch it on (its box is the 7th on the page).
 	check(await p.evaluate(() => !JSON.parse(localStorage.getItem('slimebeep.options')).shareRoom), '"Let them join me" starts off');
 	await p.evaluate(() => {
 		MouseX = 520;
-		MouseY = 190 + 4 * 72 + 20;
+		MouseY = 160 + 6 * 70 + 20;
 		PreferenceExtensionsSettings.SlimeBeep.click();
 	});
 	check(await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.options')).shareRoom === true), 'and is switched on there');
@@ -558,6 +571,8 @@ const check = (ok, what) => {
 	const rooms = await p.$$eval('.sb-b.me', (e) => e.map((x) => (x.querySelector('.sb-room') || {}).textContent || '-'));
 	check(rooms.filter((r) => r !== '-').length === 2, `the room line only shows when it changes (${rooms.join(' | ')})`);
 	await tap('#sb-back');
+	// Closed: while SlimeBeep is open, new beeps are quiet.
+	await p.click('#sb-toggle');
 	await p.evaluate(() =>
 		FriendListBeepLog.push({ MemberNumber: 11, MemberName: 'Ann', Sent: false, Read: false, Time: new Date(), Message: 'psst, over here' }),
 	);
@@ -631,6 +646,8 @@ const check = (ok, what) => {
 	await tap('#sb-back');
 
 	// Beeps another add-on handles before the game (EBC): not in the game's list, so SlimeBeep keeps them itself.
+	// Closed while they come, so they pop cards.
+	await p.click('#sb-toggle');
 	await p.evaluate(() => {
 		// An add-on that takes beeps over: clears every beep listener and empties the message for the rest.
 		ServerSocket.removeAllListeners('AccountBeep');
@@ -653,6 +670,9 @@ const check = (ok, what) => {
 		});
 	});
 	await wait(2200);
+	const ebcCard = await p.$$eval('.sb-card', (e) => e.some((x) => /Dee/.test(x.textContent)));
+	await p.click('#sb-toggle');
+	await wait(200);
 	const rows = await p.$$eval('#sb-body .sb-row', (e) =>
 		e.map((x) => `${x.querySelector('.sb-name').textContent}:${x.querySelector('.sb-sub').textContent}`),
 	);
@@ -662,7 +682,7 @@ const check = (ok, what) => {
 	);
 	check(!rows.some((r) => /come here|data/.test(r)), 'leash beeps and raw data are left out');
 	check(rows.filter((r) => /Bea/.test(r)).length === 1, 'a beep the game did list is not doubled');
-	check(await p.$$eval('.sb-card', (e) => e.some((x) => /Dee/.test(x.textContent))), 'and the EBC beep popped a card');
+	check(ebcCard, 'and the EBC beep popped a card');
 	await p.click('#sb-body .sb-row');
 
 	await tap('#sb-back');
@@ -708,11 +728,11 @@ const check = (ok, what) => {
 	await p.click('#sb-body label:nth-of-type(4) input');
 	await p.type('#sb-gmsg', 'Party in 10!');
 	await p.click('#sb-gear');
-	// The WaveBeep gap: its - button sits under the 9 checkboxes.
+	// The WaveBeep gap: its - button sits under the 11 checkboxes.
 	await p.evaluate(() => {
 		for (let i = 0; i < 20; i++) {
 			MouseX = 520;
-			MouseY = 190 + 9 * 72 + 20;
+			MouseY = 160 + 11 * 70 + 20;
 			PreferenceExtensionsSettings.SlimeBeep.click();
 		}
 	});
@@ -957,6 +977,41 @@ const check = (ok, what) => {
 		await p.keyboard.press('Enter');
 		await wait(700);
 		check((await a.texts()).includes('hello group'), 'my message reaches Ann, sealed with the group key');
+		// @: typing it lists the members; Enter writes the name.
+		await p.type('#sb-text', 'hey @an');
+		await wait(150);
+		await shot('at-list');
+		const atList = await p.$$eval('#sb-at button', (b) => b.map((x) => x.lastElementChild.textContent.trim()));
+		await p.keyboard.press('Enter');
+		await wait(150);
+		const afterAt = await p.evaluate(() => ({ box: document.getElementById('sb-text').value, open: !!document.getElementById('sb-at') }));
+		check(
+			atList.join() === 'Ann' && afterAt.box === 'hey @Ann ' && !afterAt.open,
+			`typing @ in a group lists its members, and Enter writes the name (${JSON.stringify({ atList, afterAt })})`,
+		);
+		await p.evaluate(() => {
+			document.getElementById('sb-text').value = '';
+		});
+		// ↩ Reply: the bar shows what it answers, and the message carries that line.
+		await p.evaluate(() => [...document.querySelectorAll('.sb-b.them .sb-rep')].pop().click());
+		await wait(200);
+		const bar = await p.$eval('.sb-replybar', (e) => e.textContent);
+		await shot('reply-bar');
+		await p.type('#sb-text', 'welcome!');
+		await p.keyboard.press('Enter');
+		await wait(700);
+		const replied = (await a.texts()).find((t) => /welcome!$/.test(t)) || '';
+		const quote = await p.evaluate(() => {
+			const q = [...document.querySelectorAll('.sb-b.me .sb-quote')].pop();
+			return { text: q ? q.textContent : '', barGone: !document.querySelector('.sb-replybar') };
+		});
+		check(
+			/Replying to Ann/.test(bar) &&
+				/^> Ann: hi from Ann <img src=x onerror="window.pwned=1">\nwelcome!$/.test(replied) &&
+				/^↩ Ann hi from Ann/.test(quote.text) &&
+				quote.barGone,
+			`↩ replies to a message: it goes with the line it answers, shown quoted above the bubble (${JSON.stringify({ bar, replied, quote })})`,
+		);
 		// A code for anyone: Zed, nobody's friend, joins with it.
 		await p.click('#sb-members');
 		await wait(200);
@@ -1082,10 +1137,13 @@ const check = (ok, what) => {
 		await tap('#sb-back');
 		await p.reload();
 		await a.say('while you were away 1');
-		await a.say('while you were away 2');
+		await a.say('while you were away 2, Lily');
 		await wait(300);
 		await p.evaluate(stub);
-		await p.evaluate(() => makeLog());
+		await p.evaluate(() => {
+			Player.Nickname = 'Lily';
+			makeLog();
+		});
 		await p.addScriptTag({ content: src });
 		const caught = await waitFor(
 			() =>
@@ -1096,7 +1154,14 @@ const check = (ok, what) => {
 				),
 			12000,
 		);
-		check(caught, 'coming back, what was said while away arrives, with a card');
+		const plainCard = await p.evaluate(() => [...document.querySelectorAll('.sb-card')].some((x) => /away 1/.test(x.textContent)));
+		check(
+			caught && !plainCard,
+			'coming back, what was said while away arrives; only the message that says your name pops a card (groups notify @mentions)',
+		);
+		await p.evaluate(() => {
+			delete Player.Nickname;
+		});
 		await p.click('#sb-toggle');
 		await wait(200);
 		await p.click('[data-tab=groups]');
@@ -1132,7 +1197,7 @@ const check = (ok, what) => {
 				!/while you were away 1/.test(groupDel.shown) &&
 				/while you were away 2/.test(groupDel.shown) &&
 				!groupDel.kept.includes('while you were away 1') &&
-				groupDel.kept.includes('while you were away 2') &&
+				groupDel.kept.includes('while you were away 2, Lily') &&
 				groupDel.deleted === 1 &&
 				a.got.filter((x) => x.t === 'msg').length === relayMsgs,
 			`🗑 deletes one group message from your view only, saved, with nothing sent to the group (${JSON.stringify({ groupAsk, groupDel })})`,
@@ -2181,7 +2246,7 @@ const check = (ok, what) => {
 			out.notYet = !document.documentElement.classList.contains('sb-themed');
 			// Its box is the second one (after night mode): ticking it there.
 			MouseX = 520;
-			MouseY = 190 + 72 + 20;
+			MouseY = 160 + 70 + 20;
 			PreferenceExtensionsSettings.SlimeBeep.click();
 			out.on = SlimeBeep.api.matchingTheme();
 			out.panelBg = getComputedStyle(document.getElementById('sb-panel')).backgroundColor;
@@ -2870,6 +2935,65 @@ const check = (ok, what) => {
 		await tap('#sb-back');
 	}
 
+	// ---- 🫧 In a chat room, SlimeBeeps greet each other (hidden) and show the slime and version above each other.
+	{
+		await p.evaluate(() => {
+			chats.length = 0;
+			window.ChatRoomData = { Name: 'Slime Den' };
+		});
+		await wait(1500);
+		const hello = await p.evaluate(() => {
+			window.ChatRoomData = { Name: 'Velvet Lounge' };
+			const sent = chats.filter((c) => c.Type === 'Hidden' && c.Content === 'SlimeBeep');
+			chats.length = 0;
+			fire('ChatRoomMessage', { Sender: 11, Type: 'Hidden', Content: 'SlimeBeep', Dictionary: [{ slimeBeep: '3.4.0', reply: true }] });
+			fire('ChatRoomMessage', { Sender: 11, Type: 'Hidden', Content: 'SlimeBeep', Dictionary: [{ slimeBeep: '3.4.0', reply: true }] });
+			fire('ChatRoomMessage', { Sender: 12, Type: 'Hidden', Content: 'SlimeBeep', Dictionary: [{ slimeBeep: '<b>9</b>', reply: true }] });
+			const answers = chats.slice();
+			chats.length = 0;
+			const draw = (n) => {
+				drawn.length = 0;
+				hooks.ChatRoomCharacterViewDrawOverlay([{ MemberNumber: n }, 100, 0, 1], () => {});
+				return drawn.slice();
+			};
+			const ann = draw(11);
+			const bea = draw(12);
+			const me = draw(1);
+			window.ChatRoomHideIconState = 1;
+			const hidden = draw(11);
+			window.ChatRoomHideIconState = 0;
+			return { sent, answers, ann, bea, me, hidden, v: SlimeBeep.version };
+		});
+		await wait(1500);
+		await p.evaluate(() => {
+			chats.length = 0;
+		});
+		check(
+			hello.sent.length === 1 &&
+				hello.sent[0].Dictionary[0].slimeBeep === hello.v &&
+				hello.sent[0].Dictionary[0].reply === true &&
+				!hello.sent[0].Target,
+			`in a chat room, SlimeBeep says a hidden hello to the room once (${JSON.stringify(hello.sent)})`,
+		);
+		check(
+			hello.answers.length === 1 &&
+				hello.answers[0].Target === 11 &&
+				hello.answers[0].Type === 'Hidden' &&
+				!hello.answers[0].Dictionary[0].reply,
+			`another SlimeBeep's hello gets one hidden answer, only to them, and a broken version none (${JSON.stringify(hello.answers)})`,
+		);
+		check(
+			JSON.stringify(hello.ann) ===
+				JSON.stringify([
+					['img', 'data:image/png;base64,', 430, 42, 34],
+					['text', '3.4.0', 500, 60],
+				]) &&
+				hello.bea.length === 0 &&
+				hello.me.some((d) => d[1] === hello.v) &&
+				hello.hidden.length === 0,
+			`the slime and version show above SlimeBeep users and you, not others, and not when the room hides icons (${JSON.stringify(hello)})`,
+		);
+	}
 	// ---- 🤫 Whispers in a chat room show in that person's chat; there, replying whispers while you share the room.
 	{
 		const badgeBefore = await p.$eval('#sb-badge', (e) => e.textContent);
@@ -2936,7 +3060,7 @@ const check = (ok, what) => {
 		await tap('#sb-back');
 	}
 
-	// ---- 🔕 Mute one chat: no sound for it (cards still come); others still ding.
+	// ---- 🔔 What notifies you, per chat: All, only @mentions, or Nothing (no sound, card or badge); others still ding.
 	{
 		await p.evaluate(() => {
 			window.dings = 0;
@@ -2950,8 +3074,18 @@ const check = (ok, what) => {
 		await wait(250);
 		await p.click('#sb-mute');
 		await wait(200);
-		check((await p.$eval('#sb-mute', (e) => e.textContent)) === '🔕', 'the 🔔 in a chat mutes it (🔕)');
+		await shot('notify-menu');
+		const levels = await p.$$eval('#sb-ask [data-act]', (b) => b.map((x) => x.textContent.trim()));
+		await p.click('#sb-ask [data-act=none]');
+		await wait(200);
+		check(
+			levels.join('|') === '🔔 All messages|@ Only @mentions and replies to me|🔕 Nothing|Cancel' &&
+				(await p.$eval('#sb-mute', (e) => e.textContent)) === '🔕',
+			`the 🔔 in a chat picks what notifies you from it, like Discord; Nothing shows 🔕 (${levels.join('|')})`,
+		);
 		await tap('#sb-back');
+		// Closed, so the cards and sounds below aren't kept quiet by an open SlimeBeep.
+		await p.click('#sb-toggle');
 		const beepFrom = (n, name, text) =>
 			p.evaluate(
 				(a, b, c) =>
@@ -2974,12 +3108,17 @@ const check = (ok, what) => {
 			dings: window.dings,
 			card: [...document.querySelectorAll('.sb-card')].some((x) => /shh, muted/.test(x.textContent)),
 		}));
-		check(muted.dings === 0 && muted.card, `a beep from a muted chat makes no sound but still pops its card (${JSON.stringify(muted)})`);
+		check(
+			muted.dings === 0 && !muted.card && (await p.$eval('#sb-badge', (e) => e.style.display)) === 'none',
+			`a beep from a chat set to Nothing makes no sound, card or badge (${JSON.stringify(muted)})`,
+		);
 		await beepFrom(11, 'Ann', 'not muted');
 		await wait(1800);
 		check((await p.evaluate(() => window.dings)) > 0, 'a beep from anyone else still dings');
 		// 🔕 Do not disturb in the header: no sound and no card for anyone, but the beep still arrives.
+		await p.click('#sb-toggle');
 		await p.click('#sb-dnd');
+		await p.click('#sb-toggle');
 		await wait(150);
 		const dndOn = await p.evaluate(() => {
 			window.dings = 0;
@@ -3001,6 +3140,17 @@ const check = (ok, what) => {
 		await p.click('#sb-dnd');
 		await wait(150);
 		check((await p.$eval('#sb-dnd', (e) => e.textContent)) === '🔔', 'and 🔔 turns it back off');
+		// While SlimeBeep is open in front of you, new beeps are quiet: they just show up in it.
+		await p.evaluate(() => {
+			window.dings = 0;
+		});
+		await beepFrom(13, 'Cat', 'you are looking');
+		await wait(1800);
+		const looking = await p.evaluate(() => ({
+			dings: window.dings,
+			card: [...document.querySelectorAll('.sb-card')].some((x) => /you are looking/.test(x.textContent)),
+		}));
+		check(looking.dings === 0 && !looking.card, `with SlimeBeep open, a new beep makes no sound or card (${JSON.stringify(looking)})`);
 		// Esc in the window closes the emoji picker first, then the window.
 		await p.click('#sb-emo');
 		await wait(100);
@@ -3058,10 +3208,12 @@ const check = (ok, what) => {
 		await wait(250);
 		await p.click('#sb-mute');
 		await wait(200);
+		await p.click('#sb-ask [data-act=all]');
+		await wait(200);
 		check(
 			(await p.$eval('#sb-mute', (e) => e.textContent)) === '🔔' &&
-				(await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.options')).muted.length === 0)),
-			'and pressing it again brings the sound back',
+				(await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.options')).notify['n:12'] === 'all')),
+			'and All messages brings everything back',
 		);
 		await tap('#sb-back');
 	}
@@ -3751,7 +3903,7 @@ const check = (ok, what) => {
 		const delShown = () =>
 			p.evaluate(() => {
 				const b = [...document.querySelectorAll('#sb-msgs .sb-b')].find((x) => /delete me please/.test(x.textContent));
-				return getComputedStyle(b.querySelector('.sb-del')).display;
+				return getComputedStyle(b.querySelector('.sb-acts')).display;
 			});
 		const hiddenAtFirst = await delShown();
 		await (await deeBubble()).hover();
@@ -3767,7 +3919,7 @@ const check = (ok, what) => {
 		const onTap = await delShown();
 		check(
 			hiddenAtFirst === 'none' && onHover === 'flex' && onTap === 'flex',
-			`a message's 🗑 shows on hover, and on a tap for touch screens (${hiddenAtFirst}, ${onHover}, ${onTap})`,
+			`a message's ↩ and 🗑 show on hover, and on a tap for touch screens (${hiddenAtFirst}, ${onHover}, ${onTap})`,
 		);
 		await p.evaluate(() =>
 			[...document.querySelectorAll('#sb-msgs .sb-b')]

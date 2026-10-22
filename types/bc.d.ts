@@ -83,6 +83,10 @@ declare var PreferenceExtensionsSettings: Record<string, BcExtensionSetting>;
 declare function ServerSend(message: string, data: object): void;
 declare function ServerSendBeepMessage(target: number, msg: string, options?: { includeRoom?: boolean }): void;
 declare function ServerPlayerIsInChatRoom(): boolean;
+declare function DrawImageResize(src: string, x: number, y: number, w: number, h: number): boolean;
+declare function DrawTextFit(text: string, x: number, y: number, width: number, color: string, backColor?: string): void;
+/** Which icons the room shows above characters; 0 shows all of them. */
+declare var ChatRoomHideIconState: number;
 declare function ServerRoomJoin(roomName: string): Promise<BcRoomJoinResult>;
 declare function ChatRoomSendLocal(content: string, timeout?: number): void;
 /** Whispers to someone in the room (R133); true when sent, or why not ('target-gone', 'target-out-of-range'). */
@@ -134,7 +138,9 @@ interface Window {
 	SlimeBeep?: { version: string; api?: object; debug?: () => { listening?: boolean; catchAll?: boolean } };
 	SlimeBeepHopped?: boolean;
 	bcModSdk?: {
-		registerMod(info: { name: string; fullName: string; version: string; repository?: string }): unknown;
+		registerMod(info: { name: string; fullName: string; version: string; repository?: string }): {
+			hookFunction?(name: string, priority: number, hook: (args: any[], next: (args: any[]) => unknown) => unknown): unknown;
+		};
 		getModsInfo?(): { name: string; fullName: string; version: string }[];
 	};
 }

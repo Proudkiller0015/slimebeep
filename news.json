@@ -328,5 +328,11 @@
     "date": "21 Oct 2026",
     "title": "📢 SlimeBeep 3.5.2",
     "text": "🔍 SlimeBeep now finds your friends who have it by itself, every 10 minutes, so their 🫧 shows without pressing 🔍."
+  },
+  {
+    "id": "3.6.0",
+    "date": "22 Oct 2026",
+    "title": "📢 SlimeBeep 3.6",
+    "text": "Quieter, and more like Discord: the 🔔 in each chat picks All, only @mentions, or Nothing (group chats start on @mentions), and SlimeBeep stays quiet while it's open. Type @ in a group to mention someone, ↩ by a message replies to it, and SlimeBeep users in your room show the slime and their version above them."
   }
 ]

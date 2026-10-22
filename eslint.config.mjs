@@ -16,6 +16,9 @@ const gameGlobals = Object.fromEntries(
 		'ChatRoomData',
 		'ChatRoomCharacter',
 		'ChatRoomSendWhisper',
+		'ChatRoomHideIconState',
+		'DrawImageResize',
+		'DrawTextFit',
 		'ToastManager',
 		'ChatRoomSendLocal',
 		'ChatRoomCanLeave',
@@ -42,6 +45,8 @@ const gameGlobals = Object.fromEntries(
 const testPageGlobals = Object.fromEntries(
 	[
 		'SlimeBeep',
+		'hooks',
+		'drawn',
 		'fire',
 		'buttons',
 		'openedSettings',

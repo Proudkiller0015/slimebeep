@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.5.2';
+	const VERSION = '3.6.0';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -39,6 +39,10 @@
 		sound: true,
 		/** A card by the toggle for each new message. */
 		popups: true,
+		/** Group chats notify you of every message by default; otherwise only of @mentions and replies to you. */
+		groupAll: false,
+		/** No sound or card while SlimeBeep is open in front of you (new messages show in it). */
+		quietOpen: true,
 		/** A system notification for new messages while the game tab is hidden. */
 		desktop: false,
 		/** Save chat history per account (see `hist`). */
@@ -55,7 +59,9 @@
 		themed: false,
 		/** @type {string[]} Emoji for the picker's 🕘 tab, newest first. */
 		recentEmoji: [],
-		/** @type {string[]} Chats that make no sound: 'n:<member number>' or 'g:<group id>'. */
+		/** @type {Record<string, 'all' | 'mention' | 'none'>} Chat -> what notifies you from it (unset: chatLevel's default). */
+		notify: {},
+		/** @type {string[]} Chats made quiet before `notify` existed: 'n:<member number>' or 'g:<group id>'. */
 		muted: [],
 		/** @type {string[]} Chats kept at the top of 💬 Chats and 👥 Groups: 'n:<member number>' or 'g:<group id>'. */
 		pinned: [],
@@ -1367,12 +1373,34 @@
 			background: radial-gradient(circle at 20% 10%, #fff 0, #fff7fb 60%); }
 		.sb-b { position: relative; max-width: 78%; padding: 7px 11px; border-radius: 18px; white-space: pre-wrap; word-wrap: break-word; }
 		/* A message's 🗑 sits beside the bubble, touching it so the hover holds on the way there. */
-		#sb-panel .sb-del { position: absolute; top: 50%; transform: translateY(-50%); width: 30px; height: 26px; padding: 0; border: none; background: none;
-			font-size: 13px; line-height: 1; display: none; align-items: center; justify-content: center; opacity: .6; }
-		#sb-panel .sb-del:hover { opacity: 1; }
-		.sb-b.me .sb-del { right: 100%; }
-		.sb-b.them .sb-del { left: 100%; }
-		#sb-panel .sb-b:hover .sb-del, #sb-panel .sb-b.sb-tap .sb-del { display: flex; }
+		#sb-panel .sb-acts { position: absolute; top: 50%; transform: translateY(-50%); display: none; }
+		#sb-panel .sb-acts button { width: 26px; height: 26px; padding: 0; border: none; background: none; font-size: 13px; line-height: 1;
+			display: flex; align-items: center; justify-content: center; opacity: .6; }
+		#sb-panel .sb-acts button:hover { opacity: 1; }
+		.sb-b.me .sb-acts { right: 100%; flex-direction: row-reverse; }
+		.sb-b.them .sb-acts { left: 100%; }
+		#sb-panel .sb-b:hover .sb-acts, #sb-panel .sb-b.sb-tap .sb-acts { display: flex; }
+		.sb-quote { display: block; margin-bottom: 3px; padding-left: 7px; border-left: 3px solid #ff8fc8; font-size: 11px; opacity: .75;
+			white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+		.sb-b.sb-mention { box-shadow: 0 0 0 2px #ffb84d; }
+		.sb-replybar { display: flex; align-items: center; gap: 5px; padding: 4px 10px; font-size: 11px; background: #ffd3ea; }
+		.sb-replybar span { flex: 1; min-width: 0; opacity: .75; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+		#sb-panel .sb-replybar button { border: none; background: none; padding: 0 4px; font-size: 12px; }
+		.sb-compose { position: relative; }
+		#sb-at { position: absolute; left: 8px; right: 8px; bottom: 100%; display: flex; flex-direction: column; padding: 4px; border-radius: 12px;
+			background: #fff; box-shadow: 0 4px 16px rgba(120, 0, 70, .25); z-index: 3; }
+		.sb-compose #sb-at button { width: auto; height: auto; display: flex; justify-content: flex-start; gap: 8px; padding: 4px 8px; border-radius: 8px;
+			background: none; color: #6b2150; font-size: 13px; text-align: left; }
+		.sb-compose #sb-at button.on { background: #ffe6f3; }
+		#sb-ask .sb-pill.on { background: #ff4fa3; border-color: #ff4fa3; color: #fff; }
+		html.sb-night #sb-at, html.sb-night .sb-replybar { background: #253064; color: #dfe6ff; }
+		html.sb-night .sb-compose #sb-at button { color: #dfe6ff; }
+		html.sb-night .sb-compose #sb-at button.on { background: #1c2450; }
+		html.sb-night #sb-ask .sb-pill.on { background: #5b8cff; border-color: #5b8cff; }
+		html.sb-themed #sb-at, html.sb-themed .sb-replybar { background: var(--sb-t-element); color: var(--sb-t-text); }
+		html.sb-themed .sb-compose #sb-at button { color: var(--sb-t-text); }
+		html.sb-themed .sb-compose #sb-at button.on, html.sb-themed #sb-ask .sb-pill.on { background: var(--sb-t-accent); color: var(--sb-t-text); }
+		#sb-at .sb-av { width: 22px; height: 22px; font-size: 10px; }
 		.sb-pinned { font-size: 10px; }
 		#sb-ask .sb-menu-card { min-width: 220px; align-items: stretch; }
 		#sb-ask .sb-quote { max-width: 260px; max-height: 90px; overflow: hidden; padding: 6px 10px; border-radius: 12px; background: #fff0f8; font-style: italic;
@@ -1613,15 +1641,22 @@
 
 	/** Creates the toggle, panel, toast and card stack, wires them up and starts the 1 s tick. */
 	function build() {
-		// Registered with the mod SDK for its mod list only; no game function is hooked.
+		// Registered with the mod SDK for its mod list, and for the slime and version drawn above SlimeBeep users in a room.
 		try {
 			if (window.bcModSdk && typeof window.bcModSdk.registerMod === 'function') {
-				window.bcModSdk.registerMod({
+				const mod = window.bcModSdk.registerMod({
 					name: 'SlimeBeep',
 					fullName: 'SlimeBeep',
 					version: VERSION,
 					repository: 'https://github.com/Proudkiller0015/slimebeep',
 				});
+				if (mod && typeof mod.hookFunction === 'function') {
+					mod.hookFunction('ChatRoomCharacterViewDrawOverlay', 0, (args, next) => {
+						const r = next(args);
+						drawBadge(args[0], args[1], args[2], args[3]);
+						return r;
+					});
+				}
 			}
 		} catch (e) {
 			warn(e, 'mod SDK');
@@ -1881,6 +1916,9 @@
 				if (m && m.Type === 'Whisper' && isNum(m.Sender)) {
 					takeWhisper(Number(m.Sender), m.Content, false);
 				}
+				if (m && m.Type === 'Hidden' && m.Content === ROOM_HELLO && isNum(m.Sender)) {
+					takeHello(Number(m.Sender), m.Dictionary);
+				}
 				if (m && m.Type === 'Activity') {
 					drinkNews(m);
 				}
@@ -1933,6 +1971,79 @@
 			}
 		} catch (e) {
 			warn(e);
+		}
+	}
+	/** Content of the hidden room message SlimeBeeps greet each other with: Dictionary [{ slimeBeep: version, reply? }]. */
+	const ROOM_HELLO = 'SlimeBeep';
+	/** @type {Map<number, string>} Member number -> SlimeBeep version, for people met in a chat room. */
+	const roomVersions = new Map();
+	/** The room SlimeBeep last said hello in. */
+	let helloRoom = '';
+	/** Member number -> when we last answered their hello. */
+	const helloAnswered = new Map();
+	/**
+	 * Says hello to the room (hidden), or answers one person's hello; SlimeBeeps answer with their version.
+	 * @param {number} [to] answers this member only
+	 */
+	function sendHello(to) {
+		try {
+			ServerSend('ChatRoomChat', {
+				Content: ROOM_HELLO,
+				Type: 'Hidden',
+				...(to ? { Target: to } : {}),
+				Dictionary: [{ slimeBeep: VERSION, ...(to ? {} : { reply: true }) }],
+			});
+		} catch (e) {
+			warn(e, 'hello');
+		}
+	}
+	/** Says hello once per room you enter, so the SlimeBeeps there answer and show their badge. */
+	function helloTick() {
+		const room = ServerPlayerIsInChatRoom() ? myRoom() || '' : '';
+		if (room !== helloRoom) {
+			helloRoom = room;
+			if (room) {
+				sendHello();
+			}
+		}
+	}
+	/**
+	 * A hidden hello from another SlimeBeep in the room: remembers its version, and answers (at most every 10 s each).
+	 * @param {number} from
+	 * @param {unknown} dict
+	 */
+	function takeHello(from, dict) {
+		const d = Array.isArray(dict) ? dict[0] : null;
+		const v = d && typeof d === 'object' ? d.slimeBeep : null;
+		if (from === Player.MemberNumber || typeof v !== 'string' || !/^\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(v)) {
+			return;
+		}
+		roomVersions.set(from, v);
+		if (d.reply === true && Date.now() - (helloAnswered.get(from) || 0) > 10000) {
+			helloAnswered.set(from, Date.now());
+			sendHello(from);
+		}
+	}
+	/**
+	 * Draws the slime and its version above a SlimeBeep user in the room (and you), unless the room hides icons.
+	 * @param {{ MemberNumber?: number } | undefined} C
+	 * @param {number} x
+	 * @param {number} y
+	 * @param {number} zoom
+	 */
+	function drawBadge(C, x, y, zoom) {
+		try {
+			if (!C || !isNum(C.MemberNumber) || (typeof ChatRoomHideIconState === 'number' && ChatRoomHideIconState > 0)) {
+				return;
+			}
+			const v = C.MemberNumber === Player.MemberNumber ? VERSION : roomVersions.get(C.MemberNumber);
+			if (!v) {
+				return;
+			}
+			DrawImageResize(ICON, x + 330 * zoom, y + 42 * zoom, 34 * zoom, 34 * zoom);
+			DrawTextFit(v, x + 400 * zoom, y + 60 * zoom, 66 * zoom, '#ff8fc8', 'black');
+		} catch (e) {
+			warn(e, 'badge');
 		}
 	}
 	/**
@@ -3403,7 +3514,7 @@
 			}
 			return;
 		}
-		if (opts.sound && !isMuted(`n:${from}`)) {
+		if (opts.sound && chatLevel(`n:${from}`) !== 'none') {
 			chime();
 		}
 		card({
@@ -4726,7 +4837,7 @@
 		hist.sort((a, b) => a.Time - b.Time);
 		saveHistory();
 		saveGC();
-		const unseen = fresh.filter((h) => h.unread);
+		const unseen = fresh.filter((h) => h.unread && notifies(h));
 		if (unseen.length && !(isOpen() && thread === `g:${gid}` && !document.hidden)) {
 			ding(unseen);
 			if (isLive || unseen.length === 1) {
@@ -5553,6 +5664,7 @@
 			if (loggedIn() && histOwner === Player.MemberNumber) {
 				achTick();
 				statusTick();
+				helloTick();
 			}
 			if (loggedIn() && histOwner === Player.MemberNumber && Date.now() - foundAt > FIND_EVERY) {
 				foundAt = Date.now();
@@ -5578,7 +5690,7 @@
 			}
 			const first = histOwner === null || (loggedIn() && histOwner !== Player.MemberNumber);
 			const fresh = sync();
-			const n = log().filter(unread).length;
+			const n = log().filter((h) => unread(h) && notifies(h)).length;
 			const badge = $('sb-badge');
 			badge.textContent = n > 99 ? '99+' : String(n);
 			badge.style.display = n ? 'block' : 'none';
@@ -5733,10 +5845,11 @@
 	 * @param {HistEntry} h
 	 */
 	function announce(h) {
-		if (opts.dnd || (!h.group && isOpen() && thread === h.MemberNumber && !document.hidden)) {
+		if (opts.dnd || !notifies(h) || looking() || (!h.group && isOpen() && thread === h.MemberNumber && !document.hidden)) {
 			return;
 		}
-		const text = asAction(textOf(h), h.MemberName) ?? textOf(h);
+		const said = replyBody(textOf(h));
+		const text = asAction(said, h.MemberName) ?? said;
 		const room = h.ChatRoomName && typeof h.Message === 'string' ? `📍 in ${h.ChatRoomName}` : '';
 		const g = h.group && groups[h.group];
 		if (h.group && isOpen() && thread === `g:${h.group}` && !document.hidden) {
@@ -6043,12 +6156,59 @@
 	 */
 	const muteKey = (h) => (h.group ? `g:${h.group}` : `n:${h.MemberNumber}`);
 	/**
-	 * Whether a chat is muted (no sound; cards and unread counts still come).
+	 * Whether a chat was made quiet before per-chat levels (opts.muted): chatLevel reads it as 'none'.
 	 * @param {string} key
 	 */
 	const isMuted = (key) => Array.isArray(opts.muted) && opts.muted.includes(key);
 	/**
-	 * Chimes for new messages unless all of them are from muted chats, or Do not disturb is on.
+	 * Whether a message says your name or member number as a word.
+	 * @param {HistEntry} h
+	 */
+	const mentionsMe = (h) => {
+		const text = textOf(h).toLowerCase();
+		const letter = (/** @type {string | undefined} */ c) => !!c && /[\p{L}\p{N}]/u.test(c);
+		return [Player.Nickname, Player.Name, String(Player.MemberNumber)].some((n) => {
+			const name = typeof n === 'string' ? n.trim().toLowerCase() : '';
+			if (name.length < 2) {
+				return false;
+			}
+			for (let i = text.indexOf(name); i >= 0; i = text.indexOf(name, i + 1)) {
+				if (!letter(text[i - 1]) && !letter(text[i + name.length])) {
+					return true;
+				}
+			}
+			return false;
+		});
+	};
+	/**
+	 * Whether a message notifies you (sound, card, badge): not from a muted chat, and from a group only
+	 * with opts.groupAll or when it says your name.
+	 * @param {HistEntry} h
+	 */
+	const notifies = (h) => {
+		const level = chatLevel(muteKey(h));
+		return level === 'all' || (level === 'mention' && mentionsMe(h));
+	};
+	/** Whether SlimeBeep is open in front of you, so opts.quietOpen keeps new messages quiet. */
+	const looking = () => opts.quietOpen && isOpen() && !document.hidden;
+	/**
+	 * What notifies you from a chat: 'all' messages, only 'mention's of you (and replies to you), or 'none'.
+	 * Unset, direct chats are 'all' and groups follow opts.groupAll.
+	 * @param {string} key a muteKey
+	 * @returns {'all' | 'mention' | 'none'}
+	 */
+	const chatLevel = (key) => {
+		const set = opts.notify && opts.notify[key];
+		if (set === 'all' || set === 'mention' || set === 'none') {
+			return set;
+		}
+		if (isMuted(key)) {
+			return 'none';
+		}
+		return key.startsWith('g:') && !opts.groupAll ? 'mention' : 'all';
+	};
+	/**
+	 * Chimes for new messages that notify, unless Do not disturb is on.
 	 * @param {HistEntry[]} list
 	 */
 	const ding = (list) => {
@@ -6057,29 +6217,53 @@
 				afkReply(h.MemberNumber, h.Message, false);
 			}
 		}
-		if (opts.sound && !opts.dnd && list.some((h) => !isMuted(muteKey(h)))) {
+		if (opts.sound && !opts.dnd && !looking() && list.some(notifies)) {
 			chime();
 		}
 	};
+	/** The header icon and words of each notification level. */
+	const LEVELS = {
+		all: ['🔔', 'All messages'],
+		mention: ['@', 'Only @mentions and replies to me'],
+		none: ['🔕', 'Nothing'],
+	};
 	/**
-	 * Mutes or unmutes a chat.
+	 * The notification box of a chat (like Discord's): all messages, only @mentions, or nothing.
 	 * @param {string} key a muteKey
-	 * @param {string} name for the toast
+	 * @param {string} name the person or group
 	 */
-	function toggleMute(key, name) {
-		const on = !isMuted(key);
-		setOpt('muted', [...(Array.isArray(opts.muted) ? opts.muted : []).filter((k) => k !== key), ...(on ? [key] : [])].slice(-500));
-		notify(on ? `🔕 No sound for ${name}` : `🔔 Sound back on for ${name}`);
-		if (isOpen()) {
-			render(true);
-		}
+	function openNotify(key, name) {
+		const now = chatLevel(key);
+		askBox(
+			html`<div class="sb-crop-card sb-menu-card">
+			<b>🔔 Notify me from ${name}</b>
+			${Object.entries(LEVELS).map(([level, [icon, words]]) => html`<button class="sb-pill${level === now && ' on'}" data-act="${level}">${icon} ${words}</button>`)}
+			<span class="sb-hint" style="text-align:center">Sound, pop-up and the badge on the slime. Unread messages still wait in the chat.</span>
+			<button class="sb-pill" data-act="cancel">Cancel</button>
+		</div>`,
+			(act, close) => {
+				close();
+				if (act !== 'all' && act !== 'mention' && act !== 'none') {
+					return;
+				}
+				setOpt('notify', { ...opts.notify, [key]: act });
+				setOpt(
+					'muted',
+					(Array.isArray(opts.muted) ? opts.muted : []).filter((k) => k !== key),
+				);
+				notify(`${LEVELS[act][0]} ${name}: ${LEVELS[act][1].toLowerCase()}`);
+				render(true);
+			},
+		);
 	}
 	/**
-	 * The 🔔/🔕 button for a chat header.
+	 * The 🔔 / @ / 🔕 button for a chat header: what notifies you from it.
 	 * @param {string} key
 	 */
-	const muteButton = (key) =>
-		html`<button id="sb-mute" title="${isMuted(key) ? 'Muted: no sound for this chat. Click for sound again' : 'Mute: no sound for this chat'}">${isMuted(key) ? '🔕' : '🔔'}</button>`;
+	const muteButton = (key) => {
+		const [icon, words] = LEVELS[chatLevel(key)];
+		return html`<button id="sb-mute" title="Notifications: ${words}">${icon}</button>`;
+	};
 	/**
 	 * Whether a chat is pinned to the top of its list.
 	 * @param {string} key a muteKey
@@ -6194,10 +6378,73 @@
 		);
 	}
 	/**
-	 * The 🗑 of a message bubble, shown on hover (or after a tap on touch screens).
+	 * The ↩ and 🗑 of a message bubble, shown on hover (or after a tap on touch screens).
 	 * @param {HistEntry} h
 	 */
-	const deleteButton = (h) => html`<button class="sb-del" data-del="${h.k}" title="Delete this message (for you only)">🗑</button>`;
+	const msgButtons = (h) =>
+		html`<span class="sb-acts"><button class="sb-rep" data-rep="${h.k}" title="Reply">↩</button><button class="sb-del" data-del="${h.k}" title="Delete this message (for you only)">🗑</button></span>`;
+	/** @type {{ chat: string, name: string, text: string } | null} The message the next one in `chat` answers. */
+	let replyTo = null;
+	/**
+	 * A reply's parts: who and what it answers (its first line, "> Name: text"), and its own text.
+	 * @param {string} text
+	 * @returns {{ to: string, quote: string, body: string } | null}
+	 */
+	const splitReply = (text) => {
+		const m = /^> ([^\n:]{1,40}): ([^\n]*)\n([\s\S]+)$/.exec(text);
+		return m ? { to: m[1], quote: m[2], body: m[3] } : null;
+	};
+	/**
+	 * A message's own text, without the line of the message it answers.
+	 * @param {string} text
+	 */
+	const replyBody = (text) => (splitReply(text) || { body: text }).body;
+	/**
+	 * The quoted line above a reply's bubble text.
+	 * @param {{ to: string, quote: string } | null} r
+	 */
+	const replyQuote = (r) => r && html`<span class="sb-quote">↩ <b>${r.to}</b> ${r.quote}</span>`;
+	/**
+	 * Starts a reply to a message in the open chat: the bar above the box shows it until sent or ✕.
+	 * @param {string} k its key
+	 */
+	function startReply(k) {
+		const h = hist.find((x) => x.k === k);
+		if (!h) {
+			return;
+		}
+		const g = h.group ? groups[h.group] : undefined;
+		const name = h.Sent ? myName() : (g && memberName(g, h.MemberNumber)) || h.MemberName || nameOf(h.MemberNumber);
+		const line = replyBody(textOf(h)).split('\n')[0];
+		replyTo = { chat: muteKey(h), name: clean(name, 40).replace(/:/g, ' '), text: line.length > 60 ? `${line.slice(0, 59)}…` : line };
+		render(true);
+		const ta = $input('sb-text');
+		if (ta) {
+			ta.focus();
+		}
+	}
+	/**
+	 * The "Replying to" bar above the box of `chat`, when a reply is started there.
+	 * @param {string} chat
+	 */
+	const replyBar = (chat) =>
+		replyTo &&
+		replyTo.chat === chat &&
+		html`<div class="sb-replybar">↩ Replying to <b>${replyTo.name}</b><span>${replyTo.text}</span><button id="sb-rep-x" title="Cancel the reply">✕</button></div>`;
+	/**
+	 * What to send in `chat`: the text, after the line of the message it answers when a reply was started.
+	 * @param {string} chat
+	 * @param {string} text
+	 * @param {number} max
+	 */
+	function withReply(chat, text, max) {
+		if (!replyTo || replyTo.chat !== chat) {
+			return text;
+		}
+		const r = replyTo;
+		replyTo = null;
+		return `> ${r.name}: ${r.text}\n${text}`.slice(0, max);
+	}
 	/**
 	 * Asks before deleting one message, then deletes it for you (see deleteMessages).
 	 * @param {string} k its key
@@ -6484,7 +6731,7 @@
 			.filter((c) => !q || c.name.toLowerCase().includes(q) || String(c.n).includes(q))
 			.map((c) => {
 				const online = friends.some((f) => f.MemberNumber === c.n);
-				const text = textOf(c.last);
+				const text = replyBody(textOf(c.last));
 				const pinned = isPinned(`n:${c.n}`);
 				return {
 					pinned,
@@ -6534,7 +6781,7 @@
 		if (last.sys) {
 			return textOf(last);
 		}
-		return `${last.Sent ? 'You' : last.MemberName}: ${textOf(last)}`;
+		return `${last.Sent ? 'You' : last.MemberName}: ${replyBody(textOf(last))}`;
 	}
 
 	/**
@@ -6967,6 +7214,15 @@
 		for (const b of $$(box, '[data-del]')) {
 			b.addEventListener('click', () => askDelete(b.dataset.del || ''));
 		}
+		for (const b of $$(box, '[data-rep]')) {
+			b.addEventListener('click', () => startReply(b.dataset.rep || ''));
+		}
+		if ($('sb-rep-x')) {
+			$('sb-rep-x').addEventListener('click', () => {
+				replyTo = null;
+				render(true);
+			});
+		}
 		// Touch screens have no hover: tapping a message shows its 🗑.
 		box.addEventListener('click', (e) => {
 			const t = targetOf(e);
@@ -7020,10 +7276,13 @@
 				return html`<div class="sb-sys">${textOf(h)}</div>`;
 			}
 			const name = h.Sent ? myName() : memberName(g, h.MemberNumber) || h.MemberName;
-			const act = asAction(textOf(h), name);
+			const r = splitReply(textOf(h));
+			const body = r ? r.body : textOf(h);
+			const act = asAction(body, name);
 			const from = !h.Sent && !act && html`<span class="sb-from">${name}</span>`;
-			const tr = !h.Sent && trLine(textOf(h), `g:${id}`, i >= msgs.length - AUTO_RECENT);
-			return html`<div class="sb-b ${h.Sent ? 'me' : 'them'}${act && ' sb-act'}">${from}${rich(act ?? textOf(h))}${tr}<em>${!h.Sent && trButton(textOf(h))}${timeOf(h.Time)}</em>${deleteButton(h)}</div>`;
+			const tr = !h.Sent && trLine(body, `g:${id}`, i >= msgs.length - AUTO_RECENT);
+			const mention = !h.Sent && mentionsMe(h) && ' sb-mention';
+			return html`<div class="sb-b ${h.Sent ? 'me' : 'them'}${act && ' sb-act'}${mention}">${from}${replyQuote(r)}${rich(act ?? body)}${tr}<em>${!h.Sent && trButton(body)}${timeOf(h.Time)}</em>${msgButtons(h)}</div>`;
 		};
 		setHtml(
 			view,
@@ -7035,6 +7294,7 @@
 			${jamLine(`g:${id}`)}
 			<div class="sb-msgwrap"><div class="sb-msgs" id="sb-msgs">${msgs.length ? msgs.map(bubble) : html`<div class="sb-empty">🫧 Say hi to the group!</div>`}</div>
 				<button class="sb-pill sb-jump" id="sb-jump"></button></div>
+			${replyBar(`g:${id}`)}
 			<div class="sb-compose">
 				<button class="pin" id="sb-emo" title="Emoji">😊</button>${trWriteButton(`g:${id}`)}
 				<textarea id="sb-text" maxlength="${LIMITS.text}" placeholder="Message ${g.name}…"></textarea>
@@ -7053,7 +7313,7 @@
 			membersOpen = id;
 			render();
 		});
-		$('sb-mute').addEventListener('click', () => toggleMute(`g:${id}`, g.name));
+		$('sb-mute').addEventListener('click', () => openNotify(`g:${id}`, g.name));
 		$('sb-more').addEventListener('click', () => openChatMenu(`g:${id}`));
 		$('sb-trset').addEventListener('click', () => openTranslate(`g:${id}`));
 		if ($('sb-trw')) {
@@ -7072,15 +7332,20 @@
 				return;
 			}
 			closeEmoji();
+			closeAt();
 			// What you send takes you back to the newest messages.
 			box.scrollTop = box.scrollHeight;
 			// Cleared first: sending can redraw the chat, which keeps what is in the box.
 			ta.value = '';
-			sendGroup(id, text).catch((e) => warn(e, 'send'));
+			sendGroup(id, withReply(`g:${id}`, text, LIMITS.text)).catch((e) => warn(e, 'send'));
 		};
 		$('sb-send').addEventListener('click', send);
+		wireAt(
+			ta,
+			g.members.filter((m) => m.n !== Player.MemberNumber).map((m) => ({ n: m.n, name: memberName(g, m.n) || `#${m.n}` })),
+		);
 		ta.addEventListener('keydown', (e) => {
-			if (e.key === 'Enter' && !e.shiftKey) {
+			if (e.key === 'Enter' && !e.shiftKey && !e.defaultPrevented) {
 				e.preventDefault();
 				send();
 			}
@@ -7089,6 +7354,88 @@
 			ta.focus();
 		}
 	}
+
+	/**
+	 * The @ list of a group's box: typing @ shows the members whose name matches what follows it;
+	 * a click, Enter or Tab writes "@Name ". Arrows move, Escape closes.
+	 * @param {HTMLInputElement} ta the box ($input)
+	 * @param {{ n: number, name: string }[]} members
+	 */
+	function wireAt(ta, members) {
+		let picked = 0;
+		/** @type {{ n: number, name: string }[]} */
+		let shown = [];
+		const query = () => {
+			const m = /(^|\s)@([^\s@]{0,24})$/.exec(ta.value.slice(0, ta.selectionStart ?? ta.value.length));
+			return m ? m[2].toLowerCase() : null;
+		};
+		/** @param {{ n: number, name: string }} who */
+		const pick = (who) => {
+			const at = ta.selectionStart ?? ta.value.length;
+			const before = ta.value.slice(0, at).replace(/@[^\s@]{0,24}$/, `@${who.name} `);
+			ta.value = before + ta.value.slice(at);
+			ta.selectionStart = ta.selectionEnd = before.length;
+			closeAt();
+			ta.focus();
+		};
+		const draw = () => {
+			const q = query();
+			shown = q === null ? [] : members.filter((m) => m.name.toLowerCase().includes(q)).slice(0, 6);
+			if (!shown.length) {
+				closeAt();
+				return;
+			}
+			picked = Math.min(picked, shown.length - 1);
+			let list = $('sb-at');
+			if (!list) {
+				const compose = ta.closest('.sb-compose');
+				if (!compose) {
+					return;
+				}
+				list = document.createElement('div');
+				list.id = 'sb-at';
+				compose.appendChild(list);
+			}
+			setHtml(
+				list,
+				html`${shown.map((m, i) => html`<button data-at="${i}" class="${i === picked && 'on'}">${avatar(m.n, m.name)}<span>${m.name}</span></button>`)}`,
+			);
+			for (const b of $$(list, '[data-at]')) {
+				// mousedown: a click would take the focus from the box first.
+				b.addEventListener('mousedown', (e) => {
+					e.preventDefault();
+					pick(shown[Number(b.dataset.at)]);
+				});
+			}
+		};
+		ta.addEventListener('input', () => {
+			picked = 0;
+			draw();
+		});
+		ta.addEventListener('keydown', (e) => {
+			if (!$('sb-at') || !shown.length) {
+				return;
+			}
+			if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+				e.preventDefault();
+				picked = (picked + (e.key === 'ArrowDown' ? 1 : shown.length - 1)) % shown.length;
+				draw();
+			} else if (e.key === 'Enter' || e.key === 'Tab') {
+				e.preventDefault();
+				pick(shown[picked]);
+			} else if (e.key === 'Escape') {
+				e.preventDefault();
+				closeAt();
+			}
+		});
+	}
+	/** Closes the @ list of a group's box. */
+	const closeAt = () => {
+		const list = $('sb-at');
+		if (list) {
+			list.remove();
+		}
+	};
 
 	/**
 	 * Rows of the 💖 tab: online friends, then offline ones greyed out, filtered by `q`.
@@ -7257,18 +7604,15 @@
 		/** @param {HistEntry} b */
 		const uncheckedMark = (b) =>
 			b.unchecked && html`<span title="Their SlimeBeep has not told yours its key yet, so who sent this could not be checked">⚠</span> `;
-		/**
-		 * A message's text as an action with its sender's name, or null (see asAction).
-		 * @param {HistEntry} b
-		 */
-		const actionOf = (b) => asAction(textOf(b), b.Sent ? myName() : nameOf(n));
 		/** @type {HtmlValue} */
 		let bubbles = !waitingHere.length && html`<div class="sb-empty">🫧 Say hi!</div>`;
 		if (msgs.length) {
 			bubbles = msgs.map((b, i) => {
-				const act = actionOf(b);
-				const tr = !b.Sent && trLine(textOf(b), `n:${n}`, i >= msgs.length - AUTO_RECENT);
-				return html`<div class="sb-b ${b.Sent ? 'me' : 'them'}${act && ' sb-act'}">${rich(act ?? textOf(b))}${tr}${roomLine(b, msgs, i)}<em>${!b.Sent && trButton(textOf(b))}${mailMark(b)}${whisperMark(b)}${uncheckedMark(b)}${timeOf(b.Time)}</em>${deleteButton(b)}</div>`;
+				const r = splitReply(textOf(b));
+				const body = r ? r.body : textOf(b);
+				const act = asAction(body, b.Sent ? myName() : nameOf(n));
+				const tr = !b.Sent && trLine(body, `n:${n}`, i >= msgs.length - AUTO_RECENT);
+				return html`<div class="sb-b ${b.Sent ? 'me' : 'them'}${act && ' sb-act'}">${replyQuote(r)}${rich(act ?? body)}${tr}${roomLine(b, msgs, i)}<em>${!b.Sent && trButton(body)}${mailMark(b)}${whisperMark(b)}${uncheckedMark(b)}${timeOf(b.Time)}</em>${msgButtons(b)}</div>`;
 			});
 		}
 		const waitingBubbles = waitingHere.map(
@@ -7293,6 +7637,7 @@
 			${jamLine(`n:${n}`)}
 			<div class="sb-msgwrap"><div class="sb-msgs" id="sb-msgs">${bubbles}${waitingBubbles}</div>
 				<button class="sb-pill sb-jump" id="sb-jump"></button></div>
+			${replyBar(`n:${n}`)}
 			<div class="sb-compose">
 				<button class="pin ${pinOn && 'on'}" id="sb-pin" ${!room && 'disabled'} title="${pinTitle}">📍</button>
 				<button class="pin" id="sb-emo" title="Emoji">😊</button>${trWriteButton(`n:${n}`)}${near && html`<button class="pin ${whisper && 'on'}" id="sb-whisper" title="${whisper ? 'Whispering (click to beep instead)' : 'Beeping (click to whisper instead)'}">🤫</button>`}
@@ -7320,7 +7665,7 @@
 				render(true);
 			});
 		}
-		$('sb-mute').addEventListener('click', () => toggleMute(`n:${n}`, nameOf(n)));
+		$('sb-mute').addEventListener('click', () => openNotify(`n:${n}`, nameOf(n)));
 		$('sb-more').addEventListener('click', () => openChatMenu(`n:${n}`));
 		$('sb-trset').addEventListener('click', () => openTranslate(`n:${n}`));
 		if ($('sb-trw')) {
@@ -7347,10 +7692,10 @@
 				ta.value = '';
 				return;
 			}
-			const text = typed.trim();
-			if (!text) {
+			if (!typed.trim()) {
 				return;
 			}
+			const text = withReply(`n:${n}`, typed.trim(), 1000);
 			closeEmoji();
 			// What you send takes you back to the newest messages.
 			box.scrollTop = box.scrollHeight;
@@ -9631,8 +9976,8 @@
 		/** @type {Rect} */
 		const EXIT = [1815, 75, 90, 90];
 		const LEFT = 500,
-			TOP = 190,
-			ROW = 72;
+			TOP = 160,
+			ROW = 70;
 		/** @type {[string, string | (() => string), () => unknown, (on: boolean) => void, (() => boolean)?][]} id, label, get, set, shown */
 		const boxes = [
 			['night', 'Night mode (a night blue slime)', () => opts.night, (on) => setNight(on)],
@@ -9646,6 +9991,13 @@
 			],
 			['sound', 'Pop sound for new beeps', () => opts.sound, (on) => setOpt('sound', on)],
 			['popups', 'Show new beeps in a pop-up (click to reply)', () => opts.popups, (on) => setOpt('popups', on)],
+			[
+				'groupAll',
+				'Group chats notify me of every message (otherwise only @mentions and replies)',
+				() => opts.groupAll,
+				(on) => setOpt('groupAll', on),
+			],
+			['quietOpen', 'No sound or pop-up while SlimeBeep is open', () => opts.quietOpen, (on) => setOpt('quietOpen', on)],
 			['desktop', 'Desktop notification when in the background', () => opts.desktop, (on) => setDesktop(on)],
 			['share', '"Let them join me" starts on', () => opts.shareRoom, (on) => setOpt('shareRoom', on)],
 			[
