@@ -8,7 +8,8 @@
  *
  * Clients sign in by signing a one-time nonce with their own P-256 key. In a group, a member number is
  * bound to a key when it joins with an invite; an invite made for one member number is the only way to
- * bind a new key. All rules are enforced here.
+ * bind a new key. A member can also move to a new key with `rekey`, signed by the key the group knows.
+ * All rules are enforced here.
  *
  * Messages are end-to-end encrypted by the clients (ECDH P-256, HKDF-SHA-256, AES-GCM), so this relay
  * only stores and passes on data it cannot read. A mailbox beep is sealed to the recipient's encryption
@@ -170,7 +171,7 @@ export default {
 
 /**
  * One group chat. Members' statuses and who listens along live on their connections, not in storage. Storage: 'meta' { name, owner, admins, open, created, pic, e2e }, 'members' (member
- * number -> { n, name, pub, ek, eks, joined, pic }), 'invites' (secret -> { member, by, exp, uses }),
+ * number -> { n, name, pub, ek, eks, joined, pic, rk }), 'invites' (secret -> { member, by, exp, uses }),
  * 'msg:<seq>' sealed messages, 'keys' { epoch, rekey, eps: epoch -> member -> wrap } and 'music'
  * { u, ti, p, pl, d, i, b, by, name, at, q }: the song playing, only its link and where it is, never the sound,
  * and the titles of the songs queued after it.
@@ -220,7 +221,7 @@ export class Group extends DurableObject {
 	}
 
 	/**
-	 * A client message (JSON with `t`). Before sign-in only 'auth'; then 'say', 'history', 'gkey', 'invite', 'kick',
+	 * A client message (JSON with `t`). Before sign-in only 'auth'; then 'say', 'history', 'gkey', 'rekey', 'invite', 'kick',
 	 * 'admin', 'owner', 'rename', 'open', 'profile', 'gpic', 'music', 'musicEnd', 'musicQueue', 'musicAdd', 'musicSkip',
 	 * 'musicListen', 'status', 'leave' and 'disband'. Rate limited per connection.
 	 */
@@ -264,6 +265,8 @@ export class Group extends DurableObject {
 					return this.history(ws, p.after);
 				case 'gkey':
 					return await this.addKeys(att.member, p);
+				case 'rekey':
+					return await this.rekeyMember(ws, att, p);
 				case 'invite':
 					return await this.invite(ws, att.member, p);
 				case 'kick':
@@ -400,7 +403,10 @@ export class Group extends DurableObject {
 			if (!known && Object.keys(this.members).length >= LIMITS.members) {
 				return this.fail(ws, 'group is full');
 			}
-			this.members[member] = { ...(known || { joined: Date.now() }), n: member, name, pub, ek, eks };
+			// A key bound by an invite replaces any earlier hand-over (`rk`), which was for another key.
+			const was = { ...(known || { joined: Date.now() }) };
+			delete was.rk;
+			this.members[member] = { ...was, n: member, name, pub, ek, eks };
 			if (known && known.ek !== ek) {
 				await this.dropWraps(member);
 			}
@@ -930,6 +936,42 @@ export class Group extends DurableObject {
 			await this.ctx.storage.put('keys', this.keys);
 		}
 	}
+	/**
+	 * A member moves to a new key (`pub`, with its encryption key `ek`): their browser restored the keys
+	 * from their account, or made keys it can back up. `sig` is the old key's signature of
+	 * `rekey|<member>|<new x>|<new y>`, so only whoever holds the key the group knows can hand over, and `eks`
+	 * signs `ek` with the new key, so they hold that one too. The old key and its signature stay on the member
+	 * as `rk`, so friends who only know the old key can check the new one. Answers 'rekeyed'; already on that
+	 * key, it only answers.
+	 */
+	async rekeyMember(ws, att, p) {
+		const member = att.member;
+		const m = this.members[member];
+		if (!m || !p.pub || !B64URL.test(p.pub.x || '') || !B64URL.test(p.pub.y || '') || !B64URL.test(p.sig || '')) {
+			return this.send(ws, { t: 'error', why: 'bad key change' });
+		}
+		const pub = { x: p.pub.x, y: p.pub.y };
+		if (samePub(m.pub, pub)) {
+			return this.send(ws, { t: 'rekeyed', x: pub.x });
+		}
+		if (
+			!EK_RE.test(p.ek || '') ||
+			!B64URL.test(p.eks || '') ||
+			!(await verify(m.pub, p.sig, `rekey|${member}|${pub.x}|${pub.y}`)) ||
+			!(await verify(pub, p.eks, `ek|${att.gid}|${member}|${p.ek}`))
+		) {
+			return this.send(ws, { t: 'error', why: 'bad key change' });
+		}
+		const ekChanged = m.ek !== p.ek;
+		Object.assign(m, { pub, ek: p.ek, eks: p.eks, rk: { x: m.pub.x, y: m.pub.y, sig: p.sig } });
+		if (ekChanged) {
+			await this.dropWraps(member);
+		}
+		await this.save();
+		this.send(ws, { t: 'rekeyed', x: pub.x });
+		this.broadcast({ t: 'roster', roster: this.roster() });
+		this.sendKeys();
+	}
 	/** A member left or was removed: the next key must be one they never had. */
 	async needRekey() {
 		if (this.keys.epoch > 0) {
@@ -965,7 +1007,8 @@ export class Group extends DurableObject {
 
 	/**
 	 * The roster sent to clients. Each member's `kf` lets friends compare it with the key they know; `pub`,
-	 * `ek` and `eks` let members check a member's encryption key before sealing the group key to it.
+	 * `ek` and `eks` let members check a member's encryption key before sealing the group key to it; `rk`
+	 * (after a rekey) is the old key and its signature of the new one.
 	 */
 	roster() {
 		const g = this.meta;
@@ -982,6 +1025,7 @@ export class Group extends DurableObject {
 				pub: m.pub,
 				ek: m.ek,
 				eks: m.eks,
+				...(m.rk ? { rk: m.rk } : {}),
 			})),
 		};
 	}
@@ -1051,10 +1095,13 @@ export class Group extends DurableObject {
 }
 
 /**
- * One player's mailbox. Storage: 'm:<id>' -> { id, from, name, fromKf, kf, enc, at }, where `kf` is the
- * recipient key the beep is addressed to, `fromKf` the sender's and `enc` { e, iv, ct } the beep sealed to
- * the recipient's encryption key (`e` the sender's one-time key). Signed in as the box's member number, a
- * connection reads (and acks) the beeps for its own key; any other signed-in connection may leave one.
+ * One player's mailbox. Storage: 'm:<id>' -> { id, from, name, fromKf, kf, enc, at, rk?, pub? }, where `kf`
+ * is the recipient key the beep is addressed to, `fromKf` the sender's and `enc` { e, iv, ct } the beep sealed
+ * to the recipient's encryption key (`e` the sender's one-time key). A sender who moved to a new key signs in
+ * with `rk`, their old key's signature of the new one (as in a group's rekey); it is kept with the beep, with
+ * the sender's whole key (`pub`), so a recipient who only knows the old key can check it. Signed in as the
+ * box's member number, a connection reads (and acks) the beeps for its own key; any other signed-in
+ * connection may leave one.
  */
 export class Mailbox extends DurableObject {
 	constructor(ctx, env) {
@@ -1116,6 +1163,17 @@ export class Mailbox extends DurableObject {
 				att.member = member;
 				att.kf = p.pub.x.slice(0, 16);
 				att.name = clean(p.name, LIMITS.name) || `#${member}`;
+				const rk = p.rk;
+				if (
+					rk &&
+					B64URL.test(rk.x || '') &&
+					B64URL.test(rk.y || '') &&
+					B64URL.test(rk.sig || '') &&
+					(await verify({ x: rk.x, y: rk.y }, rk.sig, `rekey|${member}|${p.pub.x}|${p.pub.y}`))
+				) {
+					att.rk = { x: rk.x, y: rk.y, sig: rk.sig };
+					att.pub = { x: p.pub.x, y: p.pub.y };
+				}
 				ws.serializeAttachment(att);
 				if (member === att.owner) {
 					return this.send(ws, { t: 'mail', list: await this.mine(att.kf) });
@@ -1154,7 +1212,7 @@ export class Mailbox extends DurableObject {
 	async mine(kf) {
 		return (await this.all())
 			.filter((m) => m.kf === kf && m.enc)
-			.map(({ id, from, name, fromKf, enc, at }) => ({ id, from, name, fromKf, enc, at }));
+			.map(({ id, from, name, fromKf, enc, at, rk, pub }) => ({ id, from, name, fromKf, enc, at, ...(rk ? { rk, pub } : {}) }));
 	}
 
 	/** Leaves a beep (not in your own box), within MAIL limits; delivered at once if the owner is connected with that key. */
@@ -1183,13 +1241,15 @@ export class Mailbox extends DurableObject {
 			kf: p.kf,
 			enc: { e: enc.e, iv: enc.iv, ct: enc.ct },
 			at: Date.now(),
+			...(att.rk ? { rk: att.rk, pub: att.pub } : {}),
 		};
 		await this.ctx.storage.put(`m:${m.id}`, m);
 		this.send(ws, { t: 'ok', ref, id: m.id });
+		const { kf, ...item } = m;
 		for (const o of this.ctx.getWebSockets()) {
 			const a = o.deserializeAttachment();
-			if (a && a.member === a.owner && a.kf === m.kf) {
-				this.send(o, { t: 'mail', list: [{ id: m.id, from: m.from, name: m.name, fromKf: m.fromKf, enc: m.enc, at: m.at }] });
+			if (a && a.member === a.owner && a.kf === kf) {
+				this.send(o, { t: 'mail', list: [item] });
 			}
 		}
 	}

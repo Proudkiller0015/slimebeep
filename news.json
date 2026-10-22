@@ -346,5 +346,11 @@
     "date": "22 Oct 2026",
     "title": "📢 SlimeBeep 3.7.1",
     "text": "⚙ SlimeBeep's settings fit the screen again: they're on two pages now, notifications on the first. Switch with the Page 1/2 button at the top right."
+  },
+  {
+    "id": "3.8.0",
+    "date": "22 Oct 2026",
+    "title": "📢 SlimeBeep 3.8",
+    "text": "💾 SlimeBeep now keeps your group chats, your profile picture and your chat keys with your BC account: clearing your browser data or playing on another browser brings them all back, and you stay in your groups. Also security improvements."
   }
 ]

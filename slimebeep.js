@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.7.1';
+	const VERSION = '3.8.0';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -222,6 +222,7 @@
 	 * @property {{ x: string, y: string }} [pub] the key they signed in with
 	 * @property {string} [ek] their encryption public key ("x.y")
 	 * @property {string} [eks] `ek` signed with `pub`, so the relay can't swap it
+	 * @property {Handover} [rk] how the key they had before handed over to `pub` (see followKey)
 	 */
 	/**
 	 * A group chat you are in.
@@ -245,6 +246,8 @@
 	let peerKeys = {};
 	/** @type {Record<number, string>} Friend -> their encryption public key ("x.y"), as their own SlimeBeep sent it. */
 	let peerEks = {};
+	/** @type {Record<number, string>} Friend -> the key start they had before moving to new keys (followKey); their mailbox beeps signed with it still count. */
+	let peerWas = {};
 	/**
 	 * A group invite from a friend, not joined yet.
 	 * @typedef {object} Invitation
@@ -395,6 +398,7 @@
 		peers = new Set();
 		peerKeys = {};
 		peerEks = {};
+		peerWas = {};
 		invitations = [];
 		groupKeys = loadGroupKeys();
 		keyCache.clear();
@@ -402,7 +406,7 @@
 		myPfp();
 		relayPics = {};
 		try {
-			/** @type {{ groups?: Record<string, Partial<Group>>, peers?: unknown[], peerKeys?: Record<string, unknown>, peerEks?: Record<string, unknown>, invitations?: Partial<Invitation>[] }} */
+			/** @type {{ groups?: Record<string, Partial<Group>>, peers?: unknown[], peerKeys?: Record<string, unknown>, peerEks?: Record<string, unknown>, peerWas?: Record<string, unknown>, invitations?: Partial<Invitation>[] }} */
 			const saved = JSON.parse(localStorage.getItem(gcKey()) || '{}');
 			for (const g of Object.values(saved.groups || {})) {
 				if (!g || !isId(g.id) || !Array.isArray(g.members)) {
@@ -442,6 +446,11 @@
 					peerEks[Number(k)] = v;
 				}
 			}
+			for (const [k, v] of Object.entries(saved.peerWas || {})) {
+				if (isNum(Number(k)) && typeof v === 'string') {
+					peerWas[Number(k)] = v.slice(0, 16);
+				}
+			}
 			for (const i of saved.invitations || []) {
 				if (i && typeof i.code === 'string' && CODE_RE.test(i.code) && isNum(i.from)) {
 					invitations.push({
@@ -468,10 +477,14 @@
 	/** Saves groups, peers, peer keys, their encryption keys and invitations for the logged-in account. */
 	function saveGC() {
 		try {
-			localStorage.setItem(gcKey(), JSON.stringify({ groups, peers: [...peers], peerKeys, peerEks, invitations: invitations.slice(-20) }));
+			localStorage.setItem(
+				gcKey(),
+				JSON.stringify({ groups, peers: [...peers], peerKeys, peerEks, peerWas, invitations: invitations.slice(-20) }),
+			);
 		} catch (e) {
 			/* the browser won't keep it */
 		}
+		saveBackup();
 	}
 	/**
 	 * The `hist` key of a game beep: its Id, or its sender, time, direction and start of text.
@@ -1189,6 +1202,7 @@
 		} catch (e) {
 			/* this visit only */
 		}
+		saveBackup();
 	}
 	/**
 	 * A member's picture: yours, a friend's from `pfps`, or one a group shared (`relayPics`).
@@ -3001,6 +3015,9 @@
 			foundPeer(from);
 		}
 		if (typeof p.kf === 'string' && /^[A-Za-z0-9_-]{16}$/.test(p.kf) && peerKeys[from] !== p.kf) {
+			if (peerKeys[from]) {
+				peerWas[from] = peerKeys[from];
+			}
 			peerKeys[from] = p.kf;
 			saveGC();
 		}
@@ -3557,8 +3574,9 @@
 	 * A message from the relay (JSON). Which fields are set depends on `t`; see relay/src/index.js.
 	 * @typedef {object} RelayMessage
 	 * @property {string} t 'hello', 'welcome', 'roster', 'presence', 'msg', 'history', 'keys', 'pic', 'gpic', 'invite', 'music',
-	 * 'musicQueue', 'musicAdd', 'musicSkip', 'musicListeners', 'status', 'statuses', 'pong', 'gone', 'error', 'ok', 'mail'
+	 * 'musicQueue', 'musicAdd', 'musicSkip', 'musicListeners', 'status', 'statuses', 'pong', 'gone', 'error', 'ok', 'mail', 'rekeyed'
 	 * @property {string} [nonce] hello: what to sign
+	 * @property {string} [x] rekeyed: the public x of the key the group now knows you by
 	 * @property {RelayRoster} [roster] welcome, roster
 	 * @property {number[]} [online] presence
 	 * @property {RelayGroupMessage} [m] msg
@@ -3613,6 +3631,8 @@
 	 * @property {string} fromKf the start of the key the sender signed in with
 	 * @property {Sealed & { e: string }} enc the beep sealed to your encryption key (see sealMail)
 	 * @property {number} at
+	 * @property {Handover} [rk] the sender moved to new keys: how their old ones handed over (see followKey)
+	 * @property {{ x: string, y: string }} [pub] with `rk`: the key the sender signed in with
 	 */
 	/**
 	 * A relay connection to one group.
@@ -3629,6 +3649,9 @@
 	 * @property {boolean} [dead] closed on purpose (no reconnect)
 	 * @property {number} [pinged] last keep-alive
 	 * @property {number} [rtt] ms a ping took to come back, averaged
+	 * @property {boolean} [old] signs in with the previous keys (prevKey) and hands the group over to the current ones
+	 * @property {KeyPair} [key] the keys it signed in with
+	 * @property {boolean} [retried] already tried the other keys after 'not a member'
 	 */
 	/** @type {Record<string, Conn>} One relay connection per group (reconnects with backoff, up to 5 min), by group id. */
 	const conns = {};
@@ -3643,11 +3666,39 @@
 	 * @property {string} kf the first 16 chars of pub.x
 	 * @property {CryptoKey} epriv the encryption private key
 	 * @property {string} ek the encryption public key ("x.y")
+	 * @property {KeyJwk} [jwk] the whole keys, when this visit knows them (from the account backup, or made here): only for the backup
+	 * @property {Handover} [rk] how the keys before these handed over to them
+	 */
+	/**
+	 * A key pair's coordinates as JWK fields (base64url): x, y, d for signing, ex, ey, ed for encryption.
+	 * @typedef {{ x: string, y: string, d: string, ex: string, ey: string, ed: string }} KeyJwk
+	 */
+	/**
+	 * A hand-over to new keys: the old signing key's public half and its signature of
+	 * `rekey|<member number>|<new x>|<new y>`. Groups take it with 'rekey'; friends who only know the old key
+	 * check the new one with it (followKey).
+	 * @typedef {{ x: string, y: string, sig: string }} Handover
+	 */
+	/**
+	 * Keys as IndexedDB keeps them (keyStore): CryptoKeys that can't be exported, and the public halves.
+	 * @typedef {{ priv: CryptoKey, epriv: CryptoKey, x: string, y: string, ex: string, ey: string, rk?: Handover }} KeyRecord
 	 */
 	/** @type {KeyPair | null} Cached result of getKey. */
 	let myKey = null;
 	/** @type {{ owner: number, p: Promise<KeyPair> } | null} getKey while it runs, so two callers get the same keys. */
 	let keyLoading = null;
+	/**
+	 * The keys this account had before its current ones, after a hand-over (loadKey): kept to sign in to the
+	 * groups in `owed` (which still know only them) and hand those over, and to read the mailbox that friends
+	 * who don't know the new key yet still fill. `sig` is their signature of the current keys, for 'rekey'.
+	 * Dropped once nothing is owed and MAIL_DAYS have passed.
+	 * @type {(KeyPair & { at: number, owed: string[], sig: string }) | null}
+	 */
+	let prevKey = null;
+	/** Days the relay keeps a mailbox beep (its MAIL.days), so the previous keys are kept that long. */
+	const MAIL_DAYS = 14;
+	/** Whether the keys changed this visit, so online SlimeBeep friends are told (relayTick). */
+	let keyNews = false;
 	/**
 	 * Bytes as base64url (no padding).
 	 * @param {ArrayBuffer} buf
@@ -3746,13 +3797,24 @@
 		}
 	}
 	/**
-	 * Signs `text` with this account's signing key (base64url).
+	 * Signs `text` with this account's signing key, or with `k` (base64url).
 	 * @param {string} text
+	 * @param {KeyPair} [k]
 	 */
-	async function signText(text) {
-		const k = await getKey();
-		return b64url(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, k.priv, new TextEncoder().encode(text)));
+	async function signText(text, k) {
+		const key = k || (await getKey());
+		return b64url(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, key.priv, new TextEncoder().encode(text)));
 	}
+	/**
+	 * The keys a group knows this account by: the ones its connection signed in with (the previous keys while
+	 * it waits to be handed over), else the current ones.
+	 * @param {string} gid
+	 * @returns {Promise<KeyPair>}
+	 */
+	const keyFor = (gid) => {
+		const c = conns[gid];
+		return c && c.key ? Promise.resolve(c.key) : getKey();
+	};
 	/**
 	 * Seals a mailbox beep to friend `to`: a one-time key pair agrees a key with their encryption key, so only
 	 * they can open it; the sender and recipient numbers are bound in, so the relay can't pass it off as another's.
@@ -3770,10 +3832,11 @@
 	 * Opens a mailbox beep from `from` sealed with sealMail; throws if it isn't for us or was changed.
 	 * @param {number} from
 	 * @param {Sealed & { e: string }} enc
+	 * @param {KeyPair} [mine] the keys it was addressed to (else the current ones)
 	 */
-	async function openMail(from, enc) {
+	async function openMail(from, enc, mine) {
 		const me = Player.MemberNumber;
-		const k = await getKey();
+		const k = mine || (await getKey());
 		const key = await agree(k.epriv, enc.e, `slimebeep mail v1|${from}|${me}`);
 		return new TextDecoder().decode(await unseal(key, enc, `${from}|${me}`));
 	}
@@ -3852,10 +3915,47 @@
 		if (!m || !m.pub || !m.ek || !m.eks || !EK_RE.test(m.ek)) {
 			return false;
 		}
-		if (peerKeys[m.n] && peerKeys[m.n] !== m.pub.x.slice(0, 16)) {
+		if (!(await knownKey(m))) {
 			return false;
 		}
 		return verifySig(m.pub, m.eks, `ek|${gid}|${m.n}|${m.ek}`);
+	}
+	/**
+	 * Whether a member's key is the one their own SlimeBeep told us, or was handed over from it (then it is
+	 * the known one from now on). True when we know none.
+	 * @param {GroupMember} m
+	 * @returns {Promise<boolean>}
+	 */
+	async function knownKey(m) {
+		const known = peerKeys[m.n];
+		if (!known) {
+			return true;
+		}
+		if (!m.pub) {
+			return false;
+		}
+		return known === m.pub.x.slice(0, 16) || followKey(m.n, m.rk, m.pub);
+	}
+	/**
+	 * Follows a friend to new keys: `rk` must come from the key their own SlimeBeep told us (peerKeys) and sign
+	 * `pub`. Then `pub` is the key we know for them, and their encryption key is asked for again (askEks).
+	 * @param {number} n
+	 * @param {Handover | undefined} rk
+	 * @param {{ x: string, y: string } | undefined} pub
+	 */
+	async function followKey(n, rk, pub) {
+		if (!rk || !pub || !peerKeys[n] || rk.x.slice(0, 16) !== peerKeys[n]) {
+			return false;
+		}
+		if (!(await verifySig(rk, rk.sig, `rekey|${n}|${pub.x}|${pub.y}`))) {
+			return false;
+		}
+		peerWas[n] = peerKeys[n];
+		peerKeys[n] = pub.x.slice(0, 16);
+		delete peerEks[n];
+		askedEk.delete(n);
+		saveGC();
+		return true;
 	}
 	/**
 	 * Seals a group key to a member and signs the result.
@@ -3866,10 +3966,10 @@
 	 */
 	async function wrapFor(gid, e, raw, m) {
 		const me = Player.MemberNumber;
-		const k = await getKey();
+		const k = await keyFor(gid);
 		const key = await agree(k.epriv, m.ek || '', `slimebeep group v1|${gid}|${e}|${me}|${m.n}`);
 		const box = await seal(key, raw, `${gid}|${e}|${m.n}`);
-		return { to: m.n, ...box, sig: await signText(`wrap|${gid}|${e}|${m.n}|${box.iv}|${box.ct}`) };
+		return { to: m.n, ...box, sig: await signText(`wrap|${gid}|${e}|${m.n}|${box.iv}|${box.ct}`, k) };
 	}
 	/**
 	 * Opens a wrap of a group key sent to us, after checking the member who made it signed it; keeps the key.
@@ -3880,7 +3980,7 @@
 	async function unwrap(gid, e, w) {
 		const g = groups[gid];
 		const me = Player.MemberNumber;
-		const k = await getKey();
+		const k = await keyFor(gid);
 		const by = g && g.members.find((m) => m.n === w.by);
 		if (!g || w.to !== me || w.ek !== k.ek || !by || !by.pub || !(await trustedEk(gid, by))) {
 			return false;
@@ -4144,9 +4244,10 @@
 	 * SlimeBeep friends, addressed to the recipient's key start (peerKeys); see relay/src/index.js.
 	 * @param {number} owner the mailbox's member number (yours to read, a friend's to leave a beep)
 	 * @param {(p: RelayMessage, ws: WebSocket) => void} onMsg gets every message from the relay
+	 * @param {KeyPair} [key] the keys to sign in with (else the current ones; their hand-over goes along, see followKey)
 	 * @returns {Promise<WebSocket>} resolves once signed in
 	 */
-	function mailOpen(owner, onMsg) {
+	function mailOpen(owner, onMsg, key) {
 		return new Promise((resolve, reject) => {
 			/** @type {WebSocket | null} */
 			let ws = null;
@@ -4194,11 +4295,13 @@
 				}
 				if (p.t === 'hello' && typeof p.nonce === 'string') {
 					try {
-						const k = await getKey();
+						const k = key || (await getKey());
 						const me = Player.MemberNumber;
 						const signed = `${p.nonce}|mbox:${owner}|${me}`;
 						const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, k.priv, new TextEncoder().encode(signed));
-						sock.send(JSON.stringify({ t: 'auth', member: me, name: myName(), pub: k.pub, sig: b64url(sig) }));
+						sock.send(
+							JSON.stringify({ t: 'auth', member: me, name: myName(), pub: k.pub, sig: b64url(sig), ...(k.rk ? { rk: k.rk } : {}) }),
+						);
 					} catch (x) {
 						fin('could not sign in');
 					}
@@ -4305,7 +4408,10 @@
 	let mailChecked = 0;
 	/** True while checkMail runs. */
 	let mailBusy = false;
-	/** Fetches your mailbox (at login, then every 5 minutes from relayTick). */
+	/**
+	 * Fetches your mailbox (at login, then every 5 minutes from relayTick): the beeps for your keys and, after a
+	 * hand-over, those still left for your previous ones.
+	 */
 	async function checkMail() {
 		if (mailBusy || !loggedIn() || !secure()) {
 			return;
@@ -4313,18 +4419,32 @@
 		mailBusy = true;
 		mailChecked = Date.now();
 		try {
-			const ws = await mailOpen(Player.MemberNumber, (p, sock) => {
-				if (p.t === 'mail') {
-					takeMail(p.list, sock).catch((e) => warn(e, 'mail'));
-				}
-			});
-			setTimeout(() => {
+			const keys = [await getKey()];
+			if (prevKey && prevKey.owner === Player.MemberNumber) {
+				keys.push(prevKey);
+			}
+			for (const k of keys) {
 				try {
-					ws.close();
+					const ws = await mailOpen(
+						Player.MemberNumber,
+						(p, sock) => {
+							if (p.t === 'mail') {
+								takeMail(p.list, sock, k).catch((e) => warn(e, 'mail'));
+							}
+						},
+						k,
+					);
+					setTimeout(() => {
+						try {
+							ws.close();
+						} catch (e) {
+							/* gone */
+						}
+					}, 3000);
 				} catch (e) {
-					/* gone */
+					/* tried again next time */
 				}
-			}, 3000);
+			}
 		} catch (e) {
 			/* tried again next time */
 		} finally {
@@ -4332,12 +4452,13 @@
 		}
 	}
 	/**
-	 * Opens mailbox beeps, adds them to `hist` and acks them. Beeps from non-friends, with a wrong sender key or
-	 * that don't open with our encryption key are dropped.
+	 * Opens mailbox beeps, adds them to `hist` and acks them. Beeps from non-friends, with a wrong sender key (one
+	 * not handed over from the key we know, see followKey) or that don't open with our encryption key are dropped.
 	 * @param {MailItem[] | undefined} list
 	 * @param {WebSocket} sock
+	 * @param {KeyPair} [mine] the keys the mailbox connection signed in with
 	 */
-	async function takeMail(list, sock) {
+	async function takeMail(list, sock, mine) {
 		if (!Array.isArray(list) || !list.length) {
 			return;
 		}
@@ -4354,14 +4475,20 @@
 			if (!isNum(from) || from === Player.MemberNumber || !isFriend(from)) {
 				continue;
 			}
-			// Signed with another key than the one their own SlimeBeep sent us: not from them.
+			// Signed with another key than the one their own SlimeBeep sent us (or the one before it, which they left beeps
+			// with before they moved), and not handed over from it: not from them.
 			const known = peerKeys[from];
-			if (known && known !== m.fromKf) {
+			if (
+				known &&
+				known !== m.fromKf &&
+				peerWas[from] !== m.fromKf &&
+				!(m.pub && m.pub.x.slice(0, 16) === m.fromKf && (await followKey(from, m.rk, m.pub)))
+			) {
 				continue;
 			}
 			let text = '';
 			try {
-				text = m.enc && EK_RE.test(m.enc.e) ? (await openMail(from, m.enc)).slice(0, 1000) : '';
+				text = m.enc && EK_RE.test(m.enc.e) ? (await openMail(from, m.enc, mine)).slice(0, 1000) : '';
 			} catch (e) {
 				text = '';
 			}
@@ -4433,7 +4560,8 @@
 	 * exported, kept in IndexedDB (keyStore, "key.<member number>"); localStorage keeps the public halves under
 	 * slimebeep.key.<member number> (x, y for signing; ex, ey for encryption). Keys from older versions, kept
 	 * whole in localStorage (d, ed), move there; without IndexedDB they stay as they were. `kf` is the first
-	 * 16 chars of the signing key's public x, the fingerprint friends compare.
+	 * 16 chars of the signing key's public x, the fingerprint friends compare. Where the game keeps add-on
+	 * settings in the account, the keys are backed up there too (see loadKey and writeBackup).
 	 * @returns {Promise<KeyPair>}
 	 */
 	function getKey() {
@@ -4449,8 +4577,89 @@
 		}
 		return keyLoading.p;
 	}
+	/** A new key pair (signing and encryption), as JWK fields. */
+	async function newJwk() {
+		const sign = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+		const s = await crypto.subtle.exportKey('jwk', sign.privateKey);
+		const enc = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+		const e = await crypto.subtle.exportKey('jwk', enc.privateKey);
+		return { x: s.x || '', y: s.y || '', d: s.d || '', ex: e.x || '', ey: e.y || '', ed: e.d || '' };
+	}
 	/**
-	 * Loads or makes the keys of member `me` (see getKey).
+	 * Keys from JWK fields, imported so they can't be exported again.
+	 * @param {number} me
+	 * @param {KeyJwk} jwk
+	 * @param {Handover} [rk]
+	 * @returns {Promise<KeyPair>}
+	 */
+	async function importPair(me, jwk, rk) {
+		const b64 = /^[A-Za-z0-9_-]{40,50}$/;
+		if (![jwk.x, jwk.y, jwk.d, jwk.ex, jwk.ey, jwk.ed].every((v) => typeof v === 'string' && b64.test(v))) {
+			throw new Error('bad keys');
+		}
+		const priv = await crypto.subtle.importKey(
+			'jwk',
+			{ kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y, d: jwk.d, ext: true },
+			{ name: 'ECDSA', namedCurve: 'P-256' },
+			false,
+			['sign'],
+		);
+		const epriv = await crypto.subtle.importKey(
+			'jwk',
+			{ kty: 'EC', crv: 'P-256', x: jwk.ex, y: jwk.ey, d: jwk.ed, ext: true },
+			{ name: 'ECDH', namedCurve: 'P-256' },
+			false,
+			['deriveBits'],
+		);
+		const { x, y, d, ex, ey, ed } = jwk;
+		return {
+			owner: me,
+			priv,
+			pub: { x, y },
+			kf: x.slice(0, 16),
+			epriv,
+			ek: `${ex}.${ey}`,
+			jwk: { x, y, d, ex, ey, ed },
+			...(rk ? { rk } : {}),
+		};
+	}
+	/**
+	 * Keys from what IndexedDB keeps.
+	 * @param {number} me
+	 * @param {KeyRecord} r
+	 * @returns {KeyPair}
+	 */
+	const fromRecord = (me, r) => ({
+		owner: me,
+		priv: r.priv,
+		pub: { x: r.x, y: r.y },
+		kf: r.x.slice(0, 16),
+		epriv: r.epriv,
+		ek: `${r.ex}.${r.ey}`,
+		...(r.rk ? { rk: r.rk } : {}),
+	});
+	/**
+	 * What IndexedDB keeps of keys.
+	 * @param {KeyPair} k
+	 * @returns {KeyRecord}
+	 */
+	const toRecord = (k) => {
+		const [ex, ey] = k.ek.split('.');
+		return { priv: k.priv, epriv: k.epriv, x: k.pub.x, y: k.pub.y, ex, ey, ...(k.rk ? { rk: k.rk } : {}) };
+	};
+	/**
+	 * Loads or makes the keys of member `me` (see getKey), once per visit and before any group connects.
+	 *
+	 * Where the game keeps add-on settings in the account, the keys are also backed up there (writeBackup), and
+	 * the backup read here decides which keys this browser uses:
+	 * - no keys here: the backup's (a wiped or new browser gets everything back), or new ones;
+	 * - the same keys in both: nothing to do;
+	 * - other keys here: the backup's win, so a new browser never overwrites the account's keys with its own.
+	 *   With no backup, keys that can be exported are backed up as they are; ones that can't (3.7.0's) are
+	 *   replaced by new ones that can. Either way the groups this browser is in are handed over to the new keys
+	 *   (a 'rekey' signed by the old ones, see connectGroup), and the old keys are kept (prevKey) until every
+	 *   group took it, so no group is ever left without keys that work in it.
+	 * Whole keys stay in IndexedDB ("jwk.<member number>") only until the account is seen to have them.
 	 * @param {number} me
 	 * @returns {Promise<KeyPair>}
 	 */
@@ -4459,6 +4668,10 @@
 		if (!secure()) {
 			throw new Error('no WebCrypto on this page (http)');
 		}
+		// The groups this browser is in, before any are handed over.
+		if (histOwner !== me) {
+			loadHistory();
+		}
 		/** @type {{ x?: string, y?: string, d?: string, ex?: string, ey?: string, ed?: string } | null} */
 		let saved = null;
 		try {
@@ -4466,71 +4679,95 @@
 		} catch (e) {
 			saved = null;
 		}
-		/** @type {{ priv: CryptoKey, epriv: CryptoKey, x: string, y: string, ex: string, ey: string } | null} */
+		/** @type {KeyRecord | null} */
 		let stored = null;
+		/** @type {(KeyRecord & { at: number, owed: string[], sig?: string }) | null} */
+		let prev = null;
+		/** @type {KeyJwk | null} Whole keys made here that the account wasn't seen to have yet. */
+		let unsaved = null;
+		let idb = true;
 		try {
 			stored = await keyStore((st) => st.get(`key.${me}`));
+			prev = await keyStore((st) => st.get(`prev.${me}`));
+			unsaved = await keyStore((st) => st.get(`jwk.${me}`));
 		} catch (e) {
+			idb = false;
 			stored = null;
 		}
+		const backup = canBackup() ? readBackup() : null;
+		/** @type {KeyPair | null} The backup's keys. */
+		let theirs = null;
+		if (backup && backup.k) {
+			theirs = await importPair(me, backup.k, backup.rk).catch(() => null);
+		}
+		/** @type {KeyPair | null} This browser's keys. */
+		let mine = null;
 		if (stored && stored.priv && stored.epriv && (!saved || !saved.x || saved.x === stored.x)) {
-			if (!saved || saved.x !== stored.x || saved.ex !== stored.ex || saved.d) {
-				try {
-					localStorage.setItem(k, JSON.stringify({ x: stored.x, y: stored.y, ex: stored.ex, ey: stored.ey }));
-				} catch (e) {
-					/* the public halves come back from IndexedDB next time */
-				}
+			mine = fromRecord(me, stored);
+			if (unsaved && unsaved.x === stored.x) {
+				mine.jwk = unsaved;
 			}
-			return (myKey = {
-				owner: me,
-				priv: stored.priv,
-				pub: { x: stored.x, y: stored.y },
-				kf: stored.x.slice(0, 16),
-				epriv: stored.epriv,
-				ek: `${stored.ex}.${stored.ey}`,
-			});
+		} else if (saved && saved.x && saved.y && saved.d) {
+			const all = { x: saved.x, y: saved.y, d: saved.d, ex: saved.ex || '', ey: saved.ey || '', ed: saved.ed || '' };
+			// Keys made before end-to-end encryption get their encryption key now.
+			if (!all.ex || !all.ey || !all.ed) {
+				const { ex, ey, ed } = await newJwk();
+				Object.assign(all, { ex, ey, ed });
+			}
+			mine = await importPair(me, all);
 		}
-		/** @type {{ x: string, y: string, d: string, ex: string, ey: string, ed: string }} */
-		let all;
-		if (saved && saved.x && saved.y && saved.d) {
-			all = { x: saved.x, y: saved.y, d: saved.d, ex: saved.ex || '', ey: saved.ey || '', ed: saved.ed || '' };
+		const owing = !!prev && prev.owed.length > 0 && (!mine || prev.x !== mine.pub.x);
+		/** @type {KeyPair} */
+		let key;
+		/** @type {KeyPair | null} Keys being handed over from. */
+		let from = null;
+		if (!mine) {
+			key = theirs || (await importPair(me, await newJwk()));
+		} else if (theirs && theirs.pub.x === mine.pub.x) {
+			key = { ...mine, jwk: theirs.jwk, ...(theirs.rk ? { rk: theirs.rk } : {}) };
+		} else if (idb && canBackup() && (theirs || !mine.jwk) && !owing) {
+			key = theirs || (await importPair(me, await newJwk()));
+			from = mine;
 		} else {
-			const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
-			const jwk = await crypto.subtle.exportKey('jwk', pair.privateKey);
-			all = { x: jwk.x || '', y: jwk.y || '', d: jwk.d || '', ex: '', ey: '', ed: '' };
+			key = mine;
 		}
-		// Keys made before end-to-end encryption get their encryption key now.
-		if (!all.ex || !all.ey || !all.ed) {
-			const pair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
-			const jwk = await crypto.subtle.exportKey('jwk', pair.privateKey);
-			Object.assign(all, { ex: jwk.x || '', ey: jwk.y || '', ed: jwk.d || '' });
-		}
-		const priv = await crypto.subtle.importKey(
-			'jwk',
-			{ kty: 'EC', crv: 'P-256', x: all.x, y: all.y, d: all.d, ext: true },
-			{ name: 'ECDSA', namedCurve: 'P-256' },
-			false,
-			['sign'],
-		);
-		const epriv = await crypto.subtle.importKey(
-			'jwk',
-			{ kty: 'EC', crv: 'P-256', x: all.ex, y: all.ey, d: all.ed, ext: true },
-			{ name: 'ECDH', namedCurve: 'P-256' },
-			false,
-			['deriveBits'],
-		);
-		/** @type {Record<string, string>} What localStorage keeps: the public halves, or everything without IndexedDB. */
-		let keep = all;
-		try {
-			const pub = { x: all.x, y: all.y, ex: all.ex, ey: all.ey };
-			await keyStore((st) => st.put({ priv, epriv, ...pub }, `key.${me}`));
-			const back = await keyStore((st) => st.get(`key.${me}`));
-			if (back && back.x === all.x && back.priv && back.epriv) {
-				keep = pub;
+		/** @type {string[]} */
+		const owed = from ? Object.keys(groups) : [];
+		let sig = '';
+		if (from) {
+			const text = `rekey|${me}|${key.pub.x}|${key.pub.y}`;
+			sig = b64url(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, from.priv, new TextEncoder().encode(text)));
+			// The backup's keys keep their own hand-over (from the keys friends most likely know); new keys get this one.
+			if (!key.rk) {
+				key.rk = { x: from.pub.x, y: from.pub.y, sig };
 			}
-		} catch (e) {
-			/* no IndexedDB here: the keys stay in localStorage */
 		}
+		let kept = !!stored && stored.x === key.pub.x && !from;
+		if (idb && !kept) {
+			const was = from;
+			try {
+				// One transaction: the new keys and the old ones they hand over from are saved together, or neither.
+				await keyStore((st) => {
+					if (was) {
+						st.put({ ...toRecord(was), at: Date.now(), owed, sig }, `prev.${me}`);
+					}
+					return st.put(toRecord(key), `key.${me}`);
+				});
+				const back = await keyStore((st) => st.get(`key.${me}`));
+				kept = !!back && back.x === key.pub.x && !!back.priv && !!back.epriv;
+			} catch (e) {
+				kept = false;
+			}
+		}
+		if (from && !kept) {
+			// Not saved: keep the keys this browser had, where they were.
+			key = from;
+			from = null;
+			kept = !!stored && stored.x === key.pub.x;
+		}
+		const [ex, ey] = key.ek.split('.');
+		/** @type {Record<string, string>} What localStorage keeps: the public halves, or everything without IndexedDB. */
+		const keep = kept || !key.jwk ? { x: key.pub.x, y: key.pub.y, ex, ey } : key.jwk;
 		if (!saved || JSON.stringify(saved) !== JSON.stringify(keep)) {
 			try {
 				localStorage.setItem(k, JSON.stringify(keep));
@@ -4538,7 +4775,165 @@
 				/* this visit only */
 			}
 		}
-		return (myKey = { owner: me, priv, pub: { x: all.x, y: all.y }, kf: all.x.slice(0, 16), epriv, ek: `${all.ex}.${all.ey}` });
+		// The backup may be written only with these keys in it, and never over the account's other keys.
+		const backupOk = canBackup() && !!key.jwk && (!theirs || theirs.pub.x === key.pub.x);
+		if (idb && kept && canBackup()) {
+			const confirmed = !!theirs && theirs.pub.x === key.pub.x;
+			const whole = key.jwk;
+			try {
+				if (confirmed && unsaved) {
+					await keyStore((st) => st.delete(`jwk.${me}`));
+				} else if (!confirmed && whole && (!unsaved || unsaved.x !== whole.x)) {
+					await keyStore((st) => st.put(whole, `jwk.${me}`));
+				}
+			} catch (e) {
+				/* written again next time */
+			}
+		}
+		prevKey = null;
+		if (from) {
+			prevKey = { ...from, jwk: undefined, at: Date.now(), owed, sig };
+			keyNews = true;
+		} else if (prev && prev.priv && prev.x !== key.pub.x) {
+			if (!prev.owed.length && Date.now() - prev.at > MAIL_DAYS * 864e5) {
+				keyStore((st) => st.delete(`prev.${me}`)).catch(() => {
+					/* again next time */
+				});
+			} else {
+				prevKey = { ...fromRecord(me, prev), at: prev.at, owed: prev.owed.slice(), sig: prev.sig || '' };
+			}
+		}
+		if (backup && (!backup.k || backupOk)) {
+			takeBackup(backup);
+		}
+		backupFor = backupOk ? me : null;
+		myKey = key;
+		writeBackup();
+		return key;
+	}
+	/**
+	 * A group now knows this account by its current keys (it took the hand-over, or already had them, or is gone):
+	 * nothing more is owed to it.
+	 * @param {string} gid
+	 */
+	function keyMoved(gid) {
+		const p = prevKey;
+		if (!p || p.owner !== Player.MemberNumber || !p.owed.includes(gid)) {
+			return;
+		}
+		p.owed = p.owed.filter((x) => x !== gid);
+		const me = p.owner;
+		keyStore((st) => st.put({ ...toRecord(p), at: p.at, owed: p.owed, sig: p.sig }, `prev.${me}`)).catch(() => {
+			/* asked again next time */
+		});
+	}
+
+	// ---- The account backup: the keys, the groups and your picture, in the game's add-on settings
+	// (Player.ExtensionSettings.SlimeBeep, synced with the account), so wiping the browser or moving to another
+	// one loses nothing. Whoever can read the account can read the keys: that was chosen over losing them.
+
+	/** The key of the backup in Player.ExtensionSettings. */
+	const BACKUP = 'SlimeBeep';
+	/**
+	 * The backup, before LZString packs it.
+	 * @typedef {object} Backup
+	 * @property {1} v format
+	 * @property {KeyJwk} [k] the keys
+	 * @property {Handover} [rk] how the keys before them handed over to them
+	 * @property {[string, string][]} [g] the groups you are in: id and name
+	 * @property {Picture | 0} [p] your picture
+	 */
+	/** @type {number | null} The account whose backup may be written (loadKey decides, once its keys are loaded). */
+	let backupFor = null;
+	/** The timer of a backup waiting to be written (saveBackup). */
+	let backupTimer = 0;
+	/** Whether the game keeps add-on settings in the account here. */
+	const canBackup = () =>
+		loggedIn() &&
+		!!Player.ExtensionSettings &&
+		typeof Player.ExtensionSettings === 'object' &&
+		typeof ServerPlayerExtensionSettingsSync === 'function';
+	/** Whether the game's LZString is there to pack the backup. */
+	const hasLz = () => typeof LZString !== 'undefined' && !!LZString && typeof LZString.compressToUTF16 === 'function';
+	/**
+	 * The account's backup as the game loaded it, or null.
+	 * @returns {Backup | null}
+	 */
+	function readBackup() {
+		const raw = Player.ExtensionSettings && Player.ExtensionSettings[BACKUP];
+		if (typeof raw !== 'string' || !raw) {
+			return null;
+		}
+		try {
+			// Packed with LZString, or plain JSON where the game had none.
+			const text = raw[0] === '{' ? raw : hasLz() && LZString.decompressFromUTF16(raw);
+			/** @type {Partial<Backup> | null} */
+			const b = JSON.parse(text || 'null');
+			return b && typeof b === 'object' && b.v === 1 ? /** @type {Backup} */ (b) : null;
+		} catch (e) {
+			return null;
+		}
+	}
+	/**
+	 * Adds the backup's groups and picture to this browser's: groups you aren't in here yet (their relay sends
+	 * the rest once connected), and your picture if this browser has none.
+	 * @param {Backup} b
+	 */
+	function takeBackup(b) {
+		const me = Player.MemberNumber;
+		for (const x of Array.isArray(b.g) ? b.g.slice(0, LIMITS.groups) : []) {
+			const id = Array.isArray(x) ? x[0] : null;
+			if (!isId(id) || groups[id] || Object.keys(groups).length >= LIMITS.groups) {
+				continue;
+			}
+			groups[id] = {
+				id,
+				name: clean(x[1], LIMITS.name) || 'Group chat',
+				owner: 0,
+				admins: [],
+				open: false,
+				members: [{ n: me, name: myName(), kf: '' }],
+				last: 0,
+			};
+		}
+		saveGC();
+		const p = b.p;
+		if (p && isId(p.v) && typeof p.data === 'string' && p.data.length <= PFP_MAX && PFP_RE.test(p.data) && !myPfp()) {
+			setMyPfp({ v: p.v, data: p.data });
+		}
+	}
+	/** Writes the backup in a few seconds (changes close together go as one). */
+	function saveBackup() {
+		if (backupFor === null || backupFor !== Player.MemberNumber || backupTimer) {
+			return;
+		}
+		backupTimer = window.setTimeout(() => {
+			backupTimer = 0;
+			writeBackup();
+		}, 3000);
+	}
+	/** Writes the backup to the account, unless it is the same as the account has. */
+	function writeBackup() {
+		const me = Player.MemberNumber;
+		const k = myKey;
+		const settings = Player.ExtensionSettings;
+		if (!canBackup() || !settings || backupFor !== me || !k || k.owner !== me || !k.jwk) {
+			return;
+		}
+		const pic = myPfp();
+		/** @type {Backup} */
+		const b = { v: 1, k: k.jwk, ...(k.rk ? { rk: k.rk } : {}), g: Object.values(groups).map((g) => [g.id, g.name]), p: pic || 0 };
+		const json = JSON.stringify(b);
+		const packed = hasLz() ? LZString.compressToUTF16(json) : json;
+		if (settings[BACKUP] === packed) {
+			return;
+		}
+		settings[BACKUP] = packed;
+		try {
+			ServerPlayerExtensionSettingsSync(BACKUP);
+		} catch (e) {
+			warn(e, 'backup');
+		}
 	}
 
 	/**
@@ -4563,8 +4958,10 @@
 				/* gone */
 			}
 		}
+		// A group still owed a hand-over is signed in to with the previous keys (see loadKey).
+		const owed = !extra.create && !extra.invite && !!prevKey && prevKey.owner === Player.MemberNumber && prevKey.owed.includes(gid);
 		/** @type {Conn} */
-		const c = { ws: null, ready: false, retry: old ? old.retry || 0 : 0, queue: [], waiters: [], ...extra };
+		const c = { ws: null, ready: false, retry: old ? old.retry || 0 : 0, queue: [], waiters: [], old: owed, ...extra };
 		conns[gid] = c;
 		/** @type {WebSocket} */
 		let sock;
@@ -4646,7 +5043,8 @@
 			return;
 		}
 		if (p.t === 'hello' && typeof p.nonce === 'string') {
-			const k = await getKey();
+			const k = c.old && prevKey ? prevKey : await getKey();
+			c.key = k;
 			const signed = `${p.nonce}|${gid}|${me}`;
 			const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, k.priv, new TextEncoder().encode(signed));
 			const g = groups[gid];
@@ -4658,7 +5056,7 @@
 					pub: k.pub,
 					sig: b64url(sig),
 					ek: k.ek,
-					eks: await signText(`ek|${gid}|${me}|${k.ek}`),
+					eks: await signText(`ek|${gid}|${me}|${k.ek}`, k),
 					after: g ? g.last || 0 : 0,
 					...(c.create ? { create: c.create } : {}),
 					...(c.invite ? { invite: c.invite } : {}),
@@ -4691,6 +5089,31 @@
 			}
 			if (done) {
 				done(gid);
+			}
+			const cur = myKey;
+			const was = prevKey;
+			if (!c.old) {
+				keyMoved(gid);
+			} else if (cur && cur.owner === me && was && c.key === was && was.sig) {
+				// Signed in with the previous keys: the group now takes the current ones, signed over by those.
+				ws.send(
+					JSON.stringify({ t: 'rekey', pub: cur.pub, sig: was.sig, ek: cur.ek, eks: await signText(`ek|${gid}|${me}|${cur.ek}`, cur) }),
+				);
+			}
+			return;
+		}
+		if (p.t === 'rekeyed') {
+			if (myKey && p.x === myKey.pub.x) {
+				keyMoved(gid);
+				// Signed in again with the keys the group knows now.
+				c.dead = true;
+				try {
+					ws.close();
+				} catch (e) {
+					/* gone */
+				}
+				delete conns[gid];
+				connectGroup(gid, { waiters: c.waiters });
 			}
 			return;
 		}
@@ -4806,6 +5229,13 @@
 				c.onFail(why);
 				c.onFail = undefined;
 			}
+			if (groups[gid] && why === 'not a member' && !c.retried && prevKey && prevKey.owner === me) {
+				// The group may know this account by its other keys: a hand-over it took without our hearing, or one
+				// still to come. Those are tried before the group is given up.
+				delete conns[gid];
+				connectGroup(gid, { old: !c.old, retried: true, waiters: c.waiters });
+				return;
+			}
 			if (groups[gid] && (p.t === 'gone' || /not a member|no such group/.test(why))) {
 				/** @type {string | null} */
 				let note = `You're no longer in ${groups[gid].name}`;
@@ -4816,6 +5246,10 @@
 				}
 				dropGroup(gid, note);
 			}
+			return;
+		}
+		// A relay without hand-overs, or one it refused: the group stays on the previous keys until the next visit.
+		if (p.t === 'error' && c.old && /bad key change|unknown/.test(why)) {
 			return;
 		}
 		if (p.t === 'error') {
@@ -4844,7 +5278,10 @@
 		) {
 			return {};
 		}
-		return { pub: { x: m.pub.x, y: m.pub.y }, ek: m.ek, eks: m.eks };
+		const rk = m.rk;
+		const handover =
+			rk && b64.test(rk.x || '') && b64.test(rk.y || '') && b64.test(rk.sig || '') ? { x: rk.x, y: rk.y, sig: rk.sig } : null;
+		return { pub: { x: m.pub.x, y: m.pub.y }, ek: m.ek, eks: m.eks, ...(handover ? { rk: handover } : {}) };
 	}
 	/**
 	 * Stores a group's roster from the relay (cleaned); ignored if you are not in it.
@@ -4888,6 +5325,22 @@
 		emit('group', groupView(groups[gid]));
 		if (isOpen()) {
 			render(true);
+		}
+		// Friends who moved to new keys: followed if their old keys signed the new ones, and their new encryption key kept.
+		for (const m of members) {
+			if (m.rk && m.pub && m.ek && peerKeys[m.n] && peerKeys[m.n] !== m.kf) {
+				trustedEk(gid, m)
+					.then((ok) => {
+						if (ok && m.ek) {
+							peerEks[m.n] = m.ek;
+							saveGC();
+							if (isOpen()) {
+								render(true);
+							}
+						}
+					})
+					.catch((e) => warn(e, 'key'));
+			}
 		}
 	}
 
@@ -4980,6 +5433,7 @@
 	 */
 	function dropGroup(gid, note) {
 		const g = groups[gid];
+		keyMoved(gid);
 		delete groups[gid];
 		delete groupKeys[gid];
 		delete keyState[gid];
@@ -5340,7 +5794,10 @@
 	}
 	/** When relayTick last ran. */
 	let lastRelayCheck = 0;
-	/** Every 5 s: connects to each group, checks the mailbox, sends waiting mail and keep-alives (every 4 min). */
+	/**
+	 * Every 5 s, once the keys are loaded: connects to each group, checks the mailbox, sends waiting mail and
+	 * keep-alives (every 4 min).
+	 */
 	function relayTick() {
 		if (!loggedIn() || Date.now() - lastRelayCheck < 5000) {
 			return;
@@ -5349,9 +5806,26 @@
 		if (!secure()) {
 			return;
 		}
-		getKey()
-			.then(askEks)
-			.catch((e) => warn(e, 'key'));
+		if (!myKey || myKey.owner !== Player.MemberNumber) {
+			// Nothing connects before the keys are loaded: loading them reads the account backup, which can bring groups back.
+			getKey()
+				.then(() => {
+					lastRelayCheck = 0;
+					relayTick();
+				})
+				.catch((e) => warn(e, 'key'));
+			return;
+		}
+		askEks();
+		if (keyNews && friendsKnown) {
+			// New keys: online SlimeBeep friends hear them now (every hidden beep carries them).
+			keyNews = false;
+			for (const f of friends) {
+				if (peers.has(f.MemberNumber)) {
+					sendHidden(f.MemberNumber, { sb: 1, pong: 1 });
+				}
+			}
+		}
 		for (const id of Object.keys(groups)) {
 			if (!conns[id]) {
 				connectGroup(id);

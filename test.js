@@ -4272,6 +4272,340 @@ const check = (ok, what) => {
 			`✓ Mark all as read clears every unread dot and the badge, and keeps the messages (${JSON.stringify({ unreadBefore, readAfter })})`,
 		);
 	}
+	// ---- 💾 Account backup: keys, groups and picture are kept in the account (Player.ExtensionSettings), so a
+	// wiped browser gets them back. A 3.7.0 player's keys can't be exported, so they are replaced by keys that can,
+	// and every group is handed over to them first. Played as member #7, from a 3.7.0 browser onwards.
+	{
+		const LZ = 'C:/Users/Sam_0/Documents/Project/bc-plushie-modern/BondageClub/Scripts/lib/LZString.js';
+		const me = 7;
+		/**
+		 * Reloads the game as #7. `account`: the backup the server has (null: none yet; undefined: a game
+		 * without account storage for add-ons). `wipe` clears this browser's SlimeBeep data for #7 first; `owe`
+		 * marks a group as still owed a hand-over from the previous keys, as if its answer had been lost.
+		 */
+		const boot = async (account, { wipe = false, relay = RELAY_URL, pic = null, owe = null } = {}) => {
+			await p.reload();
+			await p.evaluate(stub);
+			await p.addScriptTag({ path: LZ });
+			await p.evaluate(
+				(acct, w, r, pfp) =>
+					new Promise((res) => {
+						if (pfp) {
+							localStorage.setItem('slimebeep.pfp.7', JSON.stringify({ v: 'bkpic00001', data: pfp }));
+						}
+						Player.MemberNumber = 7;
+						window.synced = [];
+						if (acct !== undefined) {
+							Player.ExtensionSettings = acct === null ? {} : { SlimeBeep: acct };
+							window.ServerPlayerExtensionSettingsSync = (k) => synced.push([k, Player.ExtensionSettings[k]]);
+						}
+						localStorage.setItem('slimebeep.relay', r);
+						makeLog();
+						if (!w) {
+							res();
+							return;
+						}
+						for (const k of Object.keys(localStorage)) {
+							if (/^slimebeep\..*\.7$/.test(k)) {
+								localStorage.removeItem(k);
+							}
+						}
+						const del = indexedDB.deleteDatabase('slimebeep');
+						del.onsuccess = del.onerror = del.onblocked = () => res();
+					}),
+				account,
+				wipe,
+				relay,
+				pic,
+			);
+			if (owe) {
+				await p.evaluate(
+					(g) =>
+						new Promise((res) => {
+							const o = indexedDB.open('slimebeep', 1);
+							o.onsuccess = () => {
+								const st = o.result.transaction('keys', 'readwrite').objectStore('keys');
+								const get = st.get('prev.7');
+								get.onsuccess = () => {
+									st.put({ ...get.result, owed: [g] }, 'prev.7').onsuccess = () => {
+										o.result.close();
+										res();
+									};
+								};
+							};
+						}),
+					owe,
+				);
+			}
+			await p.addScriptTag({ content: src });
+		};
+		/** What SlimeBeep's IndexedDB keeps under `name` (no private halves, only whether they can be exported). */
+		const idb = (name) =>
+			p.evaluate(
+				(n) =>
+					new Promise((res) => {
+						const o = indexedDB.open('slimebeep', 1);
+						o.onupgradeneeded = () => o.result.createObjectStore('keys');
+						o.onsuccess = () => {
+							const g = o.result.transaction('keys').objectStore('keys').get(n);
+							g.onsuccess = () => {
+								const v = g.result;
+								o.result.close();
+								res(v ? { x: v.x, owed: v.owed, ext: v.priv ? [v.priv.extractable, v.epriv.extractable].join() : null } : null);
+							};
+						};
+					}),
+				name,
+			);
+		/** The backup as SlimeBeep last wrote it, unpacked (null if none). */
+		const backupNow = () =>
+			p.evaluate(() => {
+				const s = Player.ExtensionSettings && Player.ExtensionSettings.SlimeBeep;
+				return s ? JSON.parse(LZString.decompressFromUTF16(s)) : null;
+			});
+		const localKey = () => p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.key.7') || 'null'));
+		const gc = () => p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.gc2.7') || '{}'));
+		/** Leaves a beep in #7's mailbox, signed in as `who` (as member `as`, with a hand-over `rk`). */
+		const mailTo = async (who, kf, ek, text, { as = who.member, rk } = {}) => {
+			const ws = new WebSocket(`${RELAY_URL}/ws?m=${me}`, { headers: { Origin: 'https://www.bondageprojects.elementfx.com' } });
+			const got = [];
+			ws.onmessage = (e) => got.push(JSON.parse(e.data));
+			await waitFor(() => got.length > 0, 4000);
+			const sig = await crypto.subtle.sign(
+				{ name: 'ECDSA', hash: 'SHA-256' },
+				who.k.privateKey,
+				new TextEncoder().encode(`${got[0].nonce}|mbox:${me}|${as}`),
+			);
+			ws.send(
+				JSON.stringify({
+					t: 'auth',
+					member: as,
+					name: who.name,
+					pub: who.pub,
+					sig: Buffer.from(sig).toString('base64url'),
+					...(rk ? { rk } : {}),
+				}),
+			);
+			await waitFor(() => got.length > 1, 4000);
+			ws.send(JSON.stringify({ t: 'put', kf, enc: await sealMail(as, me, ek, text), ref: 'b1' }));
+			await waitFor(() => got.some((x) => x.t === 'ok'), 4000);
+			ws.close();
+		};
+		const signAs = async (who, text) =>
+			Buffer.from(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, who.k.privateKey, new TextEncoder().encode(text))).toString(
+				'base64url',
+			);
+		const saidTo7 = () => p.evaluate(() => localStorage.getItem('slimebeep.history.7') || '');
+		const PIC = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+		// A group made by Zed, with Ann and Cat (SlimeBeep friends of #7) in it.
+		const zed = await relayUser(99, 'Zed'),
+			ann = await relayUser(11, 'Ann'),
+			cat = await relayUser(13, 'Cat');
+		const gid = `bk${Date.now().toString(36)}`;
+		const zc = await relayJoin(gid, zed, { create: { name: 'Backup Club', open: true } });
+		zc.send({ t: 'invite' });
+		await wait(300);
+		const code = zc.last('invite').code;
+		const ac = await relayJoin(gid, ann, { invite: code });
+		const cc = await relayJoin(gid, cat, { invite: code });
+
+		// 3.7.0: no backup; #7 joins the group and is made its owner.
+		await boot(undefined, { wipe: true });
+		await wait(1500);
+		await hide(11, 'Ann', { sb: 1, pong: 1, kf: ann.pub.x.slice(0, 16), ek: ann.ek });
+		await hide(13, 'Cat', { sb: 1, pong: 1, kf: cat.pub.x.slice(0, 16), ek: cat.ek });
+		if (await p.evaluate(() => document.getElementById('sb-panel').style.display !== 'flex')) {
+			await p.click('#sb-toggle');
+		}
+		await p.click('[data-tab=groups]');
+		await wait(200);
+		await p.type('#sb-join-code', `SB-${gid}-${code}`);
+		await p.click('#sb-join');
+		await waitFor(() => p.evaluate((g) => !!SlimeBeep.api.group(g), gid), 8000);
+		zc.send({ t: 'owner', member: me });
+		await zc.say('said before the update');
+		await waitFor(() => p.evaluate((g) => (SlimeBeep.api.group(g) || {}).owner === 7, gid), 5000);
+		const k1 = await localKey();
+		const rec1 = await idb('key.7');
+		check(
+			(await p.evaluate((g) => (SlimeBeep.api.group(g) || {}).owner, gid)) === me && rec1 && rec1.x === k1.x && rec1.ext === 'false,false',
+			`a 3.7.0 player (keys that can't be exported) is in the group and owns it (${JSON.stringify(rec1)})`,
+		);
+		const oldKf = k1.x.slice(0, 16);
+		const oldEk = `${k1.ex}.${k1.ey}`;
+
+		// The update, with the relay out of reach: new keys are made and backed up, the group is owed a hand-over.
+		await boot(null, { relay: 'ws://localhost:9', pic: PIC });
+		await waitFor(() => p.evaluate(() => synced.length > 0), 10000);
+		const b1 = await backupNow();
+		const k2 = await localKey();
+		const prev2 = await idb('prev.7');
+		const jwk2 = await idb('jwk.7');
+		check(
+			!!b1 &&
+				b1.k.x !== k1.x &&
+				b1.k.x === k2.x &&
+				typeof b1.k.d === 'string' &&
+				typeof b1.k.ed === 'string' &&
+				b1.rk.x === k1.x &&
+				b1.g.some((x) => x[0] === gid && x[1] === 'Backup Club') &&
+				!('d' in k2),
+			`the update backs up new keys (that can be exported) and the group to the account, packed with LZString; localStorage keeps only public halves (${JSON.stringify({ keys: b1 && Object.keys(b1), g: b1 && b1.g })})`,
+		);
+		check(
+			(await idb('key.7')).ext === 'false,false' && prev2 && prev2.x === k1.x && prev2.owed.join() === gid && jwk2 && jwk2.x === k2.x,
+			`the new keys are used here as keys that can't be exported, the old ones are kept until the group takes the hand-over, and the whole keys until the account is seen to have them (${JSON.stringify({ prev2, jwk2 })})`,
+		);
+		// Friends hear the new keys: online SlimeBeep friends get a hidden beep with them.
+		const told = await waitFor(
+			() =>
+				p.evaluate(
+					(kf) => hidden.some((h) => h.MemberNumber === 13 && JSON.parse(h.Message).kf === kf && JSON.parse(h.Message).ek),
+					k2.x.slice(0, 16),
+				),
+			10000,
+		);
+		check(told, 'online SlimeBeep friends are sent the new keys');
+		await wait(4000);
+		const after = await p.evaluate((g) => ({ synced: synced.length, group: !!SlimeBeep.api.group(g) }), gid);
+		check(
+			after.synced === 1 && after.group,
+			`the backup is written once, and the group is kept while it can't be reached (${JSON.stringify(after)})`,
+		);
+		const account = await p.evaluate(() => Player.ExtensionSettings.SlimeBeep);
+		check(b1.p && b1.p.v === 'bkpic00001' && b1.p.data === PIC, 'your picture is in the backup');
+
+		// While #7 was away: Cat leaves a beep for the old keys, Cat with new keys one with her hand-over, Eve a forged one.
+		const newEk = `${b1.k.ex}.${b1.k.ey}`;
+		const newKf = b1.k.x.slice(0, 16);
+		await mailTo(cat, oldKf, oldEk, 'for your old keys');
+		const cat2 = await relayUser(13, 'Cat');
+		const catRk = { x: cat.pub.x, y: cat.pub.y, sig: await signAs(cat, `rekey|13|${cat2.pub.x}|${cat2.pub.y}`) };
+		await mailTo(cat2, newKf, newEk, 'new keys, same Cat', { rk: catRk });
+		const eve = await relayUser(66, 'Eve');
+		await mailTo(eve, newKf, newEk, 'I am Cat too', {
+			as: 13,
+			rk: { ...catRk, sig: await signAs(eve, `rekey|13|${eve.pub.x}|${eve.pub.y}`) },
+		});
+
+		// The next visit, the relay is back: the interrupted hand-over finishes.
+		await boot(account);
+		const moved = await waitFor(() => {
+			const r = zc.last('roster');
+			const m = r && r.roster.members.find((x) => x.n === me);
+			return m && m.kf === newKf;
+		}, 15000);
+		const zr = zc.last('roster').roster;
+		const z7 = zr.members.find((x) => x.n === me);
+		check(
+			moved && zr.owner === me && z7.rk && z7.rk.x === k1.x,
+			`next time the group takes the hand-over (signed by the old keys): same member, still the owner, and everyone gets the old key's signature (${JSON.stringify(z7)})`,
+		);
+		await waitFor(async () => {
+			const x = await idb('prev.7');
+			return x && !x.owed.length;
+		}, 8000);
+		check(
+			(await idb('prev.7')).owed.length === 0 && (await idb('jwk.7')) === null,
+			"nothing is owed any more, and whole keys aren't kept here once the account has them",
+		);
+		const mail = await waitFor(async () => /for your old keys/.test(await saidTo7()) && /new keys, same Cat/.test(await saidTo7()), 12000);
+		const g3 = await gc();
+		check(
+			mail && !/I am Cat too/.test(await saidTo7()) && g3.peerKeys[13] === cat2.pub.x.slice(0, 16),
+			`a beep left for the old keys still comes in, a friend's new keys are followed from her old ones' signature, and a forged hand-over is thrown away (${JSON.stringify({ cat: g3.peerKeys[13] === cat2.pub.x.slice(0, 16) })})`,
+		);
+		check(
+			await waitFor(
+				() =>
+					p.evaluate(
+						(g) => /said before the update/.test(localStorage.getItem('slimebeep.history.7') || '') && !!SlimeBeep.api.group(g),
+						gid,
+					),
+				8000,
+			),
+			'the group and what was said in it are still there',
+		);
+		// Ann moves to new keys in the group: her old key's signature, passed on by the relay, is enough to follow her.
+		const ann2 = await relayUser(11, 'Ann');
+		ac.makesKeys = false;
+		ac.send({
+			t: 'rekey',
+			pub: ann2.pub,
+			sig: await signAs(ann, `rekey|11|${ann2.pub.x}|${ann2.pub.y}`),
+			ek: ann2.ek,
+			eks: await signAs(ann2, `ek|${gid}|11|${ann2.ek}`),
+		});
+		const followed = await waitFor(async () => {
+			const g = await gc();
+			return g.peerKeys[11] === ann2.pub.x.slice(0, 16) && g.peerEks[11] === ann2.ek;
+		}, 8000);
+		check(followed, "a friend's hand-over in a group is followed: her new key and encryption key are the known ones");
+
+		// Wiped browser: everything comes back from the account, ownership included.
+		const zedMsgs = zc.got.length;
+		await boot(account, { wipe: true });
+		const back = await waitFor(
+			() => p.evaluate((g) => (SlimeBeep.api.group(g) || {}).owner === 7 && SlimeBeep.api.group(g).members.length >= 3, gid),
+			15000,
+		);
+		const k4 = await localKey();
+		const restored = await p.evaluate(() => ({
+			pic: JSON.parse(localStorage.getItem('slimebeep.pfp.7') || 'null'),
+			history: /said before the update/.test(localStorage.getItem('slimebeep.history.7') || ''),
+		}));
+		check(
+			back && k4.x === b1.k.x && !('d' in k4) && (await idb('key.7')).ext === 'false,false',
+			'after wiping the browser, the keys come back from the account (and still cannot be exported here)',
+		);
+		check(restored.pic && restored.pic.v === 'bkpic00001' && restored.pic.data === PIC, 'your picture comes back');
+		check(
+			await waitFor(() => p.evaluate(() => /said before the update/.test(localStorage.getItem('slimebeep.history.7') || '')), 8000),
+			'the group is back with you as its owner, and its history opens with the group key the relay kept for your keys',
+		);
+		check(
+			!zc.got.slice(zedMsgs).some((x) => x.t === 'roster' && x.roster.members.find((m) => m.n === me).kf !== newKf) &&
+				(await p.evaluate(() => synced.length)) === 0,
+			'nothing is handed over again, and the backup is not rewritten',
+		);
+
+		// A browser that made its own keys (3.7.0, no groups) and then sees the account's: the account's win.
+		await boot(undefined, { wipe: true });
+		await waitFor(async () => !!(await localKey()), 8000);
+		const k5 = await localKey();
+		await boot(account);
+		const won = await waitFor(
+			() => p.evaluate((g) => (SlimeBeep.api.group(g) || {}).owner === 7 && SlimeBeep.api.group(g).members.length >= 3, gid),
+			15000,
+		);
+		const k6 = await localKey();
+		check(
+			k5.x !== b1.k.x && won && k6.x === b1.k.x && (await p.evaluate(() => synced.length)) === 0 && (await idb('prev.7')).x === k5.x,
+			`a browser with keys of its own and no groups takes the account's keys rather than overwrite them, and the group works (${JSON.stringify({ k5: k5.x, won, k6: k6.x, b: b1.k.x, synced: await p.evaluate(() => synced.length), prev: await idb('prev.7') })})`,
+		);
+		// A hand-over the group took without this browser hearing: the previous keys are refused, so the current
+		// ones are tried before the group is given up.
+		const seen = zc.got.length;
+		await boot(account, { owe: gid });
+		const kept = await waitFor(async () => {
+			const x = await idb('prev.7');
+			return x && !x.owed.length;
+		}, 15000);
+		await wait(2000);
+		check(
+			kept &&
+				(await p.evaluate((g) => (SlimeBeep.api.group(g) || {}).owner === 7, gid)) &&
+				!zc.got.slice(seen).some((x) => x.t === 'roster' && x.roster.members.find((m) => m.n === me).kf !== newKf),
+			'a group that already took the hand-over is signed in to with the current keys, and kept',
+		);
+		for (const c of [zc, ac, cc]) {
+			c.ws.close();
+		}
+		await p.evaluate(() => {
+			Player.MemberNumber = 1;
+		});
+	}
 	// ---- A relay a blocker stops (NoScript, uMatrix...) from the start: after three failed tries the player
 	// is told which address to allow, and clicking the card turns that warning off for good.
 	if (relayUp) {

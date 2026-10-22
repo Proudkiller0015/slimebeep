@@ -1,6 +1,6 @@
 // Plays several SlimeBeep users against the relay (npm run dev first, or RELAY=wss://... for the live one).
 //   node test-relay.js
-const { makePeer, groupAuth, keyed, onRelay, sealMail, openMail, b64url } = require('./e2e-peer.js');
+const { makePeer, groupAuth, keyed, onRelay, sealMail, openMail, b64url, sign } = require('./e2e-peer.js');
 const BASE = process.env.RELAY || 'ws://127.0.0.1:8787';
 const ORIGIN = 'https://www.bondageprojects.elementfx.com';
 let failed = 0;
@@ -407,6 +407,95 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 		await wait(300);
 		check(c1.last('error') && c1.last('error').fatal, 'an oversized message is refused');
 		for (const c of [c1, e1, fake, a2]) {
+			try {
+				c.ws.close();
+			} catch (e) {
+				/* closed */
+			}
+		}
+	}
+
+	// ---- Moving to new keys ('rekey'): signed over by the key the group knows, which then no longer signs in.
+	{
+		const g2 = `rk${Date.now().toString(36)}`;
+		const ann2 = await makePeer(11, 'Ann');
+		const a = await connect(g2, ann, { fields: { create: { name: 'Hand-over', open: true } } });
+		a.send({ t: 'invite' });
+		await wait(300);
+		const z = await connect(g2, zed, { fields: { invite: a.last('invite').code } });
+		await wait(600);
+		const rekey = async (signOld, signNew, who = ann2) => ({
+			t: 'rekey',
+			pub: who.pub,
+			sig: await sign(signOld, `rekey|11|${who.pub.x}|${who.pub.y}`),
+			ek: who.ek,
+			eks: await sign(signNew, `ek|${g2}|11|${who.ek}`),
+		});
+		a.send(await rekey(eve, ann2));
+		await wait(300);
+		const pubOf = (c) => c.last('roster').roster.members.find((m) => m.n === 11).pub.x;
+		check(
+			/bad key change/.test(a.last('error').why) && !a.closed && pubOf(z) === ann.pub.x,
+			'a hand-over not signed by the key the group knows is refused, and nothing changes',
+		);
+		a.send(await rekey(ann, eve));
+		await wait(300);
+		check(
+			a.got.filter((x) => x.t === 'error' && /bad key change/.test(x.why)).length === 2 && pubOf(z) === ann.pub.x,
+			'so is one whose new encryption key is not signed by the new key',
+		);
+		const keysBefore = z.got.length;
+		a.send(await rekey(ann, ann2));
+		await wait(400);
+		const zm = z.last('roster').roster.members.find((m) => m.n === 11);
+		check(
+			a.last('rekeyed') &&
+				a.last('rekeyed').x === ann2.pub.x &&
+				zm.pub.x === ann2.pub.x &&
+				zm.ek === ann2.ek &&
+				zm.kf === ann2.pub.x.slice(0, 16) &&
+				zm.rk &&
+				zm.rk.x === ann.pub.x,
+			`a hand-over signed by the old key moves Ann to the new one; everyone gets her old key and its signature (${JSON.stringify(zm)})`,
+		);
+		check(
+			z.got.slice(keysBefore).some((x) => x.t === 'keys' && x.needs.includes(11)),
+			'her wraps for the old encryption key are dropped, so she gets the group key again',
+		);
+		a.send(await rekey(ann, ann2));
+		await wait(200);
+		check(a.got.filter((x) => x.t === 'rekeyed').length === 2, 'handing over to the key it already has only answers');
+		const oldIn = await connect(g2, ann);
+		check(oldIn.closed && /not a member/.test(JSON.stringify(oldIn.got)), 'the old key no longer signs in');
+		const newIn = await connect(g2, ann2);
+		await wait(2500);
+		check(newIn.last('welcome') && newIn.epoch >= 1 && !!newIn.keys[newIn.epoch], 'the new key signs in and is given the group key');
+		for (const c of [a, z, oldIn, newIn]) {
+			try {
+				c.ws.close();
+			} catch (e) {
+				/* closed */
+			}
+		}
+		// In a mailbox the hand-over goes along with each beep, so a friend who only knows the old key can check the new one.
+		const handover = { x: ann.pub.x, y: ann.pub.y, sig: await sign(ann, `rekey|11|${ann2.pub.x}|${ann2.pub.y}`) };
+		const m1 = await connect('mbox:13', ann2, { fields: { rk: handover } });
+		m1.send({ t: 'put', kf: cat.pub.x.slice(0, 16), enc: await sealMail(11, 13, cat.ek, 'new keys, same Ann'), ref: 'k1' });
+		const forged = { ...handover, sig: await sign(eve, `rekey|11|${eve.pub.x}|${eve.pub.y}`) };
+		const m2 = await connect('mbox:13', eve, { as: 11, fields: { rk: forged } });
+		m2.send({ t: 'put', kf: cat.pub.x.slice(0, 16), enc: await sealMail(11, 13, cat.ek, 'not Ann'), ref: 'k2' });
+		await wait(300);
+		const box = await connect('mbox:13', cat);
+		const list = box.last('mail') ? box.last('mail').list : [];
+		const real = list.find((m) => m.fromKf === ann2.pub.x.slice(0, 16));
+		const fake = list.find((m) => m.fromKf === eve.pub.x.slice(0, 16));
+		check(
+			real && real.rk && real.rk.x === ann.pub.x && real.pub.x === ann2.pub.x && fake && !fake.rk && !fake.pub,
+			`a mailbox beep carries a valid hand-over, and a forged one is left out (${JSON.stringify(list.map((m) => !!m.rk))})`,
+		);
+		box.send({ t: 'ack', ids: list.map((m) => m.id) });
+		await wait(200);
+		for (const c of [m1, m2, box]) {
 			try {
 				c.ws.close();
 			} catch (e) {

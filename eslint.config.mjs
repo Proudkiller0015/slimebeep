@@ -12,6 +12,8 @@ const gameGlobals = Object.fromEntries(
 		'ServerSendBeepMessage',
 		'ServerRoomJoin',
 		'ServerPlayerIsInChatRoom',
+		'ServerPlayerExtensionSettingsSync',
+		'LZString',
 		'FriendListBeepLog',
 		'ChatRoomData',
 		'ChatRoomCharacter',
@@ -71,6 +73,7 @@ const testPageGlobals = Object.fromEntries(
 		'left',
 		'MouseX',
 		'MouseY',
+		'synced',
 	].map((name) => [name, 'writable']),
 );
 

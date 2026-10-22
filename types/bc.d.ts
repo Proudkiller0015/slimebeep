@@ -20,6 +20,8 @@ interface BcPlayer {
 	AssetFamily?: string;
 	/** What the character wears and holds. */
 	Appearance?: { Asset?: { Name?: string; Group?: { Name?: string } }; Property?: { TypeRecord?: Record<string, number> } }[];
+	/** Add-on settings kept in the account (set at login, Screens/Character/Login/Login.js), saved with ServerPlayerExtensionSettingsSync. */
+	ExtensionSettings?: Record<string, unknown>;
 }
 
 /** A beep in the game's beep log, as FriendListBeepLog keeps it. */
@@ -83,6 +85,10 @@ declare var PreferenceExtensionsSettings: Record<string, BcExtensionSetting>;
 declare function ServerSend(message: string, data: object): void;
 declare function ServerSendBeepMessage(target: number, msg: string, options?: { includeRoom?: boolean }): void;
 declare function ServerPlayerIsInChatRoom(): boolean;
+/** Sends one key of Player.ExtensionSettings to the server (an AccountUpdate of `ExtensionSettings.<key>`). */
+declare function ServerPlayerExtensionSettingsSync(dataKeyName: string, force?: boolean): void;
+/** The game's copy of lz-string (Scripts/lib/LZString.js); only the methods SlimeBeep uses. */
+declare var LZString: { compressToUTF16(text: string): string; decompressFromUTF16(packed: string): string | null };
 declare function DrawImageResize(src: string, x: number, y: number, w: number, h: number): boolean;
 declare function DrawTextFit(text: string, x: number, y: number, width: number, color: string, backColor?: string): void;
 /** Which icons the room shows above characters; 0 shows all of them. */
