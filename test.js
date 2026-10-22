@@ -4543,6 +4543,25 @@ const check = (ok, what) => {
 		}, 8000);
 		check(followed, "a friend's hand-over in a group is followed: her new key and encryption key are the known ones");
 
+		// Ann wipes her browser before 3.8 could back her keys up: the group still lists her on the old ones, so a
+		// general code is refused, and the owner's "Let back in" makes one for her number that is not.
+		const ann3 = await relayUser(11, 'Ann');
+		const refused = await relayJoin(gid, ann3, { invite: code });
+		const letIn = await p.evaluate((g) => SlimeBeep.api.inviteToGroup(g, 11), gid);
+		const rejoined = letIn.ok && (await relayJoin(gid, ann3, { invite: (letIn.code || '').split('-').pop() }));
+		check(
+			!refused.welcome &&
+				/member number is taken/.test((refused.last('error') || {}).why || '') &&
+				letIn.ok &&
+				!!rejoined &&
+				!!rejoined.welcome,
+			`a member who lost her keys is refused with a general code, and let back in with the owner's code for her number (${JSON.stringify({ refused: refused.last('error'), letIn })})`,
+		);
+		refused.ws.close();
+		if (rejoined) {
+			rejoined.ws.close();
+		}
+
 		// Wiped browser: everything comes back from the account, ownership included.
 		const zedMsgs = zc.got.length;
 		await boot(account, { wipe: true });

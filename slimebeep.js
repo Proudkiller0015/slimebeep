@@ -5257,6 +5257,12 @@
 			if (waiter) {
 				waiter(null, why);
 			}
+			// The group still has this number on old keys (browser data cleared): only a code made for it gets back in.
+			if (why === 'that member number is taken') {
+				return notify(
+					`⚠ This group still lists you from before. Ask its admin for a code made for #${Player.MemberNumber}: Invite › Let back in`,
+				);
+			}
 			notify(`⚠ ${why}`);
 		}
 	}
@@ -5528,13 +5534,15 @@
 		if (!isNum(n) || !loggedIn() || n === Player.MemberNumber) {
 			return Promise.resolve({ ok: false, why: 'bad member number' });
 		}
-		if (isMember(g, n)) {
+		// An admin's code for someone already listed lets them back in with new keys (they lost theirs).
+		const back = isMember(g, n);
+		if (back && !isAdmin(g, Player.MemberNumber)) {
 			return Promise.resolve({ ok: false, why: 'already a member' });
 		}
 		if (!canInvite(g, Player.MemberNumber)) {
 			return Promise.resolve({ ok: false, why: 'only admins can invite here' });
 		}
-		if (g.members.length >= LIMITS.members) {
+		if (!back && g.members.length >= LIMITS.members) {
 			return Promise.resolve({ ok: false, why: 'group is full' });
 		}
 		return new Promise((resolve) => {
@@ -11008,9 +11016,13 @@
 		const list = Object.values(groups).filter((g) => canInvite(g, Player.MemberNumber));
 		const rows = list.map((g) => {
 			const res = results[g.id];
-			const action = isMember(g, n)
-				? html`<span class="sb-hint">Already in it</span>`
-				: html`<button class="sb-go" data-invite="${g.id}" ${res && 'disabled'}>Invite</button>`;
+			// Admins can still let a listed member back in, for when they lost their keys.
+			let action = html`<button class="sb-go" data-invite="${g.id}" ${res && 'disabled'}>Invite</button>`;
+			if (isMember(g, n)) {
+				action = isAdmin(g, Player.MemberNumber)
+					? html`<button class="sb-go" data-invite="${g.id}" ${res && 'disabled'} title="Already in it: this lets them back in if they lost their SlimeBeep data">Let back in</button>`
+					: html`<span class="sb-hint">Already in it</span>`;
+			}
 			return html`<div class="sb-row" style="cursor:default;display:block"><div style="display:flex;align-items:center;gap:8px">${groupAv(g)}
 				<div class="sb-main"><div class="sb-name">${g.name}</div><div class="sb-sub">${g.members.length} / ${LIMITS.members} members</div></div>
 				${action}</div>
