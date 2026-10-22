@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.5.1';
+	const VERSION = '3.5.2';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -5234,10 +5234,23 @@
 			}
 		}
 	}
-	/** Asks online friends not yet known to have SlimeBeep whether they do (hidden, answered by their SlimeBeep). */
-	function findPeers() {
-		const ask = friends.filter((f) => !peers.has(f.MemberNumber)).slice(0, 40);
+	/** How often online friends are asked whether they have SlimeBeep, by themselves. */
+	const FIND_EVERY = 600000;
+	/** The timed search asks a friend who didn't answer again only after this long. */
+	const FIND_AGAIN = 3600000;
+	/** Member number -> when they were last asked whether they have SlimeBeep. */
+	const peerAsked = new Map();
+	/**
+	 * Asks online friends not yet known to have SlimeBeep whether they do (hidden, answered by their SlimeBeep).
+	 * @param {boolean} [timed] the search every FIND_EVERY: skips friends asked within FIND_AGAIN
+	 */
+	function findPeers(timed = false) {
+		const now = Date.now();
+		const ask = friends
+			.filter((f) => !peers.has(f.MemberNumber) && !(timed && now - (peerAsked.get(f.MemberNumber) || 0) < FIND_AGAIN))
+			.slice(0, 40);
 		for (const f of ask) {
+			peerAsked.set(f.MemberNumber, now);
 			sendHidden(f.MemberNumber, { sb: 1, ping: 1 });
 		}
 		return ask.length;
@@ -5525,6 +5538,8 @@
 	let tickWarned = false;
 	/** When the friend list was last asked for while beeps wait. */
 	let friendsAskedAt = 0;
+	/** When online friends were last searched for SlimeBeep by themselves. */
+	let foundAt = 0;
 	/** Runs every second: listeners, relay, update note, new beeps (badge, sound, cards, redraw). */
 	function tick() {
 		try {
@@ -5538,6 +5553,11 @@
 			if (loggedIn() && histOwner === Player.MemberNumber) {
 				achTick();
 				statusTick();
+			}
+			if (loggedIn() && histOwner === Player.MemberNumber && Date.now() - foundAt > FIND_EVERY) {
+				foundAt = Date.now();
+				askFriends();
+				setTimeout(() => findPeers(true), 3000);
 			}
 			if (waiting.length && loggedIn() && Date.now() - (friendsAskedAt || 0) > 60000) {
 				friendsAskedAt = Date.now();

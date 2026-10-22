@@ -322,5 +322,11 @@
     "date": "21 Oct 2026",
     "title": "📢 SlimeBeep 3.5.1",
     "text": "🤫 Whispers still show in that person's chat but no longer count as unread, since the room already showed them. In the same room, the new 🤫 button by the message box switches your replies between whispering and beeping."
+  },
+  {
+    "id": "3.5.2",
+    "date": "21 Oct 2026",
+    "title": "📢 SlimeBeep 3.5.2",
+    "text": "🔍 SlimeBeep now finds your friends who have it by itself, every 10 minutes, so their 🫧 shows without pressing 🔍."
   }
 ]

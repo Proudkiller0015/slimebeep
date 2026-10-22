@@ -721,7 +721,7 @@ const check = (ok, what) => {
 		'the WaveBeep gap goes down to 1 s in Settings',
 	);
 	await p.click('#sb-toggle');
-	await p.click('[data-tab=wave]');
+	await tap('[data-tab=wave]');
 	await wait(100);
 	check((await p.$eval('#sb-gmsg', (e) => e.value)) === 'Party in 10!', 'the group draft survives a trip to Settings');
 	await shot('group');
@@ -742,6 +742,12 @@ const check = (ok, what) => {
 		'the WaveBeep status line says it is done, with no note on top while the tab is open',
 	);
 
+	// ---- 🔍 Online friends are asked whether they have SlimeBeep by themselves, every 10 minutes.
+	const timedFind = await p.evaluate(() => hidden.filter((h) => JSON.parse(h.Message).ping === 1).map((h) => h.MemberNumber));
+	check(
+		[11, 12, 13].every((n) => timedFind.includes(n)),
+		`after logging in, online friends are asked whether they have SlimeBeep without pressing 🔍 (${JSON.stringify(timedFind)})`,
+	);
 	// ---- Group chats: SlimeBeep users only, roles, passing on, and nothing a stranger or a forgery can do.
 	await p.evaluate(() => {
 		hidden.length = 0;
@@ -3856,7 +3862,7 @@ const check = (ok, what) => {
 		);
 		await tap('#sb-back');
 		await wait(150);
-		await p.click('[data-tab=chats]');
+		await tap('[data-tab=chats]');
 		await wait(150);
 		check(
 			JSON.stringify((await order()).slice(0, 2)) === JSON.stringify([newer, older]),
