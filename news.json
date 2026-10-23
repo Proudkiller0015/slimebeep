@@ -358,5 +358,11 @@
     "date": "22 Oct 2026",
     "title": "📢 SlimeBeep 3.8.1",
     "text": "↩ and 🗑 now sit inside each message, beside its time, so they're easy to hit (thanks Sin!). Group admins can let back in someone who lost their SlimeBeep data: Invite › Let back in."
+  },
+  {
+    "id": "3.8.2",
+    "date": "23 Oct 2026",
+    "title": "📢 SlimeBeep 3.8.2",
+    "text": "The slime over SlimeBeep users in a room now shows its version only while your mouse is on it, and Settings › Extensions › SlimeBeep › Slime badges can hide yours or all of them (thanks Sin!)."
   }
 ]

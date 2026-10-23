@@ -3049,13 +3049,27 @@ const check = (ok, what) => {
 				hooks.ChatRoomCharacterViewDrawOverlay([{ MemberNumber: n }, 100, 0, 1], () => {});
 				return drawn.slice();
 			};
+			MouseX = 0;
+			MouseY = 0;
+			const away = draw(11);
+			// On the slime of the character drawn at x 100: 430..464, 42..76.
+			MouseX = 440;
+			MouseY = 50;
 			const ann = draw(11);
 			const bea = draw(12);
 			const me = draw(1);
 			window.ChatRoomHideIconState = 1;
 			const hidden = draw(11);
 			window.ChatRoomHideIconState = 0;
-			return { sent, answers, ann, bea, me, hidden, v: SlimeBeep.version };
+			// Slime badges: everyone -> others only -> off -> everyone, from the button on the settings page.
+			const cycle = [];
+			for (const label of ['Slime badges: everyone', 'Slime badges: others only', 'Slime badges: off']) {
+				settingsClick(label);
+				MouseX = 440;
+				MouseY = 50;
+				cycle.push({ saved: JSON.parse(localStorage.getItem('slimebeep.options')).badges, other: draw(11).length, mine: draw(1).length });
+			}
+			return { sent, answers, away, ann, bea, me, hidden, cycle, v: SlimeBeep.version };
 		});
 		await wait(1500);
 		await p.evaluate(() => {
@@ -3081,10 +3095,20 @@ const check = (ok, what) => {
 					['img', 'data:image/png;base64,', 430, 42, 34],
 					['text', '3.4.0', 500, 60],
 				]) &&
+				JSON.stringify(hello.away) === JSON.stringify([['img', 'data:image/png;base64,', 430, 42, 34]]) &&
 				hello.bea.length === 0 &&
 				hello.me.some((d) => d[1] === hello.v) &&
 				hello.hidden.length === 0,
-			`the slime and version show above SlimeBeep users and you, not others, and not when the room hides icons (${JSON.stringify(hello)})`,
+			`the slime shows above SlimeBeep users and you, its version only with the mouse on it, not above others, and not when the room hides icons (${JSON.stringify(hello)})`,
+		);
+		check(
+			JSON.stringify(hello.cycle) ===
+				JSON.stringify([
+					{ saved: 'others', other: 2, mine: 0 },
+					{ saved: 'none', other: 0, mine: 0 },
+					{ saved: 'all', other: 2, mine: 2 },
+				]),
+			`the Slime badges button goes others only, off, everyone, and saves it (${JSON.stringify(hello.cycle)})`,
 		);
 	}
 	// ---- 🤫 Whispers in a chat room show in that person's chat; there, replying whispers while you share the room.

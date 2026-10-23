@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.8.1';
+	const VERSION = '3.8.2';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -55,6 +55,8 @@
 		updateNotes: true,
 		/** Night colours. */
 		night: false,
+		/** @type {'all' | 'others' | 'none'} Whom the slime and version show over in a chat room: everyone, all but you, nobody. */
+		badges: 'all',
 		/** Follow a theme add-on's colours (Themed, BCNeko). */
 		themed: false,
 		/** @type {string[]} Emoji for the picker's 🕘 tab, newest first. */
@@ -2055,7 +2057,8 @@
 		}
 	}
 	/**
-	 * Draws the slime and its version above a SlimeBeep user in the room (and you), unless the room hides icons.
+	 * Draws the slime above a SlimeBeep user in the room (and you), and its version while the mouse is on it, unless
+	 * the room hides icons or the settings hide that badge.
 	 * @param {{ MemberNumber?: number } | undefined} C
 	 * @param {number} x
 	 * @param {number} y
@@ -2066,12 +2069,19 @@
 			if (!C || !isNum(C.MemberNumber) || (typeof ChatRoomHideIconState === 'number' && ChatRoomHideIconState > 0)) {
 				return;
 			}
-			const v = C.MemberNumber === Player.MemberNumber ? VERSION : roomVersions.get(C.MemberNumber);
+			const me = C.MemberNumber === Player.MemberNumber;
+			if (opts.badges === 'none' || (me && opts.badges === 'others')) {
+				return;
+			}
+			const v = me ? VERSION : roomVersions.get(C.MemberNumber);
 			if (!v) {
 				return;
 			}
 			DrawImageResize(ICON, x + 330 * zoom, y + 42 * zoom, 34 * zoom, 34 * zoom);
-			DrawTextFit(v, x + 400 * zoom, y + 60 * zoom, 66 * zoom, '#ff8fc8', 'black');
+			// The version only while the mouse is on the slime, like other add-ons' marks.
+			if (typeof MouseIn === 'function' && MouseIn(x + 330 * zoom, y + 42 * zoom, 34 * zoom, 34 * zoom)) {
+				DrawTextFit(v, x + 400 * zoom, y + 60 * zoom, 66 * zoom, '#ff8fc8', 'black');
+			}
 		} catch (e) {
 			warn(e, 'badge');
 		}
@@ -10638,6 +10648,10 @@
 					setOpt('win', null);
 					place();
 				},
+			],
+			[
+				() => `Slime badges: ${{ all: 'everyone', others: 'others only', none: 'off' }[opts.badges] || 'everyone'}`,
+				() => setOpt('badges', /** @type {const} */ ({ all: 'others', others: 'none', none: 'all' })[opts.badges] || 'others'),
 			],
 			[() => `Clear kept beeps (${hist.length})`, clearKept],
 			[() => 'Ask again for picture sites', () => setOpt('trustedHosts', []), () => opts.trustedHosts.length > 0],
