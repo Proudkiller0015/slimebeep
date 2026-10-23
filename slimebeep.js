@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.8.0';
+	const VERSION = '3.8.1';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -1402,14 +1402,14 @@
 		.sb-msgs { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 6px;
 			background: radial-gradient(circle at 20% 10%, #fff 0, #fff7fb 60%); }
 		.sb-b { position: relative; max-width: 78%; padding: 7px 11px; border-radius: 18px; white-space: pre-wrap; word-wrap: break-word; }
-		/* A message's 🗑 sits beside the bubble, touching it so the hover holds on the way there. */
-		#sb-panel .sb-acts { position: absolute; top: 50%; transform: translateY(-50%); display: none; }
-		#sb-panel .sb-acts button { width: 26px; height: 26px; padding: 0; border: none; background: none; font-size: 13px; line-height: 1;
-			display: flex; align-items: center; justify-content: center; opacity: .6; }
+		/* A message's ↩ and 🗑 sit inside it, right of the time: the whole bubble holds the hover. Their space is kept
+		   while hidden, so the bubble doesn't change size under the mouse. */
+		#sb-panel .sb-acts { display: flex; margin: -3px -5px -3px auto; padding-left: 8px; visibility: hidden; }
+		#sb-panel .sb-b.me .sb-acts { margin-left: 0; }
+		#sb-panel .sb-acts button { width: 22px; height: 20px; padding: 0; border: none; background: none; font-size: 12px; line-height: 1;
+			display: flex; align-items: center; justify-content: center; opacity: .75; }
 		#sb-panel .sb-acts button:hover { opacity: 1; }
-		.sb-b.me .sb-acts { right: 100%; flex-direction: row-reverse; }
-		.sb-b.them .sb-acts { left: 100%; }
-		#sb-panel .sb-b:hover .sb-acts, #sb-panel .sb-b.sb-tap .sb-acts { display: flex; }
+		#sb-panel .sb-b:hover .sb-acts, #sb-panel .sb-b.sb-tap .sb-acts { visibility: visible; }
 		.sb-quote { display: block; margin-bottom: 3px; padding-left: 7px; border-left: 3px solid #ff8fc8; font-size: 11px; opacity: .75;
 			white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 		.sb-b.sb-mention { box-shadow: 0 0 0 2px #ffb84d; }
@@ -1437,8 +1437,8 @@
 			white-space: pre-wrap; word-break: break-word; }
 		.sb-b.them { align-self: flex-start; background: #fff; border: 1px solid #ffd1e8; border-bottom-left-radius: 6px; }
 		.sb-b.me { align-self: flex-end; background: linear-gradient(135deg, #ff6fb5, #ff4fa3); color: #fff; border-bottom-right-radius: 6px; }
-		.sb-b em { display: block; font-style: normal; font-size: 10px; opacity: .7; margin-top: 2px; }
-		.sb-b.me em { text-align: right; }
+		.sb-b em { display: flex; align-items: center; font-style: normal; font-size: 10px; opacity: .7; margin-top: 2px; }
+		.sb-b.me em { justify-content: flex-end; }
 		.sb-b .sb-room { display: block; font-size: 11px; margin-top: 3px; opacity: .85; }
 		.sb-emote { font-style: italic; opacity: .85; }
 		.sb-link { color: inherit; text-decoration: underline; word-break: break-all; }
@@ -7875,7 +7875,7 @@
 			const from = !h.Sent && !act && html`<span class="sb-from">${name}</span>`;
 			const tr = !h.Sent && trLine(body, `g:${id}`, i >= msgs.length - AUTO_RECENT);
 			const mention = !h.Sent && mentionsMe(h) && ' sb-mention';
-			return html`<div class="sb-b ${h.Sent ? 'me' : 'them'}${act && ' sb-act'}${mention}">${from}${replyQuote(r)}${rich(act ?? body)}${tr}<em>${!h.Sent && trButton(body)}${timeOf(h.Time)}</em>${msgButtons(h)}</div>`;
+			return html`<div class="sb-b ${h.Sent ? 'me' : 'them'}${act && ' sb-act'}${mention}">${from}${replyQuote(r)}${rich(act ?? body)}${tr}<em>${!h.Sent && trButton(body)}${timeOf(h.Time)}${msgButtons(h)}</em></div>`;
 		};
 		setHtml(
 			view,
@@ -8205,7 +8205,7 @@
 				const body = r ? r.body : textOf(b);
 				const act = asAction(body, b.Sent ? myName() : nameOf(n));
 				const tr = !b.Sent && trLine(body, `n:${n}`, i >= msgs.length - AUTO_RECENT);
-				return html`<div class="sb-b ${b.Sent ? 'me' : 'them'}${act && ' sb-act'}">${replyQuote(r)}${rich(act ?? body)}${tr}${roomLine(b, msgs, i)}<em>${!b.Sent && trButton(body)}${mailMark(b)}${whisperMark(b)}${uncheckedMark(b)}${timeOf(b.Time)}</em>${msgButtons(b)}</div>`;
+				return html`<div class="sb-b ${b.Sent ? 'me' : 'them'}${act && ' sb-act'}">${replyQuote(r)}${rich(act ?? body)}${tr}${roomLine(b, msgs, i)}<em>${!b.Sent && trButton(body)}${mailMark(b)}${whisperMark(b)}${uncheckedMark(b)}${timeOf(b.Time)}${msgButtons(b)}</em></div>`;
 			});
 		}
 		const waitingBubbles = waitingHere.map(

@@ -352,5 +352,11 @@
     "date": "22 Oct 2026",
     "title": "📢 SlimeBeep 3.8",
     "text": "💾 SlimeBeep now keeps your group chats, your profile picture and your chat keys with your BC account: clearing your browser data or playing on another browser brings them all back, and you stay in your groups. Also security improvements."
+  },
+  {
+    "id": "3.8.1",
+    "date": "22 Oct 2026",
+    "title": "📢 SlimeBeep 3.8.1",
+    "text": "↩ and 🗑 now sit inside each message, beside its time, so they're easy to hit (thanks Sin!). Group admins can let back in someone who lost their SlimeBeep data: Invite › Let back in."
   }
 ]

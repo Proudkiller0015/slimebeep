@@ -3996,7 +3996,7 @@ const check = (ok, what) => {
 		const delShown = () =>
 			p.evaluate(() => {
 				const b = [...document.querySelectorAll('#sb-msgs .sb-b')].find((x) => /delete me please/.test(x.textContent));
-				return getComputedStyle(b.querySelector('.sb-acts')).display;
+				return getComputedStyle(b.querySelector('.sb-acts')).visibility;
 			});
 		const hiddenAtFirst = await delShown();
 		await (await deeBubble()).hover();
@@ -4011,7 +4011,7 @@ const check = (ok, what) => {
 		);
 		const onTap = await delShown();
 		check(
-			hiddenAtFirst === 'none' && onHover === 'flex' && onTap === 'flex',
+			hiddenAtFirst === 'hidden' && onHover === 'visible' && onTap === 'visible',
 			`a message's ↩ and 🗑 show on hover, and on a tap for touch screens (${hiddenAtFirst}, ${onHover}, ${onTap})`,
 		);
 		await p.evaluate(() =>
