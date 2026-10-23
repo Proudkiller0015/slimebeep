@@ -504,6 +504,43 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 		}
 	}
 
+	// The operator's code: an owner who lost their keys gets back into their group, still the owner. Only with the
+	// relay's OPERATOR_KEY (npm run dev:test sets a test one; TEST_OPERATOR_KEY for another relay).
+	{
+		const http = BASE.replace(/^ws/, 'http');
+		const key = process.env.TEST_OPERATOR_KEY || 'test-operator-key-0123456789abcdef';
+		const op = (body, k = key) =>
+			fetch(`${http}/op/invite`, { method: 'POST', headers: { Authorization: `Bearer ${k}` }, body: JSON.stringify(body) });
+		const g3 = `test${Date.now().toString(36)}o`;
+		const a = await connect(g3, ann, { fields: { create: { name: 'Locked out', open: false } } });
+		const ann3 = await makePeer(11, 'Ann');
+		const taken = await connect(g3, ann3);
+		const wrong = await op({ g: g3, member: 11 }, 'not-the-key-0123456789abcdefghijkl');
+		const none = await op({ g: 'nosuchgroup1', member: 11 });
+		const res = await op({ g: g3, member: 11 });
+		const made = res.ok ? await res.json() : {};
+		const back = made.code && (await connect(g3, ann3, { fields: { invite: made.code } }));
+		const w = back && back.last('welcome');
+		check(
+			!taken.last('welcome') &&
+				wrong.status === 404 &&
+				none.status === 404 &&
+				made.listed &&
+				made.owner &&
+				w &&
+				w.roster.owner === 11 &&
+				w.roster.admins.includes(11),
+			`a wrong operator key gets a 404; the right one makes a code for the locked-out owner, who is back in and still the owner (${JSON.stringify({ wrong: wrong.status, none: none.status, made, owner: w && w.roster.owner })})`,
+		);
+		for (const x of [a, taken, back]) {
+			try {
+				x.ws.close();
+			} catch (e) {
+				/* closed */
+			}
+		}
+	}
+
 	console.log(failed ? `\n${failed} FAILED` : '\nall passed');
 	process.exit(failed ? 1 : 0);
 })();

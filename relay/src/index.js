@@ -136,12 +136,41 @@ const b64url = (buf) =>
 const unb64url = (s) =>
 	Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
 
+/**
+ * Whether a request carries the operator key (the OPERATOR_KEY secret, as `Authorization: Bearer <key>`).
+ * Without that secret set, nothing is the operator.
+ */
+async function isOperator(req, env) {
+	const key = env.OPERATOR_KEY;
+	const got = (req.headers.get('Authorization') || '').replace(/^Bearer /, '');
+	if (typeof key !== 'string' || key.length < 32 || !got) {
+		return false;
+	}
+	// Compared as hashes, so the comparison takes the same time whatever the guess.
+	const hash = async (x) => new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(x)));
+	return crypto.subtle.timingSafeEqual(await hash(key), await hash(got));
+}
+
 export default {
-	/** Checks the origin and hands the WebSocket to the group (?g=) or mailbox (?m=) object. */
+	/**
+	 * Checks the origin and hands the WebSocket to the group (?g=) or mailbox (?m=) object. Also takes the
+	 * operator's POST /op/invite { g, member }: a code for that member number in that group, for someone
+	 * who lost their keys when nobody else there can make one.
+	 */
 	async fetch(req, env) {
 		const url = new URL(req.url);
 		if (url.pathname === '/') {
 			return new Response('SlimeBeep group chat relay', { headers: { 'content-type': 'text/plain' } });
+		}
+		if (url.pathname === '/op/invite' && req.method === 'POST') {
+			if (!(await isOperator(req, env))) {
+				return new Response('Not found', { status: 404 });
+			}
+			const p = await req.json().catch(() => ({}));
+			if (!ID_RE.test(p.g || '') || !isNum(p.member)) {
+				return new Response('Bad group or member number', { status: 400 });
+			}
+			return env.GROUP.get(env.GROUP.idFromName(p.g)).opInvite(p.member);
 		}
 		if (url.pathname !== '/ws') {
 			return new Response('Not found', { status: 404 });
@@ -204,6 +233,24 @@ export class Group extends DurableObject {
 				await ctx.storage.put({ meta: this.meta, seq: this.seq });
 			}
 		});
+	}
+
+	/**
+	 * An invite for one member number, made by the operator (see the Worker's fetch): like an admin's, but
+	 * with no admin needed, so an owner who lost their keys gets back in, still the owner.
+	 * @returns {Promise<Response>} { code } or an error
+	 */
+	async opInvite(member) {
+		if (!this.meta) {
+			return new Response('No such group', { status: 404 });
+		}
+		if (!this.members[member] && Object.keys(this.members).length >= LIMITS.members) {
+			return new Response('Group is full', { status: 409 });
+		}
+		const code = secret();
+		this.invites[code] = { member, by: 0, exp: Date.now() + LIMITS.inviteDays * 864e5, uses: 0 };
+		await this.save();
+		return Response.json({ code, listed: !!this.members[member], owner: this.meta.owner === member });
 	}
 
 	/** Accepts a WebSocket and sends it a sign-in nonce. */

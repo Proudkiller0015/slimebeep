@@ -121,7 +121,7 @@ export default [
 		rules,
 	},
 	{
-		files: ['test.js', 'relay/test-relay.js', 'relay/e2e-peer.js'],
+		files: ['test.js', 'relay/test-relay.js', 'relay/e2e-peer.js', 'relay/operator.js'],
 		languageOptions: {
 			ecmaVersion: 2022,
 			sourceType: 'commonjs',
