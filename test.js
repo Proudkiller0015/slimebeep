@@ -897,7 +897,7 @@ const check = (ok, what) => {
 		return r;
 	});
 	check(
-		offer.link === 'https://proudkiller0015.github.io/slimecheat/slimecheat.user.js' && !offer.box && !offer.sent,
+		offer.link === 'https://github.com/Proudkiller0015/slimecheat' && !offer.box && !offer.sent,
 		`!cheats without SlimeCheat offers its install link and sends nothing (${JSON.stringify(offer)})`,
 	);
 	// An add-on panel: its own tab, its element kept between redraws, and !cheats opens SlimeCheat's.
@@ -906,6 +906,7 @@ const check = (ok, what) => {
 		const h = SlimeBeep.api.addPanel({
 			id: 'slimecheat',
 			icon: '💻',
+			image: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
 			title: 'Hack panel',
 			mount(el) {
 				el.innerHTML = '<div class="sb-row"><input class="sb-search" id="hp-in"></div>';
@@ -913,10 +914,11 @@ const check = (ok, what) => {
 		});
 		document.getElementById('sb-back').click();
 		await new Promise((r) => setTimeout(r, 150));
-		const button = !!document.querySelector('[data-tab="addon:slimecheat"]');
+		const button = !!document.querySelector('[data-tab="addon:slimecheat"] img.sb-addon-ico[src^="data:image/png"]');
 		h.open();
 		await new Promise((r) => setTimeout(r, 150));
 		document.getElementById('hp-in').value = 'kept';
+		const headIn = document.getElementById('sb-headicon').getAttribute('src').startsWith('data:image/png');
 		SlimeBeep.api.openChat(11);
 		await new Promise((r) => setTimeout(r, 150));
 		const ta = document.getElementById('sb-text');
@@ -925,14 +927,18 @@ const check = (ok, what) => {
 		await new Promise((r) => setTimeout(r, 200));
 		const inp = document.getElementById('hp-in');
 		const r = { bad, button, kept: inp ? inp.value : null, inBody: !!document.querySelector('#sb-body.sb-addon #hp-in') };
+		r.headIn = headIn;
 		h.remove();
 		await new Promise((r2) => setTimeout(r2, 150));
 		r.gone = !document.querySelector('[data-tab="addon:slimecheat"]');
+		r.headBack =
+			document.getElementById('sb-headicon').getAttribute('src') !==
+			'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 		return r;
 	});
 	check(
-		panel.bad === null && panel.button && panel.kept === 'kept' && panel.inBody && panel.gone,
-		`an add-on panel gets a tab, keeps what it shows between redraws, opens with !cheats and can be removed (${JSON.stringify(panel)})`,
+		panel.bad === null && panel.button && panel.kept === 'kept' && panel.inBody && panel.gone && panel.headIn && panel.headBack,
+		`an add-on panel gets a tab with its picture, puts its picture in the window's head while open, keeps what it shows between redraws, opens with !cheats and can be removed (${JSON.stringify(panel)})`,
 	);
 	await hide(11, 'Ann', { sb: 1, pong: 1 });
 	await hide(13, 'Cat', { sb: 1, ping: 1 });

@@ -94,6 +94,7 @@ sb.matchingTheme();        // { on, source: 'Themed' | 'BCNeko' | null }
 const panel = sb.addPanel({
 	id: 'my-addon', // a-z, 0-9, dash
 	icon: '🧩', // the tab's button
+	image: 'data:image/webp;base64,...', // optional: a picture for the tab instead (a data: URL, at most 12000 characters)
 	title: 'My add-on',
 	mount(el) {
 		// fill el once; SlimeBeep keeps it between redraws, so its state stays

@@ -376,5 +376,11 @@
     "date": "5 Nov 2026",
     "title": "📢 SlimeBeep 3.10",
     "text": "Hover a friend who is in a room and a Join button pops up. In group chats, tap someone's name for their card: picture, status, achievements, where they are, and a box to message them. People who aren't on your BC friend list get a small tag. Other add-ons can now open a panel inside SlimeBeep."
+  },
+  {
+    "id": "3.10.1",
+    "date": "5 Nov 2026",
+    "title": "📢 SlimeBeep 3.10.1",
+    "text": "Add-on panels can show their own picture on their tab, and in the window while you are in them."
   }
 ]

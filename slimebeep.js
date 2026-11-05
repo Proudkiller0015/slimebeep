@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.10.0';
+	const VERSION = '3.10.1';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -143,13 +143,14 @@
 	 * A panel another add-on put in SlimeBeep's window (api.addPanel): its own tab, drawn in SlimeBeep's theme.
 	 * @typedef {object} AddonPanel
 	 * @property {string} icon
+	 * @property {string} image a small picture for the tab instead of the icon (a data: URL, like profile pictures), or ''
 	 * @property {string} title
 	 * @property {HTMLDivElement} el the add-on's content, kept between redraws
 	 */
 	/** @type {Map<string, AddonPanel>} by id */
 	const addonPanels = new Map();
-	/** Where SlimeCheat (the hack panel add-on) installs from: `!cheats` offers it. */
-	const SLIMECHEAT_URL = 'https://proudkiller0015.github.io/slimecheat/slimecheat.user.js';
+	/** SlimeCheat's page (what it is, that it needs SlimeBeep, and its install link): `!cheats` offers it. */
+	const SLIMECHEAT_URL = 'https://github.com/Proudkiller0015/slimecheat';
 	/** @type {number | string | null} Open chat: a member number, 'g:<group id>', or null for the lists. */
 	let thread = null;
 	/** Search box text on the list tabs. */
@@ -1469,6 +1470,8 @@
 		.sb-bcjoin { margin-left: 6px; padding: 1px 8px; border: 0; border-radius: 10px; background: #ff7ac0; color: #fff; font: bold 12px sans-serif; cursor: pointer; }
 		.sb-bcjoin:hover { background: #e85aa6; }
 		.sb-joinroom { margin-left: 4px; padding: 1px 8px !important; font-size: 11px !important; }
+		html.sb-night .sb-head > img.sb-addon-head, html.sb-night #sb-toggle img.sb-addon-head { filter: none; }
+		.sb-tabs .sb-addon-ico { width: 20px; height: 20px; object-fit: contain; vertical-align: middle; pointer-events: none; }
 		/* A friend's row shows Join for their room while hovered (always on touch screens). */
 		.sb-rowjoin { display: block; margin: 3px 0 0 auto; visibility: hidden; }
 		.sb-row:hover .sb-rowjoin { visibility: visible; }
@@ -1744,7 +1747,7 @@
 			panel,
 			html`
 			<div class="sb-head">
-				<img src="${ICON}" alt="">
+				<img src="${ICON}" alt="" id="sb-headicon">
 				<b>SlimeBeep <small>v${VERSION}</small></b>
 				<span id="sb-me"></span>
 				<button id="sb-music" title="Music player">🎵</button>
@@ -2316,7 +2319,7 @@
 		/**
 		 * Adds a panel of your own to SlimeBeep's window, with its own tab, drawn in SlimeBeep's theme. `mount` is
 		 * called once with an empty element to fill; SlimeBeep keeps that element between redraws.
-		 * @param {{ id: string, icon: string, title: string, mount: (el: HTMLDivElement) => void }} p
+		 * @param {{ id: string, icon: string, image?: string, title: string, mount: (el: HTMLDivElement) => void }} p
 		 */
 		addPanel: (p) => {
 			const id = p && typeof p.id === 'string' ? p.id : '';
@@ -2328,7 +2331,9 @@
 			}
 			const el = document.createElement('div');
 			el.className = 'sb-addon-root';
-			addonPanels.set(id, { icon: clean(p.icon, 4) || '🧩', title: clean(p.title, 40) || id, el });
+			// A picture only as a data: URL (never a web address), at most the size of a profile picture.
+			const image = typeof p.image === 'string' && p.image.length <= PFP_MAX && PFP_RE.test(p.image) ? p.image : '';
+			addonPanels.set(id, { icon: clean(p.icon, 4) || '🧩', image, title: clean(p.title, 40) || id, el });
 			try {
 				p.mount(el);
 			} catch (e) {
@@ -6243,6 +6248,7 @@
 	function setOpen(on) {
 		panelActive = on;
 		if (!on) {
+			setIcons(ICON);
 			for (const id of ['sb-crop', 'sb-zoom', 'sb-ask', 'sb-emoji']) {
 				if ($(id)) {
 					$(id).remove();
@@ -6255,6 +6261,20 @@
 			render();
 		}
 		place();
+	}
+
+	/**
+	 * The slime on the toggle and in the window's head: while an add-on's panel is open, its own picture instead.
+	 * @param {string} src ICON, or an add-on's picture (a data: URL)
+	 */
+	function setIcons(src) {
+		const toggleImg = $('sb-toggle') && $('sb-toggle').querySelector('img');
+		for (const img of [$('sb-headicon'), toggleImg]) {
+			if (img && img.getAttribute('src') !== src) {
+				img.setAttribute('src', src);
+				img.classList.toggle('sb-addon-head', src !== ICON);
+			}
+		}
 	}
 
 	/** Positions the toggle (opts.pos, kept on screen) and the window (opts.win, or next to the toggle). */
@@ -7353,6 +7373,8 @@
 			}
 		}, 0);
 		showMe();
+		const addonOpen = thread === null && tab.startsWith('addon:') ? addonPanels.get(tab.slice(6)) : undefined;
+		setIcons(addonOpen && addonOpen.image && isOpen() ? addonOpen.image : ICON);
 		if (!loggedIn()) {
 			setHtml(view, html`<div class="sb-empty">💤 Log in and SlimeBeep wakes up.</div>`);
 			return;
@@ -7373,7 +7395,7 @@
 			<button data-tab="friends" class="${on('friends')}" title="Friends online">💖${count(friends.length)}</button>
 			<button data-tab="wave" class="${on('wave')}" title="WaveBeep: one beep to many friends">🌊 Wave</button>
 			<button data-tab="bug" class="${on('bug')}" title="Report a bug">🐞</button>
-			${[...addonPanels].map(([id, p]) => html`<button data-tab="addon:${id}" class="${on(`addon:${id}`)}" title="${p.title}">${p.icon}</button>`)}
+			${[...addonPanels].map(([id, p]) => html`<button data-tab="addon:${id}" class="${on(`addon:${id}`)}" title="${p.title}">${p.image ? html`<img class="sb-addon-ico" src="${p.image}" alt="${p.icon}">` : p.icon}</button>`)}
 		</div>`;
 		const body = $('sb-body');
 		const scroll = keepScroll && body ? body.scrollTop : 0;
@@ -10394,8 +10416,8 @@
 			html`<div class="sb-crop-card" style="max-width:280px;text-align:center">
 			<b>💻 SlimeCheat</b>
 			<span class="sb-hint">A hack panel that opens inside SlimeBeep: room music and background uploads, dice, and cheats on yourself.</span>
-			<a class="sb-go" href="${SLIMECHEAT_URL}" target="_blank" rel="noopener" data-act="close" style="text-decoration:none">⬇ Install SlimeCheat</a>
-			<span class="sb-hint">Needs a userscript manager (like Tampermonkey). Once it's in, type !cheats again.</span>
+			<a class="sb-go" href="${SLIMECHEAT_URL}" target="_blank" rel="noopener" data-act="close" style="text-decoration:none">Get SlimeCheat on GitHub</a>
+			<span class="sb-hint">Its page has the install link (needs a userscript manager like Tampermonkey). Once it's in, type !cheats again.</span>
 			<button class="sb-pill" data-act="close">Close</button>
 		</div>`,
 		);
