@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.9.0';
+	const VERSION = '3.10.0';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -139,6 +139,17 @@
 	let friends = [];
 	/** Open panel tab: 'chats', 'groups', 'friends', 'wave', 'bug', 'newgc' or 'invitefor'. */
 	let tab = 'chats';
+	/**
+	 * A panel another add-on put in SlimeBeep's window (api.addPanel): its own tab, drawn in SlimeBeep's theme.
+	 * @typedef {object} AddonPanel
+	 * @property {string} icon
+	 * @property {string} title
+	 * @property {HTMLDivElement} el the add-on's content, kept between redraws
+	 */
+	/** @type {Map<string, AddonPanel>} by id */
+	const addonPanels = new Map();
+	/** Where SlimeCheat (the hack panel add-on) installs from: `!cheats` offers it. */
+	const SLIMECHEAT_URL = 'https://proudkiller0015.github.io/slimecheat/slimecheat.user.js';
 	/** @type {number | string | null} Open chat: a member number, 'g:<group id>', or null for the lists. */
 	let thread = null;
 	/** Search box text on the list tabs. */
@@ -1458,6 +1469,10 @@
 		.sb-bcjoin { margin-left: 6px; padding: 1px 8px; border: 0; border-radius: 10px; background: #ff7ac0; color: #fff; font: bold 12px sans-serif; cursor: pointer; }
 		.sb-bcjoin:hover { background: #e85aa6; }
 		.sb-joinroom { margin-left: 4px; padding: 1px 8px !important; font-size: 11px !important; }
+		/* A friend's row shows Join for their room while hovered (always on touch screens). */
+		.sb-rowjoin { display: block; margin: 3px 0 0 auto; visibility: hidden; }
+		.sb-row:hover .sb-rowjoin { visibility: visible; }
+		@media (hover: none) { .sb-rowjoin { visibility: visible; } }
 		#sb-me { display: flex; cursor: pointer; }
 		/* Pictures in the window zoom when clicked; yours at the top opens ⚙ instead. */
 		#sb-panel img.sb-pic { cursor: zoom-in; }
@@ -1517,6 +1532,17 @@
 		img.sb-pic { object-fit: cover; padding: 0; background: #fff; }
 		.sb-gav { background: linear-gradient(135deg, #ffb3d9, #9fe8ff); font-size: 16px; }
 		.sb-from { display: block; font-size: 11px; font-weight: bold; color: #c2186b; margin-bottom: 2px; }
+		[data-prof] { cursor: pointer; }
+		.sb-from[data-prof]:hover, .sb-name [data-prof]:hover { text-decoration: underline; }
+		/* A small mark for someone who isn't on your Bondage Club friend list. */
+		.sb-nf { display: inline-block; margin-left: 4px; padding: 0 5px; border-radius: 8px; background: #eee; color: #777; font-size: 10px; font-weight: bold; vertical-align: middle; cursor: help; }
+		html.sb-night .sb-nf { background: #2c3866; color: #b8c4f0; }
+		/* Someone's profile card (a name tapped in a group). */
+		#sb-ask .sb-prof-card { width: 260px; gap: 6px; }
+		#sb-ask .sb-prof-card .sb-av { width: 84px; height: 84px; font-size: 30px; }
+		#sb-ask .sb-prof-card .sb-status { max-width: 100%; text-align: center; }
+		#sb-ask .sb-prof-dm { display: flex; gap: 6px; width: 100%; }
+		#sb-ask .sb-prof-dm input { flex: 1; min-width: 0; margin: 0; }
 		.sb-sys { align-self: center; font-size: 11px; color: #a0638a; background: #ffe6f3; padding: 2px 10px; border-radius: 10px; }
 		.sb-thead > button#sb-leave { margin-left: auto; }
 		.sb-thead > button#sb-mute { flex: none; font-size: 13px; }
@@ -1898,6 +1924,13 @@
 				if (b) {
 					e.stopPropagation();
 					openAchievements(Number(b.dataset.ach));
+					return;
+				}
+				// A name or picture in a group opens that person's card.
+				const p = /** @type {HTMLElement | null} */ (targetOf(e).closest('[data-prof]'));
+				if (p) {
+					e.stopPropagation();
+					openProfile(Number(p.dataset.prof), groups[p.dataset.g || '']);
 				}
 			},
 			true,
@@ -2281,6 +2314,48 @@
 		/** The member numbers of friends known to have SlimeBeep. */
 		slimeBeepFriends: () => [...peers],
 		/**
+		 * Adds a panel of your own to SlimeBeep's window, with its own tab, drawn in SlimeBeep's theme. `mount` is
+		 * called once with an empty element to fill; SlimeBeep keeps that element between redraws.
+		 * @param {{ id: string, icon: string, title: string, mount: (el: HTMLDivElement) => void }} p
+		 */
+		addPanel: (p) => {
+			const id = p && typeof p.id === 'string' ? p.id : '';
+			if (!/^[a-z0-9-]{1,32}$/.test(id) || typeof p.mount !== 'function') {
+				return null;
+			}
+			if (!addonPanels.has(id) && addonPanels.size >= 3) {
+				return null;
+			}
+			const el = document.createElement('div');
+			el.className = 'sb-addon-root';
+			addonPanels.set(id, { icon: clean(p.icon, 4) || '🧩', title: clean(p.title, 40) || id, el });
+			try {
+				p.mount(el);
+			} catch (e) {
+				warn(e, `add-on panel ${id}`);
+			}
+			if (isOpen()) {
+				render(true);
+			}
+			return {
+				open: () => openAddon(id),
+				remove: () => {
+					addonPanels.delete(id);
+					if (tab === `addon:${id}`) {
+						tab = 'chats';
+					}
+					if (isOpen()) {
+						render();
+					}
+				},
+			};
+		},
+		/**
+		 * Shows an add-on's panel (api.addPanel).
+		 * @param {string} id
+		 */
+		openPanel: (id) => openAddon(String(id)),
+		/**
 		 * Whether this member number is a friend known to have SlimeBeep.
 		 * @param {number} memberNumber
 		 */
@@ -2308,6 +2383,27 @@
 		 * @param {number} memberNumber
 		 */
 		inviteToGroup: (id, memberNumber) => inviteToGroup(id, memberNumber),
+		/**
+		 * A signed proof that this is the logged-in player, for another add-on's own server. The text signed is
+		 * `slimebeep-proof|<audience>|<member number>|<time>` (nothing else SlimeBeep signs starts that way),
+		 * with the account's SlimeBeep signing key; `rk` is the hand-over from the keys before, if any.
+		 * @param {string} audience who it is for: 1-64 of a-z, 0-9, dot and dash
+		 */
+		proveIdentity: async (audience) => {
+			if (typeof audience !== 'string' || !/^[a-z0-9.-]{1,64}$/.test(audience) || !loggedIn()) {
+				return null;
+			}
+			const k = await getKey();
+			const t = Date.now();
+			const sig = await signText(`slimebeep-proof|${audience}|${k.owner}|${t}`, k);
+			return {
+				memberNumber: k.owner,
+				time: t,
+				pub: { x: k.pub.x, y: k.pub.y },
+				sig,
+				rk: k.rk ? { x: k.rk.x, y: k.rk.y, sig: k.rk.sig } : null,
+			};
+		},
 		/**
 		 * Opens SlimeBeep on "Invite <them> to…", listing the groups you can invite to.
 		 * @param {number} memberNumber
@@ -3459,6 +3555,89 @@
 		const text = [s.t, s.l && `🎵 ${s.l}`].filter(Boolean).join(' · ');
 		const names = ACHIEVEMENTS.filter((x) => s.a.includes(x[0])).map((x) => `${x[1]} ${x[2]}`);
 		return html`<div class="sb-status" title="${[text, ...names].filter(Boolean).join('\n')}">${!!names.length && html`<button class="sb-trophy" data-ach="${n}" title="See their achievements">🏆 ${names.length}</button>`}${text}</div>`;
+	}
+	/** The mark for someone who isn't on your Bondage Club friend list. */
+	const notFriendMark = (/** @type {number} */ n) =>
+		!isFriend(n) &&
+		html`<span class="sb-nf" title="Not on your Bondage Club friend list: your beeps only reach them if they added you">✖ BC friend</span>`;
+
+	/**
+	 * Someone's card, like Discord's: picture, name, status, achievements, where they are, and a box that
+	 * messages them in your chat with them.
+	 * @param {number} n
+	 * @param {Group} [g] the group the name was tapped in
+	 */
+	function openProfile(n, g) {
+		if (!isNum(n) || n === Player.MemberNumber || $('sb-ask')) {
+			return;
+		}
+		const name = (g && memberName(g, n)) || nameOf(n);
+		const f = friends.find((x) => x.MemberNumber === n);
+		const online = !!f || (!!g && (g.online || []).includes(n));
+		const room = f && typeof f.ChatRoomName === 'string' ? f.ChatRoomName.trim() : '';
+		const box = document.createElement('div');
+		box.id = 'sb-ask';
+		setHtml(
+			box,
+			html`<div class="sb-crop-card sb-prof-card">
+			${avatar(n, name)}
+			<b>${online ? html`<span class="sb-on" title="Online"></span>` : html`<span class="sb-off" title="Offline"></span>`}${name}${peers.has(n) && html` <span title="Has SlimeBeep">🫧</span>`}${notFriendMark(n)}</b>
+			<span class="sb-hint">#${n}${g && ` · ${roleOf(g, n)} of ${g.name}`}</span>
+			${statusLine(n)}
+			${f && html`<span class="sb-hint">${where(f)}${!!room && room !== myRoom() && html` <button class="sb-pill sb-joinroom" data-act="join">Join</button>`}</span>`}
+			<div class="sb-prof-dm"><input class="sb-search" id="sb-prof-text" maxlength="1000" placeholder="Message @${name}"><button class="sb-go" data-act="dm">Send</button></div>
+			<div class="sb-crop-btns"><button class="sb-pill" data-act="chat">💬 Open chat</button><button class="sb-pill" data-act="close">Close</button></div>
+		</div>`,
+		);
+		const close = () => {
+			box.remove();
+			document.removeEventListener('keydown', onKey, true);
+		};
+		/** @param {KeyboardEvent} e */
+		const onKey = (e) => {
+			if (e.key === 'Escape') {
+				e.stopPropagation();
+				close();
+			}
+		};
+		/** Opens your chat with them; with text, sends it there as if typed in its box. */
+		const toChat = (/** @type {string} */ text) => {
+			close();
+			thread = n;
+			threadPin = undefined;
+			render();
+			const ta = /** @type {HTMLTextAreaElement | null} */ ($('sb-text'));
+			if (text && ta && $('sb-send')) {
+				ta.value = text;
+				$('sb-send').click();
+			}
+		};
+		const input = /** @type {HTMLInputElement} */ (box.querySelector('#sb-prof-text'));
+		input.addEventListener('keydown', (e) => {
+			if (e.key === 'Enter' && input.value.trim()) {
+				e.preventDefault();
+				toChat(input.value.trim());
+			}
+		});
+		box.addEventListener('click', (e) => {
+			const t = targetOf(e);
+			const act = t.dataset.act;
+			if (t === box || act === 'close') {
+				close();
+			} else if (act === 'chat') {
+				toChat('');
+			} else if (act === 'dm' && input.value.trim()) {
+				toChat(input.value.trim());
+			} else if (act === 'join') {
+				close();
+				joinRoom(room);
+			} else if (t.matches('img.sb-pic')) {
+				zoomPic(/** @type {HTMLImageElement} */ (t).src);
+			}
+		});
+		document.addEventListener('keydown', onKey, true);
+		$('sb-panel').appendChild(box);
+		input.focus();
 	}
 	/** Your own row at the top of 💖, like Discord's: your picture, name and status (tap it to change the status). */
 	function meRow() {
@@ -7146,6 +7325,19 @@
 	};
 
 	/**
+	 * The Join button a friend's row shows on hover, when they are in a room you are not in.
+	 * @param {Friend | undefined} f
+	 */
+	const rowJoin = (f) => {
+		const room = f && typeof f.ChatRoomName === 'string' ? f.ChatRoomName.trim() : '';
+		return (
+			!!room &&
+			room !== myRoom() &&
+			html`<button class="sb-pill sb-joinroom sb-rowjoin" data-room="${room}" title="Join ${room}">Join</button>`
+		);
+	};
+
+	/**
 	 * Redraws the panel for the current `tab` and `thread`.
 	 * @param {boolean} [keepScroll] keep the scroll position (a redraw for new data, not navigation)
 	 * @returns {void}
@@ -7181,11 +7373,17 @@
 			<button data-tab="friends" class="${on('friends')}" title="Friends online">💖${count(friends.length)}</button>
 			<button data-tab="wave" class="${on('wave')}" title="WaveBeep: one beep to many friends">🌊 Wave</button>
 			<button data-tab="bug" class="${on('bug')}" title="Report a bug">🐞</button>
+			${[...addonPanels].map(([id, p]) => html`<button data-tab="addon:${id}" class="${on(`addon:${id}`)}" title="${p.title}">${p.icon}</button>`)}
 		</div>`;
 		const body = $('sb-body');
 		const scroll = keepScroll && body ? body.scrollTop : 0;
 		const page = pageState(tab);
-		if (tab === 'newgc') {
+		const addon = tab.startsWith('addon:') ? addonPanels.get(tab.slice(6)) : undefined;
+		if (addon) {
+			// The add-on's own element goes back in on every redraw, so what it shows (and is doing) stays.
+			setHtml(view, html`${tabs}<div class="sb-body sb-group sb-addon" id="sb-body"></div>`);
+			$('sb-body').appendChild(addon.el);
+		} else if (tab === 'newgc') {
 			setHtml(view, html`${tabs}<div class="sb-body sb-group" id="sb-body">${newGroupHtml()}</div>`);
 		} else if (tab === 'wave') {
 			setHtml(view, html`${tabs}<div class="sb-body sb-group" id="sb-body">${groupHtml()}</div>`);
@@ -7243,6 +7441,13 @@
 				tab = b.dataset.tab || 'chats';
 				search = '';
 				render();
+			});
+		}
+		for (const b of $$(view, '.sb-rowjoin')) {
+			b.addEventListener('click', (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				joinRoom(b.dataset.room || '');
 			});
 		}
 		for (const r of $$(view, '[data-open]')) {
@@ -7337,7 +7542,8 @@
 		const rows = chats()
 			.filter((c) => !q || c.name.toLowerCase().includes(q) || String(c.n).includes(q))
 			.map((c) => {
-				const online = friends.some((f) => f.MemberNumber === c.n);
+				const friend = friends.find((f) => f.MemberNumber === c.n);
+				const online = !!friend;
 				const text = replyBody(textOf(c.last));
 				const pinned = isPinned(`n:${c.n}`);
 				return {
@@ -7346,7 +7552,7 @@
 					html: html`<div class="sb-row" data-open="${c.n}">${avatar(c.n, c.name)}
 				<div class="sb-main"><div class="sb-name">${online ? html`<span class="sb-on" title="Online"></span>` : html`<span class="sb-off" title="Offline"></span>`}${c.name}</div>
 				<div class="sb-sub">${c.last.Sent && 'You: '}${text}</div></div>
-				<div class="sb-side">${pinned && pinMark}${timeOf(c.last.Time)}${c.unread > 0 && html`<br><span class="sb-dot">${c.unread}</span>`}</div></div>`,
+				<div class="sb-side">${pinned && pinMark}${timeOf(c.last.Time)}${c.unread > 0 && html`<br><span class="sb-dot">${c.unread}</span>`}${rowJoin(friend)}</div></div>`,
 				};
 			});
 		return rows.sort(pinnedFirst).map((r) => r.html);
@@ -7599,8 +7805,9 @@
 					}
 				}
 				const dot = on(n) ? html`<span class="sb-on" title="Online"></span>` : html`<span class="sb-off" title="Offline"></span>`;
-				return html`<div class="sb-row" style="cursor:default">${avatar(n, memberName(g, n))}
-					<div class="sb-main"><div class="sb-name">${dot}${memberName(g, n)}${keyMark(m)}${peers.has(n) && ' 🫧'}</div><div class="sb-sub">${role} · #${n}${!on(n) && ' · offline'}</div>${on(n) && statusLine(n)}</div>
+				const prof = n !== me && html` data-prof="${n}" data-g="${g.id}" title="See their profile"`;
+				return html`<div class="sb-row" style="cursor:default"><span${prof}>${avatar(n, memberName(g, n))}</span>
+					<div class="sb-main"><div class="sb-name">${dot}<span${prof}>${memberName(g, n)}</span>${keyMark(m)}${peers.has(n) && ' 🫧'}${n !== me && notFriendMark(n)}</div><div class="sb-sub">${role} · #${n}${!on(n) && ' · offline'}</div>${on(n) && statusLine(n)}</div>
 					<div class="sb-side" style="display:flex;gap:3px">${acts}</div></div>`;
 			});
 		const invite = canInvite(g, me) && g.members.length < LIMITS.members;
@@ -7886,7 +8093,10 @@
 			const r = splitReply(textOf(h));
 			const body = r ? r.body : textOf(h);
 			const act = asAction(body, name);
-			const from = !h.Sent && !act && html`<span class="sb-from">${name}</span>`;
+			const from =
+				!h.Sent &&
+				!act &&
+				html`<span class="sb-from" data-prof="${h.MemberNumber}" data-g="${id}" title="See their profile">${name}</span>`;
 			const tr = !h.Sent && trLine(body, `g:${id}`, i >= msgs.length - AUTO_RECENT);
 			const mention = !h.Sent && mentionsMe(h) && ' sb-mention';
 			return html`<div class="sb-b ${h.Sent ? 'me' : 'them'}${act && ' sb-act'}${mention}">${from}${replyQuote(r)}${rich(act ?? body)}${tr}<em>${!h.Sent && trButton(body)}${timeOf(h.Time)}${msgButtons(h)}</em></div>`;
@@ -8062,7 +8272,7 @@
 				(f) => html`<div class="sb-row" data-open="${f.MemberNumber}">${avatar(f.MemberNumber, f.MemberName)}
 				<div class="sb-main"><div class="sb-name"><span class="sb-on"></span>${f.MemberName}${{ Lover: ' 💞', Submissive: ' 🎀' }[f.Type || '']}${peers.has(f.MemberNumber) && html` <span title="Has SlimeBeep">🫧</span>`}</div>
 				<div class="sb-sub">${where(f)}${!!f.ChatRoomMemberCount && ` · ${f.ChatRoomMemberCount}/${f.ChatRoomLimit || '?'}`}</div>${statusLine(f.MemberNumber)}</div>
-				<div class="sb-side">#${f.MemberNumber}</div></div>`,
+				<div class="sb-side">#${f.MemberNumber}${rowJoin(f)}</div></div>`,
 			);
 		const onlineNums = new Set(friends.map((f) => f.MemberNumber));
 		const all = Player.FriendNames && typeof Player.FriendNames.forEach === 'function' ? [...Player.FriendNames.entries()] : [];
@@ -10168,6 +10378,65 @@
 		['/help', 'This list'],
 		['//text', 'Sends a message that starts with /'],
 	];
+	/** `!cheats`: opens SlimeCheat's hack panel, or says where to get it. */
+	function openCheats() {
+		if (addonPanels.has('slimecheat')) {
+			openAddon('slimecheat');
+			return;
+		}
+		if ($('sb-ask')) {
+			return;
+		}
+		const box = document.createElement('div');
+		box.id = 'sb-ask';
+		setHtml(
+			box,
+			html`<div class="sb-crop-card" style="max-width:280px;text-align:center">
+			<b>💻 SlimeCheat</b>
+			<span class="sb-hint">A hack panel that opens inside SlimeBeep: room music and background uploads, dice, and cheats on yourself.</span>
+			<a class="sb-go" href="${SLIMECHEAT_URL}" target="_blank" rel="noopener" data-act="close" style="text-decoration:none">⬇ Install SlimeCheat</a>
+			<span class="sb-hint">Needs a userscript manager (like Tampermonkey). Once it's in, type !cheats again.</span>
+			<button class="sb-pill" data-act="close">Close</button>
+		</div>`,
+		);
+		const close = () => {
+			box.remove();
+			document.removeEventListener('keydown', onKey, true);
+		};
+		/** @param {KeyboardEvent} e */
+		const onKey = (e) => {
+			if (e.key === 'Escape') {
+				e.stopPropagation();
+				close();
+			}
+		};
+		box.addEventListener('click', (e) => {
+			if (targetOf(e) === box || targetOf(e).dataset.act === 'close') {
+				close();
+			}
+		});
+		document.addEventListener('keydown', onKey, true);
+		$('sb-panel').appendChild(box);
+	}
+
+	/**
+	 * Shows an add-on's panel.
+	 * @param {string} id
+	 */
+	function openAddon(id) {
+		if (!addonPanels.has(id)) {
+			return false;
+		}
+		thread = null;
+		tab = `addon:${id}`;
+		if (!isOpen()) {
+			setOpen(true);
+		} else {
+			render();
+		}
+		return true;
+	}
+
 	/**
 	 * Applies a chat command to typed text.
 	 * @param {string} raw
@@ -10175,6 +10444,10 @@
 	 */
 	function command(raw) {
 		const text = String(raw || '').trim();
+		if (text.toLowerCase() === '!cheats') {
+			openCheats();
+			return null;
+		}
 		if (!text.startsWith('/')) {
 			return raw;
 		}

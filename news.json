@@ -370,5 +370,11 @@
     "date": "4 Nov 2026",
     "title": "📢 SlimeBeep 3.9",
     "text": "Settings › Extensions › SlimeBeep can now switch whispers off, so your chats always beep, even when you share a room (thanks Miranda!). And /flip... well, you might get lucky."
+  },
+  {
+    "id": "3.10.0",
+    "date": "5 Nov 2026",
+    "title": "📢 SlimeBeep 3.10",
+    "text": "Hover a friend who is in a room and a Join button pops up. In group chats, tap someone's name for their card: picture, status, achievements, where they are, and a box to message them. People who aren't on your BC friend list get a small tag. Other add-ons can now open a panel inside SlimeBeep."
   }
 ]

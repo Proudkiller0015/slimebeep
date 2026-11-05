@@ -856,8 +856,83 @@ const check = (ok, what) => {
 		api0.v === 1 &&
 			api0.frozen &&
 			api0.fns ===
-				'apiVersion,doNotDisturb,group,groups,hasSlimeBeep,inviteToGroup,matchTheme,matchingTheme,nowPlaying,on,openChat,openGroup,openInvite,openSettings,playSong,setDoNotDisturb,slimeBeepFriends,version',
+				'addPanel,apiVersion,doNotDisturb,group,groups,hasSlimeBeep,inviteToGroup,matchTheme,matchingTheme,nowPlaying,on,openChat,openGroup,openInvite,openPanel,openSettings,playSong,proveIdentity,setDoNotDisturb,slimeBeepFriends,version',
 		`window.SlimeBeep.api is there for other add-ons, and can't be changed (${api0.fns})`,
+	);
+	// proveIdentity: a signed "this is me" for another add-on's server, made for that server only.
+	const proof = await p.evaluate(async () => {
+		const pr = await SlimeBeep.api.proveIdentity('slimecheat');
+		const key = await crypto.subtle.importKey(
+			'jwk',
+			{ kty: 'EC', crv: 'P-256', x: pr.pub.x, y: pr.pub.y },
+			{ name: 'ECDSA', namedCurve: 'P-256' },
+			false,
+			['verify'],
+		);
+		const raw = Uint8Array.from(atob(pr.sig.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
+		const ok = (text) => crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, raw, new TextEncoder().encode(text));
+		return {
+			member: pr.memberNumber === Player.MemberNumber,
+			fresh: Math.abs(Date.now() - pr.time) < 5000,
+			good: await ok(`slimebeep-proof|slimecheat|${pr.memberNumber}|${pr.time}`),
+			other: await ok(`slimebeep-proof|other|${pr.memberNumber}|${pr.time}`),
+			bad: await SlimeBeep.api.proveIdentity('Bad|Name'),
+		};
+	});
+	check(
+		proof.member && proof.fresh && proof.good && !proof.other && proof.bad === null,
+		`proveIdentity signs "slimebeep-proof|audience|member|time" with my SlimeBeep key, only for that audience (${JSON.stringify(proof)})`,
+	);
+	// !cheats without SlimeCheat: a card with its install link.
+	const offer = await p.evaluate(async () => {
+		SlimeBeep.api.openChat(11);
+		await new Promise((r) => setTimeout(r, 200));
+		const ta = document.getElementById('sb-text');
+		ta.value = '!cheats';
+		document.getElementById('sb-send').click();
+		await new Promise((r) => setTimeout(r, 200));
+		const a = document.querySelector('#sb-ask a.sb-go');
+		const r = { link: a ? a.getAttribute('href') : '', box: ta.value, sent: beeps.some((b) => b[1] === '!cheats') };
+		document.querySelector('#sb-ask [data-act="close"].sb-pill').click();
+		return r;
+	});
+	check(
+		offer.link === 'https://proudkiller0015.github.io/slimecheat/slimecheat.user.js' && !offer.box && !offer.sent,
+		`!cheats without SlimeCheat offers its install link and sends nothing (${JSON.stringify(offer)})`,
+	);
+	// An add-on panel: its own tab, its element kept between redraws, and !cheats opens SlimeCheat's.
+	const panel = await p.evaluate(async () => {
+		const bad = SlimeBeep.api.addPanel({ id: 'Bad Id', icon: 'x', title: 'x', mount() {} });
+		const h = SlimeBeep.api.addPanel({
+			id: 'slimecheat',
+			icon: '💻',
+			title: 'Hack panel',
+			mount(el) {
+				el.innerHTML = '<div class="sb-row"><input class="sb-search" id="hp-in"></div>';
+			},
+		});
+		document.getElementById('sb-back').click();
+		await new Promise((r) => setTimeout(r, 150));
+		const button = !!document.querySelector('[data-tab="addon:slimecheat"]');
+		h.open();
+		await new Promise((r) => setTimeout(r, 150));
+		document.getElementById('hp-in').value = 'kept';
+		SlimeBeep.api.openChat(11);
+		await new Promise((r) => setTimeout(r, 150));
+		const ta = document.getElementById('sb-text');
+		ta.value = '!CHEATS';
+		document.getElementById('sb-send').click();
+		await new Promise((r) => setTimeout(r, 200));
+		const inp = document.getElementById('hp-in');
+		const r = { bad, button, kept: inp ? inp.value : null, inBody: !!document.querySelector('#sb-body.sb-addon #hp-in') };
+		h.remove();
+		await new Promise((r2) => setTimeout(r2, 150));
+		r.gone = !document.querySelector('[data-tab="addon:slimecheat"]');
+		return r;
+	});
+	check(
+		panel.bad === null && panel.button && panel.kept === 'kept' && panel.inBody && panel.gone,
+		`an add-on panel gets a tab, keeps what it shows between redraws, opens with !cheats and can be removed (${JSON.stringify(panel)})`,
 	);
 	await hide(11, 'Ann', { sb: 1, pong: 1 });
 	await hide(13, 'Cat', { sb: 1, ping: 1 });
@@ -1076,6 +1151,41 @@ const check = (ok, what) => {
 		await wait(700);
 		const pad = await p.$eval('#sb-msgs', (e) => ({ shown: /padded hello/.test(e.textContent), nul: e.textContent.includes('\u0000') }));
 		check(pad.shown && !pad.nul, `a message padded with NULs shows without them (${JSON.stringify(pad)})`);
+		// Tapping a name in a group opens their card; its box messages them in your chat with them.
+		await p.evaluate(() => [...document.querySelectorAll('.sb-from[data-prof="11"]')].pop().click());
+		await wait(200);
+		const card = await p.evaluate(() => {
+			const c = document.querySelector('#sb-ask .sb-prof-card');
+			return c ? { text: c.textContent.replace(/s+/g, ' '), nf: !!c.querySelector('.sb-nf'), focus: document.activeElement.id } : null;
+		});
+		await shot('profile-card');
+		check(
+			!!card &&
+				/Ann/.test(card.text) &&
+				/#11/.test(card.text) &&
+				/member of Slime Squad/.test(card.text) &&
+				!card.nf &&
+				card.focus === 'sb-prof-text',
+			`tapping a name in a group opens their profile card (${JSON.stringify(card)})`,
+		);
+		const beepsBefore = await p.evaluate(() => beeps.length);
+		await p.type('#sb-prof-text', 'hi from your card');
+		await p.keyboard.press('Enter');
+		await wait(400);
+		const dm = await p.evaluate(
+			(n) => ({
+				sent: beeps.slice(n).map((b) => [b[0], b[1]]),
+				card: !!document.getElementById('sb-ask'),
+				chat: /hi from your card/.test(document.getElementById('sb-msgs')?.textContent || ''),
+			}),
+			beepsBefore,
+		);
+		check(
+			dm.sent.some((b) => b[0] === 11 && b[1] === 'hi from your card') && !dm.card && dm.chat,
+			`the card's message box sends to her in our own chat (${JSON.stringify(dm)})`,
+		);
+		await p.evaluate((g) => SlimeBeep.api.openGroup(g), gid);
+		await wait(200);
 		// A code for anyone: Zed, nobody's friend, joins with it.
 		await p.click('#sb-members');
 		await wait(200);
@@ -1085,6 +1195,24 @@ const check = (ok, what) => {
 		const z = await relayJoin(gid, zed, { invite: openCode.split('-').pop() });
 		check(!!z.welcome, 'Zed, a friend of nobody here, joins with a code');
 		await wait(400);
+		const marks = await p.evaluate(() => ({
+			zed: !!document.querySelector('[data-prof="99"]')?.closest('.sb-row')?.querySelector('.sb-nf'),
+			ann: !!document.querySelector('[data-prof="11"]')?.closest('.sb-row')?.querySelector('.sb-nf'),
+		}));
+		check(marks.zed && !marks.ann, `members who aren't my BC friends are marked (${JSON.stringify(marks)})`);
+		await p.click('.sb-name [data-prof="99"]');
+		await wait(200);
+		const zcard = await p.evaluate(() => {
+			const c = document.querySelector('#sb-ask .sb-prof-card');
+			return c ? { nf: !!c.querySelector('.sb-nf'), name: /Zed/.test(c.textContent) } : null;
+		});
+		await shot('profile-card-not-friend');
+		await p.keyboard.press('Escape');
+		await wait(100);
+		check(
+			!!zcard && zcard.nf && zcard.name && !(await p.$('#sb-ask')),
+			`Zed's card says he isn't my BC friend, and Esc closes it (${JSON.stringify(zcard)})`,
+		);
 		const apiG = await p.evaluate(() => {
 			const g = SlimeBeep.api.groups().find((x) => x.name === 'Slime Squad');
 			const copy = SlimeBeep.api.groups()[0];
@@ -2776,6 +2904,53 @@ const check = (ok, what) => {
 		);
 		await p.evaluate(() => document.getElementById('InputChat').remove());
 		await tap('#sb-back');
+	}
+
+	// ---- Hovering a friend who is in another room shows Join, which joins without opening the chat.
+	{
+		await tap('[data-tab="friends"]');
+		await wait(250);
+		await p.mouse.move(5, 5);
+		const row = await p.$('[data-open="11"]');
+		const vis = () =>
+			p.evaluate(() => {
+				const b = document.querySelector('[data-open="11"] .sb-rowjoin');
+				return b ? `${getComputedStyle(b).visibility}:${b.dataset.room}` : 'none';
+			});
+		const before = await vis();
+		await row.hover();
+		const after = await vis();
+		check(before === 'hidden:Pokepark' && after === 'visible:Pokepark', `a friend's Join shows on hover (${before} → ${after})`);
+		await p.evaluate(() => {
+			window.joins = [];
+			window.ChatRoomCanLeave = () => true;
+			window.ChatRoomLeave = () => (window.ChatRoomData = null);
+			window.CommonSetScreen = () => {};
+			window.CurrentScreen = 'ChatRoom';
+			window.ServerRoomJoin = async (n) => (joins.push(n), { value: n, error: null });
+		});
+		// joinRoom takes one try per 3 s, and the beep test above just joined.
+		await wait(3100);
+		await p.hover('[data-open="11"]');
+		await p.click('[data-open="11"] .sb-rowjoin');
+		await wait(300);
+		const r = await p.evaluate(() => ({ joins, chat: !!document.getElementById('sb-text') }));
+		check(r.joins[0] === 'Pokepark' && !r.chat, `the row's Join joins their room and doesn't open the chat (${JSON.stringify(r)})`);
+		await p.evaluate(() => {
+			window.ChatRoomData = { Name: 'Velvet Lounge' };
+			delete window.ChatRoomCanLeave;
+			delete window.ChatRoomLeave;
+			delete window.CommonSetScreen;
+			delete window.ServerRoomJoin;
+			delete window.CurrentScreen;
+		});
+		await wait(3100);
+		const none = await p.evaluate(() => {
+			document.querySelector('[data-tab="friends"]').click();
+			return !!document.querySelector('.sb-rowjoin[data-room="Velvet Lounge"]');
+		});
+		check(!none, 'no Join for a friend in my own room');
+		await tap('[data-tab="chats"]');
 	}
 
 	// ---- 😊 Emoji and commands in a chat box.

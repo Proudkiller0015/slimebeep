@@ -88,6 +88,43 @@ sb.matchTheme(false);      // back to SlimeBeep's own colours
 sb.matchingTheme();        // { on, source: 'Themed' | 'BCNeko' | null }
 ```
 
+## A panel of your own
+
+```js
+const panel = sb.addPanel({
+	id: 'my-addon', // a-z, 0-9, dash
+	icon: '🧩', // the tab's button
+	title: 'My add-on',
+	mount(el) {
+		// fill el once; SlimeBeep keeps it between redraws, so its state stays
+		el.innerHTML = '<div class="sb-row">Hello</div>';
+	},
+});
+panel.open(); // shows it (also sb.openPanel('my-addon'))
+panel.remove();
+```
+
+The panel gets its own tab in SlimeBeep's window and follows SlimeBeep's look (day, night and the game themes) when
+it uses SlimeBeep's classes: `sb-row` (a card row), `sb-name` / `sb-sub` (its lines), `sb-pill` (small button),
+`sb-go` (main button), `sb-search` (text box), `sb-hint` (small grey text) and `sb-empty` (a centred note). At most
+three add-ons can add a panel. `addPanel` answers null for a bad id or when there's no room.
+
+## Proving who the player is
+
+```js
+const proof = await sb.proveIdentity('my-addon.example');
+// { memberNumber, time, pub: { x, y }, sig, rk }   or null when not logged in
+```
+
+For an add-on with its own server. `sig` is an ECDSA P-256 / SHA-256 signature (base64url, raw r|s) of
+`slimebeep-proof|<audience>|<memberNumber>|<time>` by the account's SlimeBeep key, whose public half is `pub`
+(JWK x and y, base64url). `audience` names your server (a-z, 0-9, dot, dash), so a proof made for one server
+is no use on another. Check the time is recent, remember `pub` for that member number the first time, and
+afterwards accept only that key. SlimeBeep keys come back from the account backup after a browser wipe; when
+an account does move to new keys, `rk` is the old key (`x`, `y`) and its signature of
+`rekey|<memberNumber>|<new x>|<new y>`, so a server that knows the old key can follow it. Nothing else
+SlimeBeep signs starts with `slimebeep-proof|`.
+
 ## Events
 
 ```js
