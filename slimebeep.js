@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.8.2';
+	const VERSION = '3.9.0';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -85,6 +85,8 @@
 		afkMsg: "I'm away right now, I'll answer when I'm back!",
 		/** In the same chat room, a chat's replies whisper (otherwise they beep). */
 		roomWhisper: true,
+		/** Whether chats may whisper at all; off, they always beep and 🤫 is hidden. */
+		whispers: true,
 		/** Whether to warn when SlimeBeep's server can't be reached (off once its card was clicked). */
 		relayWarn: true,
 		/** Your status: a short line of your own (like "king of the swamp") that SlimeBeep friends and your groups see. */
@@ -1812,6 +1814,7 @@
 			}
 			setOpen(panel.style.display !== 'flex');
 			countCrownClick();
+			countEdgeClick();
 		});
 		toggle.addEventListener('pointercancel', () => endDrag(true));
 		toggle.addEventListener('lostpointercapture', () => endDrag(true));
@@ -2470,6 +2473,7 @@
 		['no', '🌙', 'Night Owl', 'Secret achievement', true],
 		['lq', '✨', 'Long Live the Queen', 'Secret achievement', true],
 		['aq', '🕹️', 'Arcade Queen', 'Enter the Konami code', true],
+		['ce', '🪙', 'Edge Case', 'Secret achievement', true],
 		['vc', '🐰', 'The Cabaret', 'Join a Velvet Cabaret room', false],
 		['cd', '🍹', 'Care for a Drink?', 'Drink any beverage', false],
 		['tr', '🍪', 'A Treat for the Road', 'Eat any food', false],
@@ -8223,7 +8227,7 @@
 				html`<div class="sb-b me sb-wait">${w.text}<em>⏳ sends when they're online · <a href="#" data-cancel="${w.id}">cancel</a></em></div>`,
 		);
 		const pinTitle = room ? `Let them join me: adds a button to join you in "${room}"` : "You're not in a chat room";
-		const near = sameRoom(n);
+		const near = opts.whispers && sameRoom(n);
 		const whisper = near && opts.roomWhisper;
 		let placeholder = `Beep ${nameOf(n)}…`;
 		if (whisper) {
@@ -8304,8 +8308,8 @@
 			box.scrollTop = box.scrollHeight;
 			// Cleared first: a whisper redraws the chat while it is sent, and the redraw keeps what is in the box.
 			ta.value = '';
-			// In the same room, it's a whisper unless 🤫 is off (outListener adds it to this chat).
-			if (opts.roomWhisper && sameRoom(n) && ChatRoomSendWhisper(n, text) === true) {
+			// In the same room, it's a whisper unless whispers or 🤫 are off (outListener adds it to this chat).
+			if (opts.whispers && opts.roomWhisper && sameRoom(n) && ChatRoomSendWhisper(n, text) === true) {
 				return;
 			}
 			if (isOffline(n)) {
@@ -10133,12 +10137,34 @@
 		};
 	}
 
+	/** A /flip lands on its edge once in this many, the old odds of a shiny Pokémon. */
+	const EDGE_ODDS = 8192;
+	/** Clicks on the slime, within EDGE_CLICK_MS, that make the next /flip land on its edge. */
+	const EDGE_CLICKS = 20;
+	/** How long the EDGE_CLICKS clicks may take. */
+	const EDGE_CLICK_MS = 10000;
+	/** @type {number[]} When the slime was clicked, for the edge trick. */
+	const edgeClicks = [];
+	/** Whether the next /flip lands on its edge. */
+	let edgeForced = false;
+	/** Counts a click on the slime toward the edge trick. */
+	function countEdgeClick() {
+		const now = Date.now();
+		edgeClicks.push(now);
+		while (edgeClicks.length && now - edgeClicks[0] > EDGE_CLICK_MS) {
+			edgeClicks.shift();
+		}
+		if (edgeClicks.length >= EDGE_CLICKS) {
+			edgeClicks.length = 0;
+			edgeForced = true;
+		}
+	}
 	/** Chat commands for /help: [usage, description]. */
 	const COMMANDS = [
 		['/me <action>', 'Does an action: /me waves sends *waves*'],
 		['/shrug [text]', 'Adds ¯\\_(ツ)_/¯'],
 		['/roll [sides]', 'Rolls a die (6 sides unless you say): *rolls a d20: 13*'],
-		['/flip', 'Flips a coin'],
+		['/flip', 'Flips a coin (1 in 8192 lands on its edge)'],
 		['/help', 'This list'],
 		['//text', 'Sends a message that starts with /'],
 	];
@@ -10176,8 +10202,15 @@
 				return `*rolls a d${sides}: ${n}* 🎲`;
 			}
 			case 'flip':
-			case 'coin':
-				return `*flips a coin: ${crypto.getRandomValues(new Uint8Array(1))[0] & 1 ? 'heads' : 'tails'}* 🪙`;
+			case 'coin': {
+				const r = crypto.getRandomValues(new Uint32Array(1))[0];
+				if (edgeForced || r % EDGE_ODDS === 0) {
+					edgeForced = false;
+					unlock('ce');
+					return '*flips a coin: it lands on its edge!* 🪙✨';
+				}
+				return `*flips a coin: ${(r >>> 13) & 1 ? 'heads' : 'tails'}* 🪙`;
+			}
 			case 'help':
 			case 'commands':
 				showHelp();
@@ -10612,6 +10645,7 @@
 					() => !!themeSource(),
 				],
 				['share', '"Let them join me" starts on', () => opts.shareRoom, (on) => setOpt('shareRoom', on)],
+				['whispers', 'Whisper people in my room (off: beep only)', () => opts.whispers, (on) => setOpt('whispers', on)],
 				[
 					'remember',
 					'Remember who I picked for WaveBeeps',

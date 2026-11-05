@@ -364,5 +364,11 @@
     "date": "23 Oct 2026",
     "title": "📢 SlimeBeep 3.8.2",
     "text": "The slime over SlimeBeep users in a room now shows its version only while your mouse is on it, and Settings › Extensions › SlimeBeep › Slime badges can hide yours or all of them (thanks Sin!)."
+  },
+  {
+    "id": "3.9.0",
+    "date": "4 Nov 2026",
+    "title": "📢 SlimeBeep 3.9",
+    "text": "Settings › Extensions › SlimeBeep can now switch whispers off, so your chats always beep, even when you share a room (thanks Miranda!). And /flip... well, you might get lucky."
   }
 ]

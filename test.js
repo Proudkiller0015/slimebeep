@@ -786,12 +786,12 @@ const check = (ok, what) => {
 	await p.click('#sb-body label:nth-of-type(4) input');
 	await p.type('#sb-gmsg', 'Party in 10!');
 	await p.click('#sb-gear');
-	// The WaveBeep gap: its - button sits under page 2's 4 checkboxes.
+	// The WaveBeep gap: its - button sits under page 2's 5 checkboxes.
 	await p.evaluate(() => {
 		settingsPage(2);
 		for (let i = 0; i < 20; i++) {
 			MouseX = 520;
-			MouseY = 160 + 4 * 70 + 20;
+			MouseY = 160 + 5 * 70 + 20;
 			PreferenceExtensionsSettings.SlimeBeep.click();
 		}
 	});
@@ -2069,8 +2069,8 @@ const check = (ok, what) => {
 		);
 		await p.click('#sb-ask [data-act=close]');
 		check(
-			fromPicture.length === 4 &&
-				fromPicture.filter((x) => x === 'Secret achievement').length === 3 &&
+			fromPicture.length === 5 &&
+				fromPicture.filter((x) => x === 'Secret achievement').length === 4 &&
 				fromPicture.includes('Enter the Konami code'),
 			`your picture's box opens the achievements too; secrets say "Secret achievement", Arcade Queen hints at the Konami code (${JSON.stringify(fromPicture)})`,
 		);
@@ -2102,7 +2102,7 @@ const check = (ok, what) => {
 		await shot('achievements-friend');
 		await p.click('#sb-ask [data-act=close]');
 		check(
-			catAch.title === "🏆 Cat's achievements · 2 / 21" && JSON.stringify(catAch.on) === '["Slimed!","Royal Audience"]' && !catAch.chat,
+			catAch.title === "🏆 Cat's achievements · 2 / 22" && JSON.stringify(catAch.on) === '["Slimed!","Royal Audience"]' && !catAch.chat,
 			`tapping a friend's 🏆 shows their achievements, not their chat (${JSON.stringify(catAch)})`,
 		);
 		// Royal Audience counts seconds in a room with the Slime Queen.
@@ -2838,6 +2838,67 @@ const check = (ok, what) => {
 		);
 		await shot('help');
 		await p.click('#sb-ask [data-act=keep]');
+		// /flip: 1 in 8192 lands on its edge. The random numbers are fixed here to see all three.
+		const flips = [];
+		for (const r of [0, 8192, 1, 8193]) {
+			await p.evaluate((v) => {
+				window.realRandom = crypto.getRandomValues;
+				crypto.getRandomValues = (a) => {
+					a[0] = v;
+					return a;
+				};
+			}, r);
+			await typeSend('/flip');
+			await p.evaluate(() => {
+				crypto.getRandomValues = window.realRandom;
+			});
+			flips.push(await p.evaluate(() => beeps[beeps.length - 1][1]));
+		}
+		check(
+			JSON.stringify(flips) ===
+				JSON.stringify([
+					'*flips a coin: it lands on its edge!* 🪙✨',
+					'*flips a coin: it lands on its edge!* 🪙✨',
+					'*flips a coin: tails* 🪙',
+					'*flips a coin: heads* 🪙',
+				]),
+			`/flip lands on its edge 1 in 8192, otherwise heads or tails (${JSON.stringify(flips)})`,
+		);
+		check(
+			await p.evaluate(() => {
+				const me = Player.MemberNumber;
+				return !!JSON.parse(localStorage.getItem(`slimebeep.ach.${me}`) || '{"got":{}}').got.ce;
+			}),
+			'a coin on its edge unlocks the secret Edge Case',
+		);
+		// 20 clicks on the slime: the next /flip lands on its edge, whatever the random number, and only that one.
+		for (let i = 0; i < 20; i++) {
+			await p.click('#sb-toggle');
+		}
+		await wait(200);
+		if ((await p.$eval('#sb-panel', (e) => e.style.display)) !== 'flex') {
+			await p.click('#sb-toggle');
+			await wait(200);
+		}
+		const forced = [];
+		for (let i = 0; i < 2; i++) {
+			await p.evaluate(() => {
+				window.realRandom = crypto.getRandomValues;
+				crypto.getRandomValues = (a) => {
+					a[0] = 1;
+					return a;
+				};
+			});
+			await typeSend('/flip');
+			await p.evaluate(() => {
+				crypto.getRandomValues = window.realRandom;
+			});
+			forced.push(await p.evaluate(() => beeps[beeps.length - 1][1]));
+		}
+		check(
+			JSON.stringify(forced) === JSON.stringify(['*flips a coin: it lands on its edge!* 🪙✨', '*flips a coin: tails* 🪙']),
+			`20 clicks on the slime make the next /flip land on its edge, and only the next (${JSON.stringify(forced)})`,
+		);
 		await tap('#sb-back');
 	}
 
@@ -3162,6 +3223,36 @@ const check = (ok, what) => {
 		await p.click('#sb-whisper');
 		await wait(200);
 		check(/^Whisper Ann…$/.test(await p.$eval('#sb-text', (e) => e.placeholder)), '🤫 again goes back to whispering');
+		// Whispers switched off in Settings (3rd box on page 2): no 🤫, and replies beep even in the same room.
+		const whisperBox = () =>
+			p.evaluate(() => {
+				settingsPage(2);
+				MouseX = 520;
+				MouseY = 160 + 2 * 70 + 20;
+				PreferenceExtensionsSettings.SlimeBeep.click();
+				return JSON.parse(localStorage.getItem('slimebeep.options')).whispers;
+			});
+		check((await whisperBox()) === false, 'Settings can switch whispers off');
+		await tap('#sb-back');
+		await wait(150);
+		await p.evaluate(() => SlimeBeep.api.openChat(11));
+		await wait(200);
+		check(
+			!(await p.$('#sb-whisper')) && /^Beep Ann…$/.test(await p.$eval('#sb-text', (e) => e.placeholder)),
+			'with whispers off, the chat has no 🤫 and offers to beep, even in the same room',
+		);
+		const beepsBefore = await p.evaluate(() => beeps.length);
+		await p.type('#sb-text', 'beep only');
+		await p.keyboard.press('Enter');
+		await wait(300);
+		const sentOff = await p.evaluate(() => ({ chats: chats.length, beeps: beeps.length }));
+		check(sentOff.chats === 1 && sentOff.beeps === beepsBefore + 1, `and replying beeps (${JSON.stringify(sentOff)})`);
+		check((await whisperBox()) === true, 'and switches them back on');
+		await tap('#sb-back');
+		await wait(150);
+		await p.evaluate(() => SlimeBeep.api.openChat(11));
+		await wait(200);
+		check(!!(await p.$('#sb-whisper')), 'with whispers back on, 🤫 is back');
 		// A whisper typed in the game's own chat lands here too.
 		await p.evaluate(() => ServerSend('ChatRoomChat', { Content: 'typed in the room', Type: 'Whisper', Target: 11 }));
 		await wait(300);
