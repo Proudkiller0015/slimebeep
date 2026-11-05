@@ -21,7 +21,8 @@
 	ol { margin: 8px 0 0; padding-left: 22px; }
 	li { margin: 6px 0; }
 	.bm { display: inline-block; padding: 10px 22px; border-radius: 999px; background: linear-gradient(135deg, #ff6fb5, #ff4fa3); color: #fff; font-weight: bold;
-		text-decoration: none; box-shadow: 0 3px 10px #ff4fa366; cursor: grab; }
+		text-decoration: none; box-shadow: 0 3px 10px #ff4fa366; cursor: grab;
+		user-select: none; -webkit-user-select: none; -webkit-user-drag: element; }
 	.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 12px 0; }
 	button { font: inherit; border: 2px solid var(--pink); color: var(--pink); background: transparent; border-radius: 999px; padding: 7px 16px; cursor: pointer; }
 	textarea { width: 100%; height: 86px; resize: vertical; border: 2px solid var(--line); border-radius: 12px; padding: 8px; background: var(--bg); color: var(--ink);
@@ -53,7 +54,7 @@
 		<ol>
 			<li>Show your bookmarks bar (<code>Ctrl</code> + <code>Shift</code> + <code>B</code>).</li>
 			<li>Drag this button onto it:
-				<div class="row"><a class="bm" id="bm" href="#" title="Drag me to your bookmarks bar">🫧 SlimeBeep</a></div>
+				<div class="row"><a class="bm" id="bm" href="#" draggable="true" title="Drag me to your bookmarks bar">🫧 SlimeBeep</a></div>
 			</li>
 			<li>Open Bondage Club, log in, then click the <b>SlimeBeep</b> bookmark. The pink slime appears.</li>
 		</ol>
@@ -81,6 +82,8 @@
 	const bm = document.getElementById('bm');
 	bm.href = code;
 	// Clicked here instead of dragged: say what to do.
+	// A drag must never start a text selection inside the button.
+	bm.addEventListener('selectstart', (e) => e.preventDefault());
 	bm.addEventListener('click', (e) => { e.preventDefault(); alert('Drag this button onto your bookmarks bar, then click the bookmark while you are in Bondage Club.'); });
 	document.getElementById('code').value = code;
 	document.getElementById('copy').addEventListener('click', async () => {
