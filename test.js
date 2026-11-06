@@ -3582,6 +3582,87 @@ const check = (ok, what) => {
 			!escClicked && escElsewhere,
 			`Esc after clicking in the window closes it, not after clicking the game (${JSON.stringify({ escClicked, escElsewhere })})`,
 		);
+		// Opened with the slime button on the friends list (the button keeps the focus): Esc closes it too.
+		await p.click('#sb-toggle');
+		await wait(200);
+		await p.click('#sb-toggle');
+		await wait(300);
+		const listOpen = await p.evaluate(() => ({
+			open: document.getElementById('sb-panel').style.display === 'flex',
+			chat: !!document.getElementById('sb-text'),
+			focus: document.activeElement && document.activeElement.id,
+		}));
+		await p.keyboard.press('Escape');
+		await wait(100);
+		const escList = await p.evaluate(() => document.getElementById('sb-panel').style.display === 'flex');
+		check(listOpen.open && !escList, `Esc closes the window right after opening it with the slime button (${JSON.stringify({ listOpen, escList })})`);
+		// The open/close key, picked in Settings: Alt+B opens and closes the window; a plain key isn't taken
+		// from a text box; Esc while picking sets none.
+		await p.evaluate(() => settingsClick('Open/close key: none'));
+		const picking = await p.evaluate(() => {
+			buttons = {};
+			PreferenceExtensionsSettings.SlimeBeep.run();
+			return Object.keys(buttons).some((k) => k === 'Press a key… (Esc: none)');
+		});
+		await p.evaluate(() => document.activeElement && document.activeElement.blur());
+		await p.keyboard.down('Alt');
+		await p.keyboard.press('KeyB');
+		await p.keyboard.up('Alt');
+		const picked = await p.evaluate(() => ({ saved: JSON.parse(localStorage.getItem('slimebeep.options')).hotkey, open: document.getElementById('sb-panel').style.display === 'flex' }));
+		const hk = async () => {
+			await p.keyboard.down('Alt');
+			await p.keyboard.press('KeyB');
+			await p.keyboard.up('Alt');
+			await wait(150);
+			return p.evaluate(() => document.getElementById('sb-panel').style.display === 'flex');
+		};
+		const hkFirst = await hk();
+		const hkSecond = await hk();
+		await p.evaluate(() => settingsClick('Open/close key: Alt+B'));
+		await p.keyboard.press('F4');
+		const f4 = await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.options')).hotkey);
+		// F4 is no typing key: it works from inside a text box too.
+		await p.evaluate(() => {
+			const box = document.createElement('textarea');
+			box.id = 'hk-box';
+			document.body.append(box);
+			box.focus();
+		});
+		await p.keyboard.press('F4');
+		await wait(150);
+		const f4Open = await p.evaluate(() => document.getElementById('sb-panel').style.display === 'flex');
+		await p.keyboard.press('F4');
+		await p.evaluate(() => document.getElementById('hk-box').remove());
+		await p.evaluate(() => settingsClick('Open/close key: F4'));
+		await p.evaluate(() => {
+			const box = document.createElement('textarea');
+			box.id = 'hk-box';
+			document.body.append(box);
+			box.focus();
+		});
+		await p.keyboard.press('KeyM');
+		await p.keyboard.press('KeyM');
+		const plain = await p.evaluate(() => {
+			const b = document.getElementById('hk-box');
+			const r = { saved: JSON.parse(localStorage.getItem('slimebeep.options')).hotkey, typed: b.value, open: document.getElementById('sb-panel').style.display === 'flex' };
+			b.remove();
+			document.activeElement && document.activeElement.blur();
+			return r;
+		});
+		await p.keyboard.press('KeyM');
+		await wait(150);
+		plain.outside = await p.evaluate(() => document.getElementById('sb-panel').style.display === 'flex');
+		await p.evaluate(() => settingsClick('Open/close key: M'));
+		await p.keyboard.press('Escape');
+		const cleared = await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.options')).hotkey);
+		check(
+			picking && picked.saved === 'Alt+B' && !picked.open && hkFirst && !hkSecond && f4 === 'F4' && f4Open &&
+				plain.saved === 'M' && plain.typed === 'm' && !plain.open && plain.outside && cleared === null,
+			`a key picked in Settings opens and closes SlimeBeep; a plain letter still types in text boxes; Esc sets none (${JSON.stringify({ picking, picked, hkFirst, hkSecond, f4, f4Open, plain, cleared })})`,
+		);
+		if (plain.outside) {
+			await p.evaluate(() => document.getElementById('sb-close').click());
+		}
 		const dndApi = await p.evaluate(() => {
 			const on = SlimeBeep.api.setDoNotDisturb(true);
 			const r = { on, read: SlimeBeep.api.doNotDisturb(), label: document.getElementById('sb-dnd').textContent };
