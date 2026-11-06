@@ -54,6 +54,7 @@ const testPageGlobals = Object.fromEntries(
 		'buttons',
 		'openedSettings',
 		'settingsClick',
+		'settingsTick',
 		'settingsPage',
 		'toasts',
 		'ytSent',

@@ -388,5 +388,11 @@
     "date": "6 Nov 2026",
     "title": "📢 SlimeBeep 3.11",
     "text": "⌨ Pick a key to open and close SlimeBeep in Settings > Extensions > SlimeBeep (like Alt+B or F4). Esc now also closes the window right after you open it with the slime."
+  },
+  {
+    "id": "3.12.0",
+    "date": "6 Nov 2026",
+    "title": "📢 SlimeBeep 3.12",
+    "text": "🎵 You can hide the video in the music player: untick \"Show the video in the music player\" in Settings > Extensions > SlimeBeep (page 2). The song keeps playing."
   }
 ]
