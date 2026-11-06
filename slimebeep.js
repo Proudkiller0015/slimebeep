@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.11.0';
+	const VERSION = '3.12.0';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -75,6 +75,8 @@
 		musicVolume: 70,
 		/** @type {string | null} The key that opens and closes the window, like 'Alt+B' or 'F4' (Settings); null for none. */
 		hotkey: null,
+		/** Show the YouTube video in the music player (off: just the 🎵 tile, the song still plays). */
+		musicVideo: true,
 		/** Whether the music player is muted. */
 		musicMuted: false,
 		/** @type {{ x: number, y: number } | null} Where the music player was dragged to, in px; null for bottom left. */
@@ -1350,9 +1352,12 @@
 		.sb-mu-art { flex: none; width: 64px; height: 64px; border-radius: 12px; overflow: hidden; background: linear-gradient(135deg, #ff9ccf, #ff4fa3);
 			display: flex; align-items: center; justify-content: center; }
 		.sb-mu-art::before { content: '🎵'; font-size: 30px; }
-		#sb-mu.yt .sb-mu-art { width: 112px; height: 63px; background: #000; }
-		#sb-mu.yt .sb-mu-art::before { content: none; }
+		html:not(.sb-novid) #sb-mu.yt .sb-mu-art { width: 112px; height: 63px; background: #000; }
+		html:not(.sb-novid) #sb-mu.yt .sb-mu-art::before { content: none; }
 		.sb-mu-art iframe { width: 112px; height: 63px; border: 0; display: block; position: static; }
+		/* Video hidden (Settings): the 🎵 tile shows; the player stays the same size behind it, see-through, so it keeps playing. */
+		html.sb-novid #sb-mu.yt .sb-mu-art { position: relative; }
+		html.sb-novid .sb-mu-art iframe { position: absolute; left: 0; top: 0; opacity: 0; pointer-events: none; }
 		.sb-mu-art audio { display: none; }
 		.sb-mu-info { flex: 1; min-width: 0; }
 		.sb-mu-title { font-weight: bold; font-size: 14px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -1868,6 +1873,7 @@
 		$('sb-close').addEventListener('click', () => setOpen(false));
 		$('sb-moon').addEventListener('click', () => setNight(!opts.night));
 		setNight(opts.night);
+		setVideo(opts.musicVideo);
 		$('sb-gear').addEventListener('click', openSettings);
 		// Join buttons on group codes inside messages.
 		panel.addEventListener(
@@ -11008,6 +11014,7 @@
 					},
 				],
 				['keep', 'Keep my beeps in this browser after I log out', () => opts.keep, (on) => setKeep(on)],
+				['video', 'Show the video in the music player', () => opts.musicVideo, (on) => setVideo(on)],
 			],
 		];
 		let page = 0;
@@ -11265,6 +11272,16 @@
 			moon.textContent = opts.night ? '☀️' : '🌙';
 			moon.title = opts.night ? 'Day mode' : 'Night mode';
 		}
+	}
+
+	/**
+	 * Shows or hides the YouTube video in the music player; the song plays on either way.
+	 * @param {boolean} on
+	 */
+	function setVideo(on) {
+		opts.musicVideo = !!on;
+		saveOpts();
+		document.documentElement.classList.toggle('sb-novid', !opts.musicVideo);
 	}
 
 	/** Member number that 🐞 reports can be beeped to (SlimeQueenSamantha). */

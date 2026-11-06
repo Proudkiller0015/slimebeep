@@ -347,6 +347,29 @@ const check = (ok, what) => {
 			MouseY = r[1] + r[3] / 2;
 			x.click();
 		};
+		/** Draws SlimeBeep's settings page and clicks the checkbox with this label (drawn 100px left of it). */
+		window.settingsTick = (label) => {
+			const x = PreferenceExtensionsSettings.SlimeBeep;
+			const real = DrawText;
+			let at = null;
+			window.DrawText = (t, tx, ty, ...r) => {
+				if (t === label) {
+					at = [tx - 100, ty - 33];
+				}
+				return real(t, tx, ty, ...r);
+			};
+			try {
+				x.run();
+			} finally {
+				window.DrawText = real;
+			}
+			if (!at) {
+				throw new Error(`no "${label}" checkbox`);
+			}
+			MouseX = at[0] + 32;
+			MouseY = at[1] + 32;
+			x.click();
+		};
 		/** Turns SlimeBeep's settings to page n (1 or 2) with the page switch's Next half. */
 		window.settingsPage = (n) => {
 			const x = PreferenceExtensionsSettings.SlimeBeep;
@@ -786,12 +809,12 @@ const check = (ok, what) => {
 	await p.click('#sb-body label:nth-of-type(4) input');
 	await p.type('#sb-gmsg', 'Party in 10!');
 	await p.click('#sb-gear');
-	// The WaveBeep gap: its - button sits under page 2's 5 checkboxes.
+	// The WaveBeep gap: its - button sits under page 2's 6 checkboxes.
 	await p.evaluate(() => {
 		settingsPage(2);
 		for (let i = 0; i < 20; i++) {
 			MouseX = 520;
-			MouseY = 160 + 5 * 70 + 20;
+			MouseY = 160 + 6 * 70 + 20;
 			PreferenceExtensionsSettings.SlimeBeep.click();
 		}
 	});
@@ -1802,6 +1825,28 @@ const check = (ok, what) => {
 				!second.audio &&
 				/^▶/.test(second.queue[1]),
 			`⏭ plays the next song (${JSON.stringify(second)})`,
+		);
+		// Video off in Settings: the 🎵 tile shows, the player stays loaded behind it (same size, see-through) and plays on.
+		const art = () =>
+			p.evaluate(() => {
+				const box = document.getElementById('sb-mu-art');
+				const f = box.querySelector('iframe');
+				const fs = getComputedStyle(f);
+				return { w: box.offsetWidth, tile: getComputedStyle(box, '::before').content, fw: f.offsetWidth, op: fs.opacity, src: f.src };
+			});
+		const withVideo = await art();
+		await p.evaluate(() => {
+			settingsPage(2);
+			settingsTick('Show the video in the music player');
+		});
+		const noVideo = await art();
+		const savedOff = await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.options')).musicVideo);
+		await p.evaluate(() => settingsTick('Show the video in the music player'));
+		const videoBack = await art();
+		check(
+			withVideo.w === 112 && withVideo.op === '1' && noVideo.w === 64 && /🎵/.test(noVideo.tile) && noVideo.op === '0' &&
+				noVideo.fw === 112 && noVideo.src === withVideo.src && savedOff === false && videoBack.w === 112 && videoBack.op === '1',
+			`the video can be hidden in Settings: a 🎵 tile, the song keeps playing behind it (${JSON.stringify({ withVideo, noVideo, savedOff, videoBack })})`,
 		);
 		// ▶ in a chat plays the song now, for you only.
 		await p.click(`#sb-msgs [data-play="${WAV}"]`);
