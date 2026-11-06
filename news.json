@@ -382,5 +382,11 @@
     "date": "5 Nov 2026",
     "title": "📢 SlimeBeep 3.10.1",
     "text": "Add-on panels can show their own picture on their tab, and in the window while you are in them."
+  },
+  {
+    "id": "3.11.0",
+    "date": "6 Nov 2026",
+    "title": "📢 SlimeBeep 3.11",
+    "text": "⌨ Pick a key to open and close SlimeBeep in Settings > Extensions > SlimeBeep (like Alt+B or F4). Esc now also closes the window right after you open it with the slime."
   }
 ]

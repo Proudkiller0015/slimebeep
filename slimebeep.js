@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.10.1';
+	const VERSION = '3.11.0';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -73,6 +73,8 @@
 		trustedHosts: [],
 		/** Music player volume, 0 to 100. */
 		musicVolume: 70,
+		/** @type {string | null} The key that opens and closes the window, like 'Alt+B' or 'F4' (Settings); null for none. */
+		hotkey: null,
 		/** Whether the music player is muted. */
 		musicMuted: false,
 		/** @type {{ x: number, y: number } | null} Where the music player was dragged to, in px; null for bottom left. */
@@ -1941,6 +1943,7 @@
 		addEventListener('pointerdown', leavePanel, true);
 		addEventListener('keydown', escAfterClick);
 		addEventListener('keydown', konamiKey, true);
+		addEventListener('keydown', hotkeyDown, true);
 		hookLscg();
 		toggle.addEventListener(
 			'pointerdown',
@@ -2648,6 +2651,55 @@
 				// Turned off in LSCG's list, or registered already.
 			}
 		});
+	}
+	/** True while Settings waits for the open/close key to be pressed. */
+	let pickingHotkey = false;
+	/**
+	 * A key press as 'Ctrl+Alt+Shift+B': letters and digits by where they are on the keyboard (so Shift or
+	 * a keyboard layout doesn't change them), other keys by name. Null for a modifier on its own.
+	 * @param {KeyboardEvent} e
+	 */
+	function comboOf(e) {
+		if (!e.key || ['Control', 'Alt', 'Shift', 'Meta', 'AltGraph', 'CapsLock', 'Dead', 'Unidentified'].includes(e.key)) {
+			return null;
+		}
+		const m = /^(?:Key([A-Z])|Digit(\d))$/.exec(e.code || '');
+		let key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
+		if (m) {
+			key = m[1] || m[2];
+		} else if (e.key === ' ') {
+			key = 'Space';
+		}
+		return [e.ctrlKey && 'Ctrl', e.altKey && 'Alt', e.metaKey && 'Meta', e.shiftKey && 'Shift', key].filter(Boolean).join('+');
+	}
+	/**
+	 * The open/close key (Settings), and picking it in Settings. A plain letter or digit without Ctrl, Alt or
+	 * Meta is left alone while you type in a text box, so it never eats a letter of a message.
+	 * @param {KeyboardEvent} e
+	 */
+	function hotkeyDown(e) {
+		if (pickingHotkey) {
+			const combo = e.key === 'Escape' ? '' : comboOf(e);
+			if (combo === null) {
+				return;
+			}
+			e.preventDefault();
+			e.stopImmediatePropagation();
+			pickingHotkey = false;
+			setOpt('hotkey', combo || null);
+			return;
+		}
+		if (!opts.hotkey || e.repeat || !$('sb-panel') || comboOf(e) !== opts.hotkey) {
+			return;
+		}
+		const t = e.target instanceof HTMLElement ? e.target : null;
+		const typing = !!t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+		if (typing && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+			return;
+		}
+		e.preventDefault();
+		e.stopImmediatePropagation();
+		setOpen(!isOpen());
 	}
 	/**
 	 * A key press: the Konami code (↑↑↓↓←→←→BA) unlocks Arcade Queen.
@@ -10565,12 +10617,15 @@
 		}
 	}
 	/**
-	 * Esc after clicking somewhere in the window that takes no focus (a bubble, the header): the key goes to
-	 * the page, not the window, so it is caught here. Keys typed in the window never get here.
+	 * Esc after clicking somewhere in the window that takes no focus (a bubble, the header), or right after
+	 * opening it with the slime button (which keeps the focus): the key goes to the page, not the window, so it
+	 * is caught here. Keys typed in the window never get here.
 	 * @param {KeyboardEvent} e
 	 */
 	function escAfterClick(e) {
-		if (e.key !== 'Escape' || !panelActive || !isOpen() || (e.target !== document.body && e.target !== document.documentElement)) {
+		const onPage = e.target === document.body || e.target === document.documentElement;
+		const onToggle = e.target instanceof Node && !!$('sb-toggle') && $('sb-toggle').contains(e.target);
+		if (e.key !== 'Escape' || !panelActive || !isOpen() || (!onPage && !onToggle)) {
 			return;
 		}
 		if ($('sb-emoji')) {
@@ -10984,6 +11039,12 @@
 			],
 			[() => `Clear kept beeps (${hist.length})`, clearKept],
 			[() => 'Ask again for picture sites', () => setOpt('trustedHosts', []), () => opts.trustedHosts.length > 0],
+			[
+				() => (pickingHotkey ? 'Press a key… (Esc: none)' : `Open/close key: ${opts.hotkey || 'none'}`),
+				() => {
+					pickingHotkey = !pickingHotkey;
+				},
+			],
 		];
 		const RIGHT = 1430,
 			BUTTON_W = 440;
@@ -11016,6 +11077,7 @@
 			// The game turns a page down without load, run and click. Opening it starts on the first page.
 			load: () => {
 				page = 0;
+				pickingHotkey = false;
 			},
 			run: () => {
 				try {
