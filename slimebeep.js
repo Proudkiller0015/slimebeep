@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.12.0';
+	const VERSION = '3.12.1';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -1096,19 +1096,24 @@
 		const m = CODE_RE.exec(code);
 		return m ? m[1] : '';
 	};
+	/** How long a message shows only its time (hh:mm); older ones show their date too. */
+	const TIME_ONLY_MS = 24 * 60 * 60 * 1000;
 	/**
-	 * A time as hh:mm today, or as a date.
+	 * A time as hh:mm within the last 24 hours, else as a date (with the time too when `full`).
 	 * @param {number | string | Date} t
+	 * @param {boolean} [full] messages pass true: they always show a time; chat lists stay short
 	 */
-	const timeOf = (t) => {
+	const timeOf = (t, full = false) => {
 		const d = new Date(t);
 		if (isNaN(d.getTime())) {
 			return '';
 		}
-		const today = new Date().toDateString() === d.toDateString();
-		return today
-			? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-			: d.toLocaleDateString([], { day: 'numeric', month: 'short' });
+		const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+		if (Date.now() - d.getTime() < TIME_ONLY_MS) {
+			return time;
+		}
+		const date = d.toLocaleDateString([], { day: 'numeric', month: 'short' });
+		return full ? `${date}, ${time}` : date;
 	};
 	/**
 	 * Hue of a member's letter avatar.
@@ -8179,7 +8184,7 @@
 				html`<span class="sb-from" data-prof="${h.MemberNumber}" data-g="${id}" title="See their profile">${name}</span>`;
 			const tr = !h.Sent && trLine(body, `g:${id}`, i >= msgs.length - AUTO_RECENT);
 			const mention = !h.Sent && mentionsMe(h) && ' sb-mention';
-			return html`<div class="sb-b ${h.Sent ? 'me' : 'them'}${act && ' sb-act'}${mention}">${from}${replyQuote(r)}${rich(act ?? body)}${tr}<em>${!h.Sent && trButton(body)}${timeOf(h.Time)}${msgButtons(h)}</em></div>`;
+			return html`<div class="sb-b ${h.Sent ? 'me' : 'them'}${act && ' sb-act'}${mention}">${from}${replyQuote(r)}${rich(act ?? body)}${tr}<em>${!h.Sent && trButton(body)}${timeOf(h.Time, true)}${msgButtons(h)}</em></div>`;
 		};
 		setHtml(
 			view,
@@ -8509,7 +8514,7 @@
 				const body = r ? r.body : textOf(b);
 				const act = asAction(body, b.Sent ? myName() : nameOf(n));
 				const tr = !b.Sent && trLine(body, `n:${n}`, i >= msgs.length - AUTO_RECENT);
-				return html`<div class="sb-b ${b.Sent ? 'me' : 'them'}${act && ' sb-act'}">${replyQuote(r)}${rich(act ?? body)}${tr}${roomLine(b, msgs, i)}<em>${!b.Sent && trButton(body)}${mailMark(b)}${whisperMark(b)}${uncheckedMark(b)}${timeOf(b.Time)}${msgButtons(b)}</em></div>`;
+				return html`<div class="sb-b ${b.Sent ? 'me' : 'them'}${act && ' sb-act'}">${replyQuote(r)}${rich(act ?? body)}${tr}${roomLine(b, msgs, i)}<em>${!b.Sent && trButton(body)}${mailMark(b)}${whisperMark(b)}${uncheckedMark(b)}${timeOf(b.Time, true)}${msgButtons(b)}</em></div>`;
 			});
 		}
 		const waitingBubbles = waitingHere.map(
