@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.13.0';
+	const VERSION = '3.13.1';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -2684,7 +2684,7 @@
 		['lq', '✨', 'Long Live the Queen', 'Secret achievement', true],
 		['aq', '🕹️', 'Arcade Queen', 'Enter the Konami code', true],
 		['ce', '🪙', 'Edge Case', 'Secret achievement', true],
-		['vc', '🐰', 'The Cabaret', 'Join a Velvet Cabaret room', false],
+		['vc', '🐰', 'The Cabaret', 'Join a Velvet Cabaret or Velvet Bunny room', false],
 		['cd', '🍹', 'Care for a Drink?', 'Drink any beverage', false],
 		['tr', '🍪', 'A Treat for the Road', 'Eat any food', false],
 		['cw', '⚔️', 'The Chosen Weapon', 'Hold a scythe', false],
@@ -3497,7 +3497,7 @@
 		if (nick.toLowerCase() === QUEEN_NAME) {
 			unlock('ah');
 		}
-		if (myRoom() && /velvet.*cabaret/i.test(String(ChatRoomData && ChatRoomData.Name))) {
+		if (myRoom() && /velvet.*cabaret|velvet bunny/i.test(String(ChatRoomData && ChatRoomData.Name))) {
 			unlock('vc');
 		}
 		if (allSlotsUsed()) {
