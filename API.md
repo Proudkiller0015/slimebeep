@@ -78,6 +78,19 @@ await sb.inviteToGroup(id, 12345);
 
 Invites go out as normal beeps, so they show in both players' chats. The one to a friend without SlimeBeep has no link in it, and at most 3 of those go out a minute, a few seconds apart; invite beeps to SlimeBeep friends go a second apart. Inviting many people never turns into a burst of beeps. With `sent: 'later'` the code still works: try again in a minute, or pass the code on yourself.
 
+## Beeping a friend
+
+```js
+sb.sendBeep(12345, 'Hi!');
+// sent now:                                              { ok: true, sent: 'now' }
+// they're offline: held, sent when they're back
+// (and left in their SlimeBeep mailbox if they have it): { ok: true, sent: 'waiting' }
+// not your friend (the game won't deliver it), not
+// logged in, an empty text, or 100 beeps already waiting: { ok: false, why }
+```
+
+It beeps the way SlimeBeep's own chat does, so it shows in your SlimeBeep chat with them and offline friends still get it later. Use it instead of sending an `AccountBeep` yourself when you want both, for example a whisper turned into a beep because the person left the room. Text is cut at 1000 characters.
+
 ## Theme add-ons
 
 SlimeBeep can take a theme add-on's colours (Themed and BCNeko are supported). It's off unless switched on.

@@ -879,7 +879,7 @@ const check = (ok, what) => {
 		api0.v === 1 &&
 			api0.frozen &&
 			api0.fns ===
-				'addPanel,apiVersion,doNotDisturb,group,groups,hasSlimeBeep,inviteToGroup,matchTheme,matchingTheme,nowPlaying,on,openChat,openGroup,openInvite,openPanel,openSettings,playSong,proveIdentity,setDoNotDisturb,slimeBeepFriends,version',
+				'addPanel,apiVersion,doNotDisturb,group,groups,hasSlimeBeep,inviteToGroup,matchTheme,matchingTheme,nowPlaying,on,openChat,openGroup,openInvite,openPanel,openSettings,playSong,proveIdentity,sendBeep,setDoNotDisturb,slimeBeepFriends,version',
 		`window.SlimeBeep.api is there for other add-ons, and can't be changed (${api0.fns})`,
 	);
 	// proveIdentity: a signed "this is me" for another add-on's server, made for that server only.
@@ -1844,8 +1844,16 @@ const check = (ok, what) => {
 		await p.evaluate(() => settingsTick('Show the video in the music player'));
 		const videoBack = await art();
 		check(
-			withVideo.w === 112 && withVideo.op === '1' && noVideo.w === 64 && /🎵/.test(noVideo.tile) && noVideo.op === '0' &&
-				noVideo.fw === 112 && noVideo.src === withVideo.src && savedOff === false && videoBack.w === 112 && videoBack.op === '1',
+			withVideo.w === 112 &&
+				withVideo.op === '1' &&
+				noVideo.w === 64 &&
+				/🎵/.test(noVideo.tile) &&
+				noVideo.op === '0' &&
+				noVideo.fw === 112 &&
+				noVideo.src === withVideo.src &&
+				savedOff === false &&
+				videoBack.w === 112 &&
+				videoBack.op === '1',
 			`the video can be hidden in Settings: a 🎵 tile, the song keeps playing behind it (${JSON.stringify({ withVideo, noVideo, savedOff, videoBack })})`,
 		);
 		// ▶ in a chat plays the song now, for you only.
@@ -2281,7 +2289,7 @@ const check = (ok, what) => {
 		await shot('achievements-friend');
 		await p.click('#sb-ask [data-act=close]');
 		check(
-			catAch.title === "🏆 Cat's achievements · 2 / 22" && JSON.stringify(catAch.on) === '["Slimed!","Royal Audience"]' && !catAch.chat,
+			catAch.title === "🏆 Cat's achievements · 2 / 23" && JSON.stringify(catAch.on) === '["Slimed!","Royal Audience"]' && !catAch.chat,
 			`tapping a friend's 🏆 shows their achievements, not their chat (${JSON.stringify(catAch)})`,
 		);
 		// Royal Audience counts seconds in a room with the Slime Queen.
@@ -3398,6 +3406,55 @@ const check = (ok, what) => {
 			`the Slime badges button goes others only, off, everyone, and saves it (${JSON.stringify(hello.cycle)})`,
 		);
 	}
+	// ---- api.sendBeep: other add-ons beep through SlimeBeep: now for a friend who is online, held for one who is
+	// offline (it shows waiting in their chat), refused for strangers, yourself and empty text.
+	{
+		const viaSend = await p.evaluate(() => {
+			beeps.length = 0;
+			const before = JSON.parse(localStorage.getItem(`slimebeep.waiting.${Player.MemberNumber}`) || '[]').length;
+			const r = {
+				now: SlimeBeep.api.sendBeep(11, '  hi from an add-on  '),
+				later: SlimeBeep.api.sendBeep(14, 'catch you later'),
+				stranger: SlimeBeep.api.sendBeep(99, 'who are you'),
+				empty: SlimeBeep.api.sendBeep(11, '   '),
+				self: SlimeBeep.api.sendBeep(Player.MemberNumber, 'me'),
+				beeps: beeps.slice(),
+			};
+			const held = JSON.parse(localStorage.getItem(`slimebeep.waiting.${Player.MemberNumber}`) || '[]');
+			r.held = held.length - before;
+			r.heldFor = held.length ? held[held.length - 1].n : null;
+			return r;
+		});
+		check(
+			viaSend.now.ok &&
+				viaSend.now.sent === 'now' &&
+				viaSend.later.ok &&
+				viaSend.later.sent === 'waiting' &&
+				viaSend.stranger.why === 'not-friend' &&
+				viaSend.empty.why === 'empty' &&
+				viaSend.self.why === 'bad-member' &&
+				viaSend.beeps.length === 1 &&
+				viaSend.beeps[0][0] === 11 &&
+				viaSend.beeps[0][1] === 'hi from an add-on' &&
+				viaSend.held === 1 &&
+				viaSend.heldFor === 14,
+			`api.sendBeep beeps an online friend now, holds it for an offline one, refuses the rest (${JSON.stringify(viaSend)})`,
+		);
+		await p.evaluate(() => SlimeBeep.api.openChat(14));
+		await wait(250);
+		const heldShown = await p.$eval('#sb-msgs', (e) => e.textContent);
+		check(
+			/catch you later/.test(heldShown) && /sends when they're online/.test(heldShown),
+			'and the held beep shows waiting in their chat',
+		);
+		const cancel = await p.$('#sb-msgs [data-cancel]:last-of-type');
+		if (cancel) {
+			await cancel.click();
+			await wait(150);
+		}
+		await tap('#sb-back');
+		await wait(150);
+	}
 	// ---- 🤫 Whispers in a chat room show in that person's chat; there, replying whispers while you share the room.
 	{
 		const badgeBefore = await p.$eval('#sb-badge', (e) => e.textContent);
@@ -3483,6 +3540,91 @@ const check = (ok, what) => {
 		await p.evaluate(() => ServerSend('ChatRoomChat', { Content: 'typed in the room', Type: 'Whisper', Target: 11 }));
 		await wait(300);
 		check(/typed in the room/.test(await p.$eval('#sb-msgs', (e) => e.textContent)), "a whisper sent from the game's chat shows here too");
+		// 🦀 With CRABS loaded, the whisper goes out through its Whisper+ (reaches them anywhere on a map); when CRABS
+		// refuses (gagged, a BCX rule), nothing goes out and the text stays in the box.
+		await p.evaluate(() => {
+			window.crabsCalls = [];
+			window.crabsRefuses = false;
+			window.Commands = [
+				{
+					Tag: 'whisper+',
+					Action: (args, command) => {
+						window.crabsCalls.push(command);
+						if (!window.crabsRefuses) {
+							const n = Number(command.split(' ')[1]);
+							ServerSend('ChatRoomChat', { Content: `+: ${command.slice(`/whisper+ ${n} `.length)}`, Type: 'Whisper', Target: n });
+						}
+					},
+				},
+			];
+			chats.length = 0;
+			beeps.length = 0;
+		});
+		await tap('#sb-back');
+		await wait(150);
+		await p.evaluate(() => SlimeBeep.api.openChat(11));
+		await wait(200);
+		const plusHolder = await p.$eval('#sb-text', (e) => e.placeholder);
+		await p.type('#sb-text', 'across  the map');
+		await p.keyboard.press('Enter');
+		await wait(300);
+		const plus = await p.evaluate(() => ({
+			calls: window.crabsCalls.slice(),
+			chats: chats.map((c) => c.Content),
+			beeps: beeps.length,
+			box: document.getElementById('sb-text').value,
+		}));
+		const plusThread = await p.$eval('#sb-msgs', (e) => e.textContent);
+		check(
+			plusHolder === 'Whisper+ Ann…' &&
+				plus.calls.join('|') === '/whisper+ 11 across  the map' &&
+				plus.chats.join('|') === '+: across  the map' &&
+				plus.beeps === 0 &&
+				plus.box === '' &&
+				/\+: across {2}the map/.test(plusThread),
+			`with CRABS, the chat offers Whisper+ and sends through CRABS' /whisper+, shown in her chat (${JSON.stringify({ plusHolder, plus })})`,
+		);
+		await shot('whisper-plus');
+		await p.evaluate(() => {
+			window.crabsRefuses = true;
+		});
+		await p.type('#sb-text', 'while gagged');
+		await p.keyboard.press('Enter');
+		await wait(300);
+		const refused = await p.evaluate(() => ({
+			calls: window.crabsCalls.length,
+			chats: chats.length,
+			beeps: beeps.length,
+			box: document.getElementById('sb-text').value,
+		}));
+		check(
+			refused.calls === 2 && refused.chats === 1 && refused.beeps === 0 && refused.box === 'while gagged',
+			`when CRABS refuses a Whisper+, nothing is sent instead and the text stays in the box (${JSON.stringify(refused)})`,
+		);
+		await p.evaluate(() => {
+			delete window.Commands;
+			document.getElementById('sb-text').value = '';
+		});
+		// A plain beep another add-on sends (CRABS turns a Whisper+ into one when they left the room) lands in the chat;
+		// one the game's beep sender also logs is there once.
+		await p.evaluate(() => {
+			ServerSend('AccountBeep', { MemberNumber: 11, BeepType: '', Message: 'you left before I sent it' });
+			ServerSend('AccountBeep', { MemberNumber: 11, BeepType: '', Message: 'sent the game way' });
+			FriendListBeepLog.push({
+				MemberNumber: 11,
+				MemberName: 'Ann',
+				Sent: true,
+				Read: true,
+				Time: new Date(),
+				Message: 'sent the game way',
+			});
+		});
+		await wait(400);
+		const filed = await p.$eval('#sb-msgs', (e) => e.textContent);
+		check(
+			filed.split('you left before I sent it').length === 2 && filed.split('sent the game way').length === 2,
+			"a beep another add-on sends shows in that friend's chat, and one the game also logs shows once",
+		);
 		await p.evaluate(() => {
 			window.ChatRoomCharacter = [];
 		});
@@ -3640,7 +3782,10 @@ const check = (ok, what) => {
 		await p.keyboard.press('Escape');
 		await wait(100);
 		const escList = await p.evaluate(() => document.getElementById('sb-panel').style.display === 'flex');
-		check(listOpen.open && !escList, `Esc closes the window right after opening it with the slime button (${JSON.stringify({ listOpen, escList })})`);
+		check(
+			listOpen.open && !escList,
+			`Esc closes the window right after opening it with the slime button (${JSON.stringify({ listOpen, escList })})`,
+		);
 		// The open/close key, picked in Settings: Alt+B opens and closes the window; a plain key isn't taken
 		// from a text box; Esc while picking sets none.
 		await p.evaluate(() => settingsClick('Open/close key: none'));
@@ -3653,7 +3798,10 @@ const check = (ok, what) => {
 		await p.keyboard.down('Alt');
 		await p.keyboard.press('KeyB');
 		await p.keyboard.up('Alt');
-		const picked = await p.evaluate(() => ({ saved: JSON.parse(localStorage.getItem('slimebeep.options')).hotkey, open: document.getElementById('sb-panel').style.display === 'flex' }));
+		const picked = await p.evaluate(() => ({
+			saved: JSON.parse(localStorage.getItem('slimebeep.options')).hotkey,
+			open: document.getElementById('sb-panel').style.display === 'flex',
+		}));
 		const hk = async () => {
 			await p.keyboard.down('Alt');
 			await p.keyboard.press('KeyB');
@@ -3689,7 +3837,11 @@ const check = (ok, what) => {
 		await p.keyboard.press('KeyM');
 		const plain = await p.evaluate(() => {
 			const b = document.getElementById('hk-box');
-			const r = { saved: JSON.parse(localStorage.getItem('slimebeep.options')).hotkey, typed: b.value, open: document.getElementById('sb-panel').style.display === 'flex' };
+			const r = {
+				saved: JSON.parse(localStorage.getItem('slimebeep.options')).hotkey,
+				typed: b.value,
+				open: document.getElementById('sb-panel').style.display === 'flex',
+			};
 			b.remove();
 			document.activeElement && document.activeElement.blur();
 			return r;
@@ -3701,8 +3853,18 @@ const check = (ok, what) => {
 		await p.keyboard.press('Escape');
 		const cleared = await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.options')).hotkey);
 		check(
-			picking && picked.saved === 'Alt+B' && !picked.open && hkFirst && !hkSecond && f4 === 'F4' && f4Open &&
-				plain.saved === 'M' && plain.typed === 'm' && !plain.open && plain.outside && cleared === null,
+			picking &&
+				picked.saved === 'Alt+B' &&
+				!picked.open &&
+				hkFirst &&
+				!hkSecond &&
+				f4 === 'F4' &&
+				f4Open &&
+				plain.saved === 'M' &&
+				plain.typed === 'm' &&
+				!plain.open &&
+				plain.outside &&
+				cleared === null,
 			`a key picked in Settings opens and closes SlimeBeep; a plain letter still types in text boxes; Esc sets none (${JSON.stringify({ picking, picked, hkFirst, hkSecond, f4, f4Open, plain, cleared })})`,
 		);
 		if (plain.outside) {
@@ -4324,6 +4486,19 @@ const check = (ok, what) => {
 			!cuddle.snow && cuddle.queen,
 			`holding the Slime Queen Samantha plushie (not another) unlocks Marketable Queen (${JSON.stringify(cuddle)})`,
 		);
+		// A Wild Sin: CRABS installed (found through the mod SDK). Checked as the account whose history is loaded.
+		const wild = await p.evaluate(async () => {
+			Player.MemberNumber = 4;
+			const got = () => !!JSON.parse(localStorage.getItem(`slimebeep.ach.${Player.MemberNumber}`) || '{"got":{}}').got.ws;
+			const before = got();
+			window.bcModSdk.getModsInfo = () => [{ name: 'CRABS', version: '2.1.5' }];
+			await new Promise((r) => setTimeout(r, 1300));
+			const after = got();
+			delete window.bcModSdk.getModsInfo;
+			Player.MemberNumber = 2;
+			return { before, after };
+		});
+		check(!wild.before && wild.after, `having CRABS installed unlocks A Wild Sin (${JSON.stringify(wild)})`);
 		check(!sword.cw && !!as2.cw, "holding Echo's scythe (not its sword) unlocks The Chosen Weapon");
 		// Secured: every item slot used (here, two slots: one filled, then the other).
 		await p.evaluate(() => {
