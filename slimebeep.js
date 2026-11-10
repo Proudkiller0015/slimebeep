@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.12.1';
+	const VERSION = '3.13.0';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -2154,6 +2154,7 @@
 		try {
 			const m = /** @type {{ Type?: string, Target?: number, Content?: unknown } | null} */ (data);
 			if (event === 'ChatRoomChat' && m && m.Type === 'Whisper' && isNum(m.Target)) {
+				lastWhisperTo = Number(m.Target);
 				takeWhisper(Number(m.Target), m.Content, true);
 			}
 			const b = /** @type {{ BeepType?: string, Message?: unknown } | null} */ (data);
@@ -2161,11 +2162,66 @@
 				konamiText(m.Content);
 			} else if (event === 'AccountBeep' && b && !b.BeepType) {
 				konamiText(b.Message);
+				const to = /** @type {{ MemberNumber?: unknown }} */ (b).MemberNumber;
+				const said = b.Message;
+				if (isNum(to) && typeof said === 'string') {
+					// After the sender is done: the game's own beeps are in its beep log by then.
+					setTimeout(() => takeSentBeep(Number(to), said), 0);
+				}
 			}
 		} catch (e) {
 			warn(e, 'whisper');
 		}
 	};
+	/** @type {number | null} Who the last whisper you sent went to (outListener sets it). */
+	let lastWhisperTo = null;
+	/**
+	 * Files a plain beep you sent some other way than the game's beep sender (another add-on, like CRABS when it
+	 * turns a Whisper+ into a beep), which the game's beep log never sees. Beeps the log has are left to sync().
+	 * @param {number} n
+	 * @param {string} message
+	 */
+	function takeSentBeep(n, message) {
+		const text = message.split(MARK)[0].trim().slice(0, 1000);
+		if (!text || n === Player.MemberNumber || !loggedIn()) {
+			return;
+		}
+		sync();
+		const now = Date.now();
+		const known = hist.some(
+			(h) => h.Sent && h.MemberNumber === n && now - h.Time < 10000 && String(h.Message).split(MARK)[0].trim() === text,
+		);
+		if (known) {
+			return;
+		}
+		const k = `o:${n}|${now}|${text.slice(0, 40)}`;
+		hist.push({ k, MemberNumber: n, MemberName: nameOf(n) || `#${n}`, Sent: true, Time: now, Message: text });
+		histKeys.add(k);
+		saveHistory();
+		if (isOpen() && tab !== 'wave') {
+			render(true);
+		}
+	}
+	/**
+	 * CRABS' Whisper+ (reaches anyone in the room, at any distance on a map; CRABS' own gag and BCX checks apply),
+	 * or null when CRABS isn't loaded. The function says whether the whisper went out.
+	 * @returns {((n: number, text: string) => boolean) | null}
+	 */
+	function crabsWhisperPlus() {
+		const list = /** @type {{ Commands?: unknown }} */ (window).Commands;
+		const cmd = Array.isArray(list)
+			? /** @type {{ Tag?: unknown, Action?: unknown }[]} */ (list).find((c) => c && c.Tag === 'whisper+' && typeof c.Action === 'function')
+			: undefined;
+		if (!cmd) {
+			return null;
+		}
+		const action = /** @type {(args: string, command: string) => void} */ (cmd.Action);
+		return (n, text) => {
+			lastWhisperTo = null;
+			action(`${n} ${text}`, `/whisper+ ${n} ${text}`);
+			return lastWhisperTo === n;
+		};
+	}
 	/**
 	 * Adds a chat room whisper to that person's chat. It also shows in the room's chat, so there is no
 	 * sound, card or unread badge for it.
@@ -2452,6 +2508,45 @@
 		/** { on, source }: whether SlimeBeep matches a theme add-on, and which one it found ('Themed', 'BCNeko' or null). */
 		matchingTheme: () => ({ on: !!opts.themed, source: themeSource()?.name || null }),
 		/**
+		 * Beeps a friend the way SlimeBeep's own chat does: now, or, when they're offline, held and sent once they're
+		 * back (and left in their SlimeBeep mailbox if they have SlimeBeep). It shows in your chat with them.
+		 * @param {number} memberNumber
+		 * @param {string} text
+		 * @returns {{ ok: true, sent: 'now' | 'waiting' } | { ok: false, why: 'not-logged-in' | 'bad-member' | 'empty' | 'not-friend' | 'too-many-waiting' }}
+		 */
+		sendBeep: (memberNumber, text) => {
+			if (!loggedIn()) {
+				return { ok: false, why: 'not-logged-in' };
+			}
+			if (!isNum(memberNumber) || memberNumber === Player.MemberNumber) {
+				return { ok: false, why: 'bad-member' };
+			}
+			const t = typeof text === 'string' ? text.trim().slice(0, 1000) : '';
+			if (!t) {
+				return { ok: false, why: 'empty' };
+			}
+			// The game's server only delivers beeps to people who have you as a friend.
+			if (!isFriend(memberNumber)) {
+				return { ok: false, why: 'not-friend' };
+			}
+			if (isOffline(memberNumber)) {
+				if (waiting.length >= 100) {
+					return { ok: false, why: 'too-many-waiting' };
+				}
+				queueBeep(memberNumber, t);
+				if (isOpen()) {
+					render(true);
+				}
+				return { ok: true, sent: 'waiting' };
+			}
+			beep(memberNumber, t, false);
+			sync();
+			if (isOpen()) {
+				setTimeout(() => render(true), 50);
+			}
+			return { ok: true, sent: 'now' };
+		},
+		/**
 		 * Opens SlimeBeep on a chat with this member number.
 		 * @param {number} memberNumber
 		 */
@@ -2596,6 +2691,7 @@
 		['em', '🪄', 'The Era of Magic', 'Cast any LSCG spell', false],
 		['se', '🔒', 'Secured', 'Have every item slot used', false],
 		['rc', '🧸', 'Marketable Queen', 'Hold the Slime Queen Samantha plushie', false],
+		['ws', '🦀', 'A Wild Sin', 'Install CRABS', false],
 	];
 	/** Whether an add-on is loaded, by its ModSDK name. */
 	const hasMod = (/** @type {string} */ name) => {
@@ -3406,6 +3502,9 @@
 		}
 		if (allSlotsUsed()) {
 			unlock('se');
+		}
+		if (hasMod('CRABS')) {
+			unlock('ws');
 		}
 		const eating =
 			Array.isArray(Player.Appearance) &&
@@ -8526,7 +8625,7 @@
 		const whisper = near && opts.roomWhisper;
 		let placeholder = `Beep ${nameOf(n)}…`;
 		if (whisper) {
-			placeholder = `Whisper ${nameOf(n)}…`;
+			placeholder = crabsWhisperPlus() ? `Whisper+ ${nameOf(n)}…` : `Whisper ${nameOf(n)}…`;
 		} else if (offline) {
 			placeholder = `${nameOf(n)} is offline…`;
 		}
@@ -8604,8 +8703,19 @@
 			// Cleared first: a whisper redraws the chat while it is sent, and the redraw keeps what is in the box.
 			ta.value = '';
 			// In the same room, it's a whisper unless whispers or 🤫 are off (outListener adds it to this chat).
-			if (opts.whispers && opts.roomWhisper && sameRoom(n) && ChatRoomSendWhisper(n, text) === true) {
-				return;
+			// With CRABS, its Whisper+: it reaches them at any distance on a map; if CRABS refuses (gagged, a BCX
+			// rule), it says why and your text stays in the box.
+			if (opts.whispers && opts.roomWhisper && sameRoom(n)) {
+				const plus = crabsWhisperPlus();
+				if (plus) {
+					if (!plus(n, text)) {
+						ta.value = typed;
+					}
+					return;
+				}
+				if (ChatRoomSendWhisper(n, text) === true) {
+					return;
+				}
 			}
 			if (isOffline(n)) {
 				queueBeep(n, text);

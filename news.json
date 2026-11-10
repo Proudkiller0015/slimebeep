@@ -394,5 +394,11 @@
     "date": "6 Nov 2026",
     "title": "📢 SlimeBeep 3.12",
     "text": "🎵 You can hide the video in the music player: untick \"Show the video in the music player\" in Settings > Extensions > SlimeBeep (page 2). The song keeps playing."
+  },
+  {
+    "id": "3.13.0",
+    "date": "10 Nov 2026",
+    "title": "📢 SlimeBeep 3.13",
+    "text": "🦀 With CRABS, whispering someone in your room from SlimeBeep uses its Whisper+, so it reaches them anywhere on a map, and Whisper+ messages CRABS turns into beeps show in your SlimeBeep chats. New achievement: 🦀 A Wild Sin."
   }
 ]
