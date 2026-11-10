@@ -4495,9 +4495,25 @@ const check = (ok, what) => {
 			await new Promise((r) => setTimeout(r, 1300));
 			const after = got();
 			delete window.bcModSdk.getModsInfo;
+			// The Cabaret also comes from any Velvet Bunny room (here Velvet Bunny Street).
+			const cabaret = () => !!JSON.parse(localStorage.getItem(`slimebeep.ach.${Player.MemberNumber}`) || '{"got":{}}').got.vc;
+			const room = window.ChatRoomData;
+			// A fresh account, which never was in a Cabaret room.
+			Player.MemberNumber = 6;
+			window.ChatRoomData = { Name: 'Velvet Lounge' };
+			await new Promise((r) => setTimeout(r, 1300));
+			const streetBefore = cabaret();
+			window.ChatRoomData = { Name: 'Velvet Bunny Street' };
+			await new Promise((r) => setTimeout(r, 1300));
+			const street = cabaret();
+			window.ChatRoomData = room;
 			Player.MemberNumber = 2;
-			return { before, after };
+			return { before, after, streetBefore, street };
 		});
+		check(
+			!wild.streetBefore && wild.street,
+			`being in any Velvet Bunny room (Velvet Bunny Street) unlocks The Cabaret too (${JSON.stringify(wild)})`,
+		);
 		check(!wild.before && wild.after, `having CRABS installed unlocks A Wild Sin (${JSON.stringify(wild)})`);
 		check(!sword.cw && !!as2.cw, "holding Echo's scythe (not its sword) unlocks The Chosen Weapon");
 		// Secured: every item slot used (here, two slots: one filled, then the other).
