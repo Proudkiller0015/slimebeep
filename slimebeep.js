@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.13.1';
+	const VERSION = '3.13.2';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -1319,7 +1319,7 @@
 		.sb-rs[data-rs="ne"], .sb-rs[data-rs="sw"] { cursor: nesw-resize; }
 		.sb-head button, .sb-thead button, .sb-compose button, .sb-emo-tabs button, .sb-emo-grid button { padding: 0; display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
 		.sb-tabs { display: flex; gap: 3px; padding: 8px 8px 6px; background: #ffe6f3; }
-		.sb-tabs button { flex: 1 1 auto; min-width: 0; white-space: nowrap; border: none; border-radius: 14px; padding: 5px 5px; background: #fff; color: #c2186b; text-align: center; }
+		.sb-tabs button { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; min-width: 0; white-space: nowrap; border: none; border-radius: 14px; padding: 5px 5px; background: #fff; color: #c2186b; text-align: center; }
 		.sb-tabs button.on { background: #ff4fa3; color: #fff; box-shadow: 0 2px 6px #ff4fa366; }
 		.sb-tabs button i { font-style: normal; background: #ff2e8a; color: #fff; border-radius: 8px; padding: 0 5px; margin-left: 4px; font-size: 10px; }
 		.sb-tabs button.on i { background: #fff; color: #ff2e8a; }
@@ -1410,6 +1410,8 @@
 		.sb-status-card .sb-search { margin: 0; }
 		.sb-status-card label { display: flex; align-items: center; gap: 6px; }
 		.sb-mu-ears { display: flex; flex-wrap: wrap; gap: 2px; margin-top: 3px; }
+		.sb-mu-err { margin: 0 12px 6px; padding: 6px 8px; border-radius: 10px; background: #fff0f0; color: #b3261e; font-size: 11px; }
+		.sb-mu-err a { color: inherit; font-weight: bold; margin-left: 4px; white-space: nowrap; }
 		.sb-mu-ears:empty { display: none; }
 		.sb-mu-ears .sb-av { width: 16px; height: 16px; font-size: 7px; border: 0; }
 		.sb-mu-by { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; opacity: .7; padding-right: 4px; }
@@ -1611,6 +1613,7 @@
 		html.sb-night .sb-mu-controls .sb-mu-vol button { background: transparent; }
 		html.sb-night .sb-mu-art { background: linear-gradient(135deg, #4f6bd8, #7a5cd6); }
 		html.sb-night .sb-mu-status, html.sb-night .sb-mu-progress { color: #8f9fd6; }
+		html.sb-night .sb-mu-err { background: #3a2030; color: #ffb4c8; }
 		html.sb-night #sb-mu input[type=range] { accent-color: #5b8cff; }
 		html.sb-night .sb-mu-more { border-color: #2c3866; }
 		html.sb-night .sb-mu-row.on, html.sb-night .sb-jamline.on { background: #253064; }
@@ -1671,6 +1674,7 @@
 		html.sb-themed .sb-mu-controls .sb-mu-big, html.sb-themed .sb-mu-share.on, html.sb-themed .sb-mu-art { background: var(--sb-t-accent); color: var(--sb-t-text); }
 		html.sb-themed .sb-mu-controls .sb-mu-vol button { background: transparent; }
 		html.sb-themed .sb-mu-status, html.sb-themed .sb-mu-progress { color: var(--sb-t-text-disabled); }
+		html.sb-themed .sb-mu-err { background: var(--sb-t-element); color: var(--sb-t-text); }
 		html.sb-themed #sb-mu input[type=range] { accent-color: var(--sb-t-accent); }
 		html.sb-themed .sb-mu-more { border-color: var(--sb-t-element-hover); }
 		html.sb-themed .sb-mu-row.on, html.sb-themed .sb-jamline.on { background: var(--sb-t-element-hover); }
@@ -2692,7 +2696,15 @@
 		['se', '🔒', 'Secured', 'Have every item slot used', false],
 		['rc', '🧸', 'Marketable Queen', 'Hold the Slime Queen Samantha plushie', false],
 		['ws', '🦀', 'A Wild Sin', 'Install CRABS', false],
+		['qc', '💻', 'Queen of Cheats', 'Use !cheats', true],
 	];
+	/** Achievements left off the list, and out of its count, until they are unlocked. */
+	const UNLISTED = new Set(['qc']);
+	/**
+	 * How many achievements someone's list counts: every one but those still unlisted for them.
+	 * @param {string[]} got the ids they have
+	 */
+	const achTotal = (got) => ACHIEVEMENTS.filter(([id]) => !UNLISTED.has(id) || got.includes(id)).length;
 	/** Whether an add-on is loaded, by its ModSDK name. */
 	const hasMod = (/** @type {string} */ name) => {
 		try {
@@ -3605,7 +3617,8 @@
 		);
 	}
 	/**
-	 * Your achievements, or a friend's (from their status), unlocked ones first; secrets stay ??? until unlocked.
+	 * Your achievements, or a friend's (from their status), unlocked ones first; secrets stay ??? until unlocked, and
+	 * unlisted ones (UNLISTED) aren't shown at all until then.
 	 * @param {number} [n] a friend's member number; 0 for yours
 	 */
 	function openAchievements(n = 0) {
@@ -3616,7 +3629,7 @@
 		/** @type {Record<string, number>} Theirs come without dates. */
 		const got = theirs ? Object.fromEntries(theirs.a.map((id) => [id, 0])) : loadAch().got;
 		const has = (/** @type {string} */ id) => Object.hasOwn(got, id);
-		const shown = ACHIEVEMENTS.filter(([id]) => !MOD_ONLY[id] || hasMod(MOD_ONLY[id]) || has(id));
+		const shown = ACHIEVEMENTS.filter(([id]) => has(id) || (!UNLISTED.has(id) && (!MOD_ONLY[id] || hasMod(MOD_ONLY[id]))));
 		const list = shown.sort((x, y) => Number(has(y[0])) - Number(has(x[0])));
 		const box = document.createElement('div');
 		box.id = 'sb-ask';
@@ -3813,7 +3826,7 @@
 		return html`<div class="sb-row sb-merow" id="sb-merow" title="Set your status">${avatar(Player.MemberNumber, myName())}
 			<div class="sb-main"><div class="sb-name">${myName()} <small class="sb-hint">(you)</small></div>
 			${text ? html`<div class="sb-status" title="${text}">${text}</div>` : html`<div class="sb-sub">💬 Set a status…</div>`}</div>
-			<button class="sb-pill sb-achbtn" id="sb-achbtn" title="Your achievements">🏆 ${st.a.length}/${ACHIEVEMENTS.length}</button></div>`;
+			<button class="sb-pill sb-achbtn" id="sb-achbtn" title="Your achievements">🏆 ${st.a.length}/${achTotal(st.a)}</button></div>`;
 	}
 	/** The box for your status and achievements (your picture at the top, or your row in 💖, opens it). */
 	function openStatus() {
@@ -3829,7 +3842,7 @@
 			<input class="sb-search" id="sb-status-text" maxlength="${STATUS_MAX}" placeholder="What's up? (like king of the swamp)" aria-label="Your status">
 			<label class="sb-hint"><input type="checkbox" id="sb-status-music"> Show what I'm listening to</label>
 			<span class="sb-hint" style="text-align:center">SlimeBeep friends and your group chats see it.</span>
-			<div class="sb-crop-btns" style="flex-wrap:wrap;justify-content:center"><button class="sb-pill" data-act="ach">🏆 Achievements · ${myStatus().a.length}/${ACHIEVEMENTS.length}</button><button class="sb-pill" data-act="pic">🖼 Picture and settings</button></div>
+			<div class="sb-crop-btns" style="flex-wrap:wrap;justify-content:center"><button class="sb-pill" data-act="ach">🏆 Achievements · ${myStatus().a.length}/${achTotal(myStatus().a)}</button><button class="sb-pill" data-act="pic">🖼 Picture and settings</button></div>
 			<div class="sb-crop-btns" style="justify-content:center"><button class="sb-pill" data-act="clear">Clear</button><button class="sb-go" data-act="save">Save</button></div>
 		</div>`,
 		);
@@ -9091,6 +9104,22 @@
 
 	/** Where YouTube songs play from (YouTube's privacy-enhanced embed). */
 	const YT_ORIGIN = 'https://www.youtube-nocookie.com';
+	/**
+	 * Why the YouTube player refuses a song, by the error code it reports.
+	 * @param {number} code
+	 */
+	function youTubeError(code) {
+		if (code === 153) {
+			return "YouTube won't play here: this browser or app doesn't tell YouTube which site asks for the video. Links to sound files (mp3, ogg…) still play.";
+		}
+		if (code === 101 || code === 150) {
+			return "The video's owner only lets it play on YouTube.";
+		}
+		if (code === 100) {
+			return 'This video was removed or is private.';
+		}
+		return `YouTube can't play this video (error ${code}).`;
+	}
 	/** Longest song title kept. */
 	const TITLE_MAX = 100;
 	/** The end of a sound file's name, and the name without it. */
@@ -9215,6 +9244,7 @@
 	 * @property {number} fixedAt Date.now() when a listener's player was last moved to the host's time
 	 * @property {number} drift seconds ahead of the host (negative: behind), averaged
 	 * @property {boolean} checkLead the next measurement tells how well the last move landed
+	 * @property {string} error why YouTube won't play it; '' while it can
 	 */
 	/** @type {Music | null} */
 	let music = null;
@@ -9349,7 +9379,7 @@
 		if (!music || !(el instanceof HTMLIFrameElement) || e.origin !== YT_ORIGIN || e.source !== el.contentWindow) {
 			return;
 		}
-		/** @type {{ event?: string, info?: { duration?: unknown, currentTime?: unknown, playerState?: unknown, videoData?: { title?: unknown, author?: unknown } } }} */
+		/** @type {{ event?: string, info?: number | { duration?: unknown, currentTime?: unknown, playerState?: unknown, videoData?: { title?: unknown, author?: unknown } } }} */
 		let d;
 		try {
 			d = JSON.parse(String(e.data));
@@ -9362,6 +9392,11 @@
 		if (d.event === 'onReady') {
 			toYouTube(el, { event: 'listening' });
 			playerReady();
+			return;
+		}
+		if (d.event === 'onError' && typeof d.info === 'number') {
+			music.error = youTubeError(d.info);
+			drawMusic();
 			return;
 		}
 		const info = d.info;
@@ -9473,6 +9508,7 @@
 			fixedAt: 0,
 			drift: 0,
 			checkLead: false,
+			error: '',
 		};
 		$('sb-mu-art').replaceChildren(el);
 		applyVolume();
@@ -10203,6 +10239,17 @@
 			status = m.author || 'Only you';
 		}
 		$('sb-mu-status').textContent = status;
+		const err = $('sb-mu-err');
+		const errText = m ? m.error : '';
+		if (err.dataset.text !== errText) {
+			err.dataset.text = errText;
+			err.hidden = !errText;
+			const watch = m && m.track.yt ? `https://www.youtube.com/watch?v=${m.track.yt}` : '';
+			setHtml(
+				err,
+				html`⚠ ${errText}${watch ? html`<a href="${watch}" target="_blank" rel="noopener noreferrer">Open on YouTube</a>` : ''}`,
+			);
+		}
 		drawEars();
 		const pos = musicPos();
 		$('sb-mu-cur').textContent = clock(pos);
@@ -10295,6 +10342,7 @@
 				<div class="sb-mu-art" id="sb-mu-art"></div>
 				<div class="sb-mu-info"><div class="sb-mu-title" id="sb-mu-title"></div><div class="sb-mu-status" id="sb-mu-status"></div><div class="sb-mu-ears" id="sb-mu-ears"></div></div>
 			</div>
+			<div class="sb-mu-err" id="sb-mu-err" hidden></div>
 			<div class="sb-mu-progress"><span id="sb-mu-cur">0:00</span><input type="range" id="sb-mu-seek" min="0" max="0" step="1" value="0" aria-label="Song position"><span id="sb-mu-dur">0:00</span></div>
 			<div class="sb-mu-controls">
 				<button id="sb-mu-prev" title="Back to the start (twice: the song before)">${ICONS.prev}</button>
@@ -10640,6 +10688,7 @@
 	function command(raw) {
 		const text = String(raw || '').trim();
 		if (text.toLowerCase() === '!cheats') {
+			unlock('qc');
 			openCheats();
 			return null;
 		}
