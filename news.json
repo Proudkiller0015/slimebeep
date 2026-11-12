@@ -400,5 +400,11 @@
     "date": "10 Nov 2026",
     "title": "📢 SlimeBeep 3.13",
     "text": "🦀 With CRABS, whispering someone in your room from SlimeBeep uses its Whisper+, so it reaches them anywhere on a map, and Whisper+ messages CRABS turns into beeps show in your SlimeBeep chats. New achievement: 🦀 A Wild Sin."
+  },
+  {
+    "id": "3.13.2",
+    "date": "12 Nov 2026",
+    "title": "📢 SlimeBeep 3.13.2",
+    "text": "🎵 When YouTube won't play a song in the music player, it now says why, with a link to watch it on YouTube. The tabs stay centred when the window is wide. Thanks Alyx!"
   }
 ]

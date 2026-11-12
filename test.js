@@ -782,6 +782,26 @@ const check = (ok, what) => {
 	await wait(100);
 	check((await p.$$eval('#sb-body .sb-row[data-open]', (e) => e.length)) === 1, 'search finds by room name too');
 	await shot('friends');
+	// Tab labels stay centred in a wide window, even when another add-on lines up every button's text to the left.
+	const tabsCentred = await p.evaluate(() => {
+		const hostile = document.createElement('style');
+		hostile.textContent = 'button { display: flex; justify-content: flex-start; text-align: left; }';
+		document.head.appendChild(hostile);
+		const panel = document.getElementById('sb-panel');
+		const width = panel.style.width;
+		panel.style.width = '1600px';
+		const off = [...document.querySelectorAll('.sb-tabs button')].map((b) => {
+			const r = document.createRange();
+			r.selectNodeContents(b);
+			const inner = r.getBoundingClientRect();
+			const outer = b.getBoundingClientRect();
+			return Math.round(inner.left + inner.width / 2 - (outer.left + outer.width / 2));
+		});
+		panel.style.width = width;
+		hostile.remove();
+		return off;
+	});
+	check(tabsCentred.length > 3 && tabsCentred.every((o) => Math.abs(o) <= 2), `tab labels stay centred in a wide window (${tabsCentred})`);
 
 	await p.click('[data-tab=wave]');
 	await wait(200);
@@ -906,6 +926,28 @@ const check = (ok, what) => {
 		proof.member && proof.fresh && proof.good && !proof.other && proof.bad === null,
 		`proveIdentity signs "slimebeep-proof|audience|member|time" with my SlimeBeep key, only for that audience (${JSON.stringify(proof)})`,
 	);
+	// Queen of Cheats: off the list, and out of its count, until !cheats is used.
+	const cheatsAch = async () => {
+		await p.evaluate(() => SlimeBeep.api.openChat(11));
+		await wait(200);
+		while (!(await p.$('[data-tab=friends]'))) {
+			await p.click('#sb-back');
+			await wait(200);
+		}
+		await p.click('[data-tab=friends]');
+		await wait(300);
+		const count = await p.$eval('#sb-achbtn', (e) => e.textContent.trim());
+		await p.click('#sb-achbtn');
+		await wait(200);
+		const title = await p.$eval('#sb-ask b', (e) => e.textContent.trim());
+		const names = await p.$$eval('#sb-ask .sb-ach .sb-name', (e) => e.map((x) => x.textContent));
+		await p.click('#sb-ask [data-act=close]');
+		// Back in Ann's chat, where the tests after it start.
+		await p.evaluate(() => SlimeBeep.api.openChat(11));
+		await wait(200);
+		return { count, title, total: names.length, queen: names.includes('Queen of Cheats') };
+	};
+	const qcBefore = await cheatsAch();
 	// !cheats without SlimeCheat: a card with its install link.
 	const offer = await p.evaluate(async () => {
 		SlimeBeep.api.openChat(11);
@@ -922,6 +964,14 @@ const check = (ok, what) => {
 	check(
 		offer.link === 'https://github.com/Proudkiller0015/slimecheat' && !offer.box && !offer.sent,
 		`!cheats without SlimeCheat offers its install link and sends nothing (${JSON.stringify(offer)})`,
+	);
+	const qcAfter = await cheatsAch();
+	const countOf = (/** @type {string} */ c) => (/(\d+)\/(\d+)/.exec(c) || []).slice(1).map(Number);
+	const [gotBefore, ofBefore] = countOf(qcBefore.count),
+		[gotAfter, ofAfter] = countOf(qcAfter.count);
+	check(
+		!qcBefore.queen && qcAfter.queen && gotAfter === gotBefore + 1 && ofAfter === ofBefore + 1 && qcAfter.total === qcBefore.total + 1,
+		`the hidden Queen of Cheats isn't listed or counted until !cheats is used, then it is (${JSON.stringify([qcBefore, qcAfter])})`,
 	);
 	// An add-on panel: its own tab, its element kept between redraws, and !cheats opens SlimeCheat's.
 	const panel = await p.evaluate(async () => {
@@ -1826,6 +1876,18 @@ const check = (ok, what) => {
 				/^▶/.test(second.queue[1]),
 			`⏭ plays the next song (${JSON.stringify(second)})`,
 		);
+		// YouTube refusing the song (153: the app sends no Referer) shows why, with a link to watch it on YouTube.
+		const ytFrame = p.frames().find((f) => f.url().startsWith('https://www.youtube-nocookie.com/embed/'));
+		await ytFrame.evaluate(() => parent.postMessage(JSON.stringify({ event: 'onError', info: 153 }), '*'));
+		await wait(200);
+		const refused = await p.$eval('#sb-mu-err', (e) => ({ shown: !e.hidden, text: e.textContent, link: e.querySelector('a')?.href }));
+		check(
+			refused.shown &&
+				/doesn't tell YouTube which site/.test(refused.text) &&
+				refused.link === 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+			`YouTube's error 153 says why it won't play and links to the video (${JSON.stringify(refused)})`,
+		);
+		await shot('music-error');
 		// Video off in Settings: the 🎵 tile shows, the player stays loaded behind it (same size, see-through) and plays on.
 		const art = () =>
 			p.evaluate(() => {
