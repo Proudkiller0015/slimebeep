@@ -19,13 +19,15 @@ if (sb && sb.apiVersion === 1) {
 
 ```js
 sb.groups();
-// [{ id, name, owner, admins: [memberNumber], anyoneCanInvite, canInvite,
+// [{ id, name, owner, admins: [memberNumber], anyoneCanInvite, canInvite, global, memberCount,
 //    members: [{ memberNumber, name, online, role: 'owner' | 'admin' | 'member' }],
 //    picture }]   // the group's picture (a data: image) or null
 sb.group(id);              // one group, or null
 ```
 
 `canInvite` says whether the player may invite to that group (admins, or everyone when the group lets anyone invite). `groups()` is empty until the player is logged in.
+
+`global` is true for Global, the public group every SlimeBeep player can join. It has no member cap, so its `members` lists only who is online and its admins; `memberCount` is how many members it has (for other groups, the length of `members`). Nobody is invited to Global, so its `canInvite` is false.
 
 ## Friends with SlimeBeep
 

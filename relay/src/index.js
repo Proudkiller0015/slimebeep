@@ -17,11 +17,15 @@
  * other as `wraps`: the key sealed to one member, signed by the member who wrapped it. The relay keeps
  * the wraps but never the key; a member leaving starts a new epoch (`rekey`).
  *
+ * Global (GLOBAL_ID) is the exception: a public group anyone with SlimeBeep joins without an invite. Its
+ * messages come in as text over the encrypted connection and are stored sealed with the GLOBAL_KEY secret.
+ *
  * Free-plan limits: sockets hibernate, keep-alive pings get an auto-response without waking the
  * object, and each group takes at most LIMITS.perDay messages a day.
  */
 
 import { DurableObject } from 'cloudflare:workers';
+import { GLOBAL_LOGO } from './global-logo.js';
 
 /** Mailbox limits. */
 const MAIL = {
@@ -87,6 +91,43 @@ const LIMITS = {
 	/** Most achievements a status lists. */
 	achievements: 40,
 };
+/**
+ * Global: the one public group every SlimeBeep player can join without an invite, with no member cap. Its
+ * messages are kept sealed with the GLOBAL_KEY secret (anyone can join, so members can't share a key the way
+ * other groups do). An existing group is turned into it the first time it is reached under GLOBAL_ID.
+ */
+const GLOBAL_ID = 'lr0c521s94bn115u';
+/**
+ * Whether a group id is Global's. The test relay sets GLOBAL_GID: every id starting with it is then a Global,
+ * so each test run gets a fresh one.
+ */
+const isGlobalId = (gid, env) => (env.GLOBAL_GID ? gid.startsWith(env.GLOBAL_GID) : gid === GLOBAL_ID);
+/** Global's limits, where they differ from LIMITS. */
+const GLOBAL = {
+	/** Most open connections. */
+	sockets: 3000,
+	/** Most messages it takes per day. */
+	perDay: 5000,
+	/** Shortest gap between one member's messages (ms). */
+	gap: 1500,
+	/** Most members its roster lists: those online, then the admins. */
+	listed: 300,
+	/**
+	 * How long roster changes are gathered before they go out (ms; GLOBAL_ROSTER_MS overrides it for the tests).
+	 * Each send is an alarm, and alarms count as requests on the free plan: at most 8,640 a day at 10 s.
+	 */
+	rosterEvery: 10000,
+	/** Most banned member numbers. */
+	bans: 5000,
+	/** Most bans sent to an admin (the newest). */
+	bansSent: 500,
+	/** Most new member numbers one address may join in an hour (GLOBAL_JOINS overrides it for the tests). */
+	joinsPerHour: 20,
+};
+/** Global's owner (the Slime Queen), made owner when the group turns into Global if they are in it (GLOBAL_OWNER overrides it for the tests). */
+const GLOBAL_OWNER = 255659;
+/** The GLOBAL_KEY secret: 32 bytes in base64url. */
+const GLOBAL_KEY_RE = /^[A-Za-z0-9_-]{43}$/;
 /** A group id. */
 const ID_RE = /^[a-z0-9]{8,24}$/;
 /** An invite secret, also used for mailbox beep ids. */
@@ -204,21 +245,31 @@ export default {
  * 'msg:<seq>' sealed messages, 'keys' { epoch, rekey, eps: epoch -> member -> wrap } and 'music'
  * { u, ti, p, pl, d, i, b, by, name, at, q }: the song playing, only its link and where it is, never the sound,
  * and the titles of the songs queued after it.
+ *
+ * Global (meta.global) keeps each member as 'gm:<member number>' instead of one 'members' record, since it has
+ * no cap; meta also holds its `bans` (member number -> { name, by, at }). Its 'msg:<seq>' records keep their
+ * text sealed with GLOBAL_KEY as `sec` { iv, ct }. It has no group keys and no music.
  */
 export class Group extends DurableObject {
 	constructor(ctx, env) {
 		super(ctx, env);
 		// ROTATE_MSGS is set only by the local test server.
 		this.rotateMsgs = Number(env.ROTATE_MSGS) || ROTATE.msgs;
+		// Global's members changed or removed since the last save (see touch and drop).
+		this.dirty = new Set();
+		this.dropped = new Set();
+		// When each member last spoke in Global, and when each address last joined new numbers (in memory only).
+		this.lastSay = new Map();
+		this.joins = new Map();
 		// Pings are answered without waking the object.
 		ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('{"t":"ping"}', '{"t":"pong"}'));
 		ctx.blockConcurrencyWhile(async () => {
 			this.meta = (await ctx.storage.get('meta')) || null;
-			this.members = (await ctx.storage.get('members')) || {};
+			this.members = this.meta && this.meta.global ? await this.loadGlobalMembers() : (await ctx.storage.get('members')) || {};
 			this.invites = (await ctx.storage.get('invites')) || {};
-			// Message counter, from the newest stored message.
+			// Message counter: the newest stored message, or the saved count when that is ahead (Global passes some on unstored).
 			const newest = await ctx.storage.list({ prefix: 'msg:', reverse: true, limit: 1 });
-			this.seq = newest.size ? [...newest.values()][0].id : (await ctx.storage.get('seq')) || 0;
+			this.seq = Math.max(newest.size ? [...newest.values()][0].id : 0, (await ctx.storage.get('seq')) || 0);
 			// Messages today, in memory only (restarts if the object is evicted).
 			this.today = { day: '', n: 0 };
 			this.keys = (await ctx.storage.get('keys')) || { epoch: 0, rekey: false, eps: {} };
@@ -235,6 +286,120 @@ export class Group extends DurableObject {
 		});
 	}
 
+	/** Whether this group is Global. */
+	get global() {
+		return !!this.meta && this.meta.global === 1;
+	}
+	/** Global's members, read from their own records. */
+	async loadGlobalMembers() {
+		/** @type {Record<number, object>} */
+		const out = {};
+		for (const m of (await this.ctx.storage.list({ prefix: 'gm:' })).values()) {
+			out[m.n] = m;
+		}
+		return out;
+	}
+	/** Marks a member as changed, so save() writes them (Global keeps each member in its own record). */
+	touch(n) {
+		this.dirty.add(n);
+		this.dropped.delete(n);
+	}
+	/** Removes a member; save() deletes their record in Global (the key their number is bound to stays, see save). */
+	drop(n) {
+		delete this.members[n];
+		this.dirty.delete(n);
+		this.dropped.add(n);
+	}
+	/**
+	 * Whether `ip` may join one more new member number to Global (GLOBAL.joinsPerHour), counting it if so.
+	 * Numbers already bound to a key don't count: this only slows down claiming other players' numbers.
+	 */
+	joinAllowed(ip) {
+		const now = Date.now();
+		const times = (this.joins.get(ip) || []).filter((t) => now - t < 36e5);
+		if (times.length >= (Number(this.env.GLOBAL_JOINS) || GLOBAL.joinsPerHour)) {
+			return false;
+		}
+		times.push(now);
+		this.joins.set(ip, times);
+		return true;
+	}
+
+	/**
+	 * Turns this group into Global (the first time it is reached under GLOBAL_ID): renamed, the slime logo as
+	 * its picture, members moved to their own records. Its end-to-end sealed history goes, since nobody who joins
+	 * from now on could open it; its members keep their own copies.
+	 */
+	async makeGlobal() {
+		const old = [...(await this.ctx.storage.list({ prefix: 'msg:' })).keys()];
+		for (let i = 0; i < old.length; i += 128) {
+			await this.ctx.storage.delete(old.slice(i, i + 128));
+		}
+		Object.assign(this.meta, { global: 1, name: 'Global', pic: GLOBAL_LOGO, open: false, bans: {} });
+		const owner = Number(this.env.GLOBAL_OWNER) || GLOBAL_OWNER;
+		if (this.members[owner]) {
+			this.meta.owner = owner;
+			if (!this.meta.admins.includes(owner)) {
+				this.meta.admins.push(owner);
+			}
+		}
+		this.invites = {};
+		this.keys = { epoch: 0, rekey: false, eps: {} };
+		for (const n of Object.keys(this.members)) {
+			this.touch(Number(n));
+		}
+		await this.ctx.storage.delete(['keys', 'members', 'music']);
+		await this.ctx.storage.put('seq', this.seq);
+		await this.save();
+		await this.note('This chat is now Global: everyone with SlimeBeep can join');
+	}
+
+	/** Global's message key from the GLOBAL_KEY secret, imported once; null without it (nothing is sent then). */
+	globalKey() {
+		if (!this.sealKey) {
+			const raw = this.env.GLOBAL_KEY;
+			this.sealKey =
+				typeof raw === 'string' && GLOBAL_KEY_RE.test(raw)
+					? crypto.subtle.importKey('raw', unb64url(raw), 'AES-GCM', false, ['encrypt', 'decrypt'])
+					: Promise.resolve(null);
+		}
+		return this.sealKey;
+	}
+	/**
+	 * A Global message's text sealed with GLOBAL_KEY, bound to its message id; null without the key.
+	 * @returns {Promise<{ iv: string, ct: string } | null>}
+	 */
+	async sealText(text, id) {
+		const key = await this.globalKey();
+		if (!key) {
+			return null;
+		}
+		const iv = crypto.getRandomValues(new Uint8Array(12));
+		const ct = await crypto.subtle.encrypt(
+			{ name: 'AES-GCM', iv, additionalData: new TextEncoder().encode(`global|${id}`) },
+			key,
+			new TextEncoder().encode(text),
+		);
+		return { iv: b64url(iv), ct: b64url(ct) };
+	}
+	/** Opens a stored Global message (sealText); null if it can't be opened. */
+	async openText(sec, id) {
+		const key = await this.globalKey();
+		if (!key || !sec || typeof sec.iv !== 'string' || typeof sec.ct !== 'string') {
+			return null;
+		}
+		try {
+			const plain = await crypto.subtle.decrypt(
+				{ name: 'AES-GCM', iv: unb64url(sec.iv), additionalData: new TextEncoder().encode(`global|${id}`) },
+				key,
+				unb64url(sec.ct),
+			);
+			return new TextDecoder().decode(plain);
+		} catch (e) {
+			return null;
+		}
+	}
+
 	/**
 	 * An invite for one member number, made by the operator (see the Worker's fetch): like an admin's, but
 	 * with no admin needed, so an owner who lost their keys gets back in, still the owner.
@@ -244,7 +409,7 @@ export class Group extends DurableObject {
 		if (!this.meta) {
 			return new Response('No such group', { status: 404 });
 		}
-		if (!this.members[member] && Object.keys(this.members).length >= LIMITS.members) {
+		if (!this.global && !this.members[member] && Object.keys(this.members).length >= LIMITS.members) {
 			return new Response('Group is full', { status: 409 });
 		}
 		const code = secret();
@@ -256,21 +421,29 @@ export class Group extends DurableObject {
 	/** Accepts a WebSocket and sends it a sign-in nonce. */
 	async fetch(req) {
 		const gid = new URL(req.url).searchParams.get('g');
-		if (this.ctx.getWebSockets().length >= LIMITS.sockets) {
+		if (isGlobalId(gid, this.env) && this.meta && !this.global) {
+			// Nothing else runs meanwhile, so it happens once.
+			await this.ctx.blockConcurrencyWhile(async () => {
+				if (!this.global) {
+					await this.makeGlobal();
+				}
+			});
+		}
+		if (this.ctx.getWebSockets().length >= (this.global ? GLOBAL.sockets : LIMITS.sockets)) {
 			return new Response('Busy', { status: 503 });
 		}
 		const [client, server] = Object.values(new WebSocketPair());
 		this.ctx.acceptWebSocket(server);
 		const nonce = b64url(crypto.getRandomValues(new Uint8Array(18)));
-		server.serializeAttachment({ gid, nonce, member: null, hits: [] });
+		server.serializeAttachment({ gid, nonce, member: null, hits: [], ip: req.headers.get('CF-Connecting-IP') || '' });
 		server.send(JSON.stringify({ t: 'hello', nonce }));
 		return new Response(null, { status: 101, webSocket: client });
 	}
 
 	/**
 	 * A client message (JSON with `t`). Before sign-in only 'auth'; then 'say', 'history', 'gkey', 'rekey', 'invite', 'kick',
-	 * 'admin', 'owner', 'rename', 'open', 'profile', 'gpic', 'music', 'musicEnd', 'musicQueue', 'musicAdd', 'musicSkip',
-	 * 'musicListen', 'status', 'leave' and 'disband'. Rate limited per connection.
+	 * 'ban' (Global), 'admin', 'owner', 'rename', 'open', 'profile', 'gpic', 'music', 'musicEnd', 'musicQueue', 'musicAdd',
+	 * 'musicSkip', 'musicListen', 'status', 'leave' and 'disband'. Rate limited per connection.
 	 */
 	async webSocketMessage(ws, raw) {
 		const att = ws.deserializeAttachment();
@@ -305,9 +478,13 @@ export class Group extends DurableObject {
 			if (!me || !this.meta) {
 				return this.fail(ws, 'not a member');
 			}
+			// Global has no group keys (its messages are sealed here) and no shared music.
+			if (this.global && (p.t === 'gkey' || p.t.startsWith('music'))) {
+				return this.send(ws, { t: 'error', why: p.t === 'gkey' ? 'unknown' : 'no music in Global' });
+			}
 			switch (p.t) {
 				case 'say':
-					return await this.say(att.member, p);
+					return await (this.global ? this.sayGlobal(att.member, p) : this.say(att.member, p));
 				case 'history':
 					return this.history(ws, p.after);
 				case 'gkey':
@@ -318,6 +495,8 @@ export class Group extends DurableObject {
 					return await this.invite(ws, att.member, p);
 				case 'kick':
 					return await this.kick(att.member, p.member);
+				case 'ban':
+					return await this.ban(att.member, p.member, p.on === true);
 				case 'admin':
 					return await this.setAdmin(att.member, p.member, p.on === true);
 				case 'owner':
@@ -371,7 +550,12 @@ export class Group extends DurableObject {
 			/* already closed */
 		}
 		if (a && a.member && this.meta) {
-			this.broadcast({ t: 'presence', online: this.online(ws) });
+			if (this.global) {
+				// Global's roster carries who is online; changes go out gathered (rosterChanged).
+				this.rosterChanged().catch(() => {});
+			} else {
+				this.broadcast({ t: 'presence', online: this.online(ws) });
+			}
 			if (a.listening) {
 				this.broadcast({ t: 'musicListeners', list: this.listeners(ws) });
 			}
@@ -397,7 +581,8 @@ export class Group extends DurableObject {
 
 	/**
 	 * Signs a connection in: verifies the signed nonce, then creates the group (p.create), joins it with
-	 * an invite (p.invite) or checks the key of an existing member. Sends the roster, pictures and history.
+	 * an invite (p.invite), joins Global (p.join) or checks the key of an existing member. Sends the roster,
+	 * pictures and history.
 	 */
 	async auth(ws, att, p) {
 		const member = p.member;
@@ -435,6 +620,8 @@ export class Group extends DurableObject {
 			await this.note(`${name} made the group`);
 		} else if (!this.meta) {
 			return this.fail(ws, 'no such group');
+		} else if (this.global && this.meta.bans[member]) {
+			return this.fail(ws, 'banned from Global');
 		} else if (p.invite) {
 			const inv = this.invites[p.invite];
 			if (!SECRET_RE.test(p.invite) || !inv || inv.exp < Date.now()) {
@@ -447,13 +634,18 @@ export class Group extends DurableObject {
 			if (known && !samePub(known.pub, pub) && !inv.member) {
 				return this.fail(ws, 'that member number is taken');
 			}
-			if (!known && Object.keys(this.members).length >= LIMITS.members) {
+			if (!known && !this.global && Object.keys(this.members).length >= LIMITS.members) {
 				return this.fail(ws, 'group is full');
+			}
+			// In Global, connections still signed in on the keys this replaces are closed.
+			if (this.global && known && !samePub(known.pub, pub)) {
+				this.closeMember(member, 'signed in with new keys');
 			}
 			// A key bound by an invite replaces any earlier hand-over (`rk`), which was for another key.
 			const was = { ...(known || { joined: Date.now() }) };
 			delete was.rk;
 			this.members[member] = { ...was, n: member, name, pub, ek, eks };
+			this.touch(member);
 			if (known && known.ek !== ek) {
 				await this.dropWraps(member);
 			}
@@ -461,9 +653,22 @@ export class Group extends DurableObject {
 				delete this.invites[p.invite];
 			}
 			await this.save();
-			if (!known) {
+			// Global gets too many comings and goings to note them.
+			if (!known && !this.global) {
 				await this.note(`${name} joined`);
 			}
+		} else if (this.global && p.join === true && !this.members[member]) {
+			// Anyone joins Global. A number is bound to the first key it joins with, and stays bound after it leaves.
+			const bound = await this.ctx.storage.get(`gb:${member}`);
+			if (bound && !samePub(bound, pub)) {
+				return this.fail(ws, 'that member number is taken');
+			}
+			if (!bound && !this.joinAllowed(att.ip)) {
+				return this.fail(ws, 'too many new members from here; try again later');
+			}
+			this.members[member] = { n: member, name, pub, ek, eks, joined: Date.now() };
+			this.touch(member);
+			await this.save();
 		} else {
 			const known = this.members[member];
 			if (!known || !samePub(known.pub, pub)) {
@@ -474,13 +679,15 @@ export class Group extends DurableObject {
 					await this.dropWraps(member);
 				}
 				Object.assign(known, { name, ek, eks });
+				this.touch(member);
 				await this.save();
 			}
 		}
 		att.member = member;
 		ws.serializeAttachment(att);
 		this.send(ws, { t: 'welcome', me: member, roster: this.roster() });
-		for (const m of Object.values(this.members)) {
+		// Global keeps no member pictures: with no cap, sending them all on every sign-in would be too much.
+		for (const m of this.global ? [] : Object.values(this.members)) {
 			if (m.pic) {
 				this.send(ws, { t: 'pic', n: m.n, data: m.pic });
 			}
@@ -492,7 +699,10 @@ export class Group extends DurableObject {
 		if (statuses.length) {
 			this.send(ws, { t: 'statuses', list: statuses });
 		}
-		const music = await this.ctx.storage.get('music');
+		if (this.global && this.meta.admins.includes(member)) {
+			this.sendBans(ws);
+		}
+		const music = this.global ? null : await this.ctx.storage.get('music');
 		if (music && Date.now() - music.at < LIMITS.songHours * 36e5) {
 			const { at, q, ...song } = music;
 			this.send(ws, { t: 'music', music: song, age: Date.now() - at });
@@ -504,9 +714,41 @@ export class Group extends DurableObject {
 				this.send(ws, { t: 'musicListeners', list });
 			}
 		}
-		this.history(ws, p.after);
-		this.broadcast({ t: 'roster', roster: this.roster() });
+		await this.history(ws, p.after);
+		await this.rosterChanged();
 		this.sendKeys();
+	}
+
+	/**
+	 * Posts a message in Global: text (sealed with GLOBAL_KEY when stored), at most one per member every
+	 * GLOBAL.gap and GLOBAL.perDay a day. Refused without the key, so nothing is ever stored readable.
+	 */
+	async sayGlobal(member, p) {
+		const text = clean(p.text, LIMITS.text);
+		if (!text) {
+			return;
+		}
+		const now = Date.now();
+		if (now - (this.lastSay.get(member) || 0) < GLOBAL.gap) {
+			return this.sendMember(member, { t: 'error', why: 'slow down' });
+		}
+		if (!(await this.globalKey())) {
+			return this.sendMember(member, { t: 'error', why: 'Global is not set up yet' });
+		}
+		this.lastSay.set(member, now);
+		const day = new Date().toISOString().slice(0, 10);
+		if (this.today.day !== day) {
+			this.today = { day, n: 0 };
+		}
+		if (++this.today.n > GLOBAL.perDay) {
+			return this.sendMember(member, { t: 'error', why: 'Global has sent enough messages for today; back tomorrow' });
+		}
+		await this.append({
+			from: member,
+			name: this.members[member].name,
+			text,
+			ref: typeof p.ref === 'string' ? p.ref.slice(0, 24) : undefined,
+		});
 	}
 
 	/** Posts a sealed message (within LIMITS.perDay): `enc` { e: key epoch, iv, ct }. */
@@ -551,22 +793,45 @@ export class Group extends DurableObject {
 		await this.append({ sys: true, text });
 	}
 
-	/** Stores a message, drops the oldest past LIMITS.keep, and sends it to everyone connected. */
+	/**
+	 * Stores a message, drops the oldest past LIMITS.keep, and sends it to everyone connected. Global's text is
+	 * stored sealed (sealText); without GLOBAL_KEY it is only passed on, never stored.
+	 */
 	async append(msg) {
 		this.seq += 1;
 		const m = { id: this.seq, at: Date.now(), ...msg };
-		await this.ctx.storage.put(`msg:${String(this.seq).padStart(10, '0')}`, m);
+		let stored = m;
+		if (this.global) {
+			const { text, ...rest } = m;
+			const sec = await this.sealText(text, m.id);
+			stored = sec ? { ...rest, sec } : null;
+		}
+		if (stored) {
+			await this.ctx.storage.put(`msg:${String(this.seq).padStart(10, '0')}`, stored);
+		} else {
+			await this.ctx.storage.put('seq', this.seq);
+		}
 		if (this.seq > LIMITS.keep) {
 			await this.ctx.storage.delete(`msg:${String(this.seq - LIMITS.keep).padStart(10, '0')}`);
 		}
 		this.broadcast({ t: 'msg', m });
 	}
 
-	/** Sends the stored messages after id `after`. */
+	/** Sends the stored messages after id `after` (Global's opened first; any that won't open are left out). */
 	async history(ws, after) {
 		const from = Number.isInteger(after) && after >= 0 ? after : 0;
 		const list = await this.ctx.storage.list({ prefix: 'msg:', start: `msg:${String(from + 1).padStart(10, '0')}`, limit: LIMITS.keep });
-		this.send(ws, { t: 'history', msgs: [...list.values()] });
+		let msgs = [...list.values()];
+		if (this.global) {
+			const opened = await Promise.all(
+				msgs.map(async ({ sec, ...m }) => {
+					const text = await this.openText(sec, m.id);
+					return text === null ? null : { ...m, text };
+				}),
+			);
+			msgs = opened.filter(Boolean);
+		}
+		this.send(ws, { t: 'history', msgs });
 	}
 
 	/** Makes an invite: for one member number (p.member) or open. Admins only unless the group is open. */
@@ -575,12 +840,19 @@ export class Group extends DurableObject {
 		if (!admin && !this.meta.open) {
 			return this.send(ws, { t: 'error', why: 'only admins can invite here' });
 		}
-		if (Object.keys(this.members).length >= LIMITS.members) {
+		if (!this.global && Object.keys(this.members).length >= LIMITS.members) {
 			return this.send(ws, { t: 'error', why: 'group is full' });
 		}
 		const target = p.member == null ? null : p.member;
 		if (target !== null && !isNum(target)) {
 			return this.send(ws, { t: 'error', why: 'bad member number' });
+		}
+		// Anyone joins Global without one: its codes only let a number it knows back in on new keys (they lost theirs).
+		if (this.global && (target === null || !admin || !(this.members[target] || (await this.ctx.storage.get(`gb:${target}`))))) {
+			return this.send(ws, {
+				t: 'error',
+				why: target === null ? 'anyone can join Global from 👥 Groups' : 'Global has never seen that member number',
+			});
 		}
 		// Re-keying an existing member needs an admin.
 		if (target !== null && this.members[target] && !admin) {
@@ -613,13 +885,65 @@ export class Group extends DurableObject {
 			return;
 		}
 		const name = this.members[target].name;
-		delete this.members[target];
+		this.drop(target);
 		g.admins = g.admins.filter((n) => n !== target);
 		await this.save();
 		await this.note(`${this.members[by].name} removed ${name}`);
 		this.closeMember(target, 'removed');
-		this.broadcast({ t: 'roster', roster: this.roster() });
+		await this.rosterChanged();
 		await this.needRekey();
+	}
+
+	/**
+	 * Bans a member number from Global, or lifts a ban (admins; only the owner can ban an admin). A banned
+	 * number is removed and can't sign in or join again; it needn't be a member to be banned.
+	 */
+	async ban(by, target, on) {
+		const g = this.meta;
+		if (!this.global || !isNum(target) || target === g.owner || target === by || !g.admins.includes(by)) {
+			return;
+		}
+		const was = g.bans[target];
+		if (on) {
+			if (was || (g.admins.includes(target) && by !== g.owner) || Object.keys(g.bans).length >= GLOBAL.bans) {
+				return;
+			}
+			const name = this.members[target] ? this.members[target].name : `#${target}`;
+			g.bans[target] = { name, by, at: Date.now() };
+			g.admins = g.admins.filter((n) => n !== target);
+			if (this.members[target]) {
+				this.drop(target);
+			}
+			await this.save();
+			await this.note(`${this.members[by].name} banned ${name}`);
+			this.closeMember(target, 'banned from Global');
+		} else {
+			if (!was) {
+				return;
+			}
+			delete g.bans[target];
+			await this.save();
+			await this.note(`${this.members[by].name} unbanned ${was.name}`);
+		}
+		this.sendBans();
+		await this.rosterChanged();
+	}
+	/**
+	 * Sends Global's ban list (the newest GLOBAL.bansSent) to one connection, or to every admin connected.
+	 * @param {WebSocket} [ws]
+	 */
+	sendBans(ws) {
+		const list = Object.entries(this.meta.bans)
+			.map(([n, b]) => ({ n: Number(n), name: b.name, by: b.by, at: b.at }))
+			.sort((a, b) => b.at - a.at)
+			.slice(0, GLOBAL.bansSent);
+		const x = { t: 'bans', list };
+		if (ws) {
+			return this.send(ws, x);
+		}
+		for (const n of this.meta.admins) {
+			this.sendMember(n, x);
+		}
 	}
 
 	/** Grants admin (any admin) or takes it (owner only). */
@@ -641,7 +965,10 @@ export class Group extends DurableObject {
 				? `${this.members[by].name} made ${this.members[target].name} admin`
 				: `${this.members[by].name} took admin from ${this.members[target].name}`,
 		);
-		this.broadcast({ t: 'roster', roster: this.roster() });
+		await this.rosterChanged();
+		if (this.global && on) {
+			this.sendBans();
+		}
 	}
 
 	/** Hands the group to another member (owner only). */
@@ -656,7 +983,7 @@ export class Group extends DurableObject {
 		}
 		await this.save();
 		await this.note(`${this.members[by].name} handed the group to ${this.members[target].name}`);
-		this.broadcast({ t: 'roster', roster: this.roster() });
+		await this.rosterChanged();
 	}
 
 	/** Renames the group (admins). */
@@ -668,34 +995,39 @@ export class Group extends DurableObject {
 		this.meta.name = n;
 		await this.save();
 		await this.note(`${this.members[by].name} renamed the group to "${n}"`);
-		this.broadcast({ t: 'roster', roster: this.roster() });
+		await this.rosterChanged();
 	}
 
-	/** Lets every member invite, or admins only (admins). */
+	/** Lets every member invite, or admins only (admins; not in Global, which anyone joins). */
 	async setOpen(by, on) {
-		if (!this.meta.admins.includes(by) || this.meta.open === on) {
+		if (this.global || !this.meta.admins.includes(by) || this.meta.open === on) {
 			return;
 		}
 		this.meta.open = on;
 		await this.save();
 		await this.note(on ? `${this.members[by].name} let everyone invite` : `${this.members[by].name} made invites admin-only`);
-		this.broadcast({ t: 'roster', roster: this.roster() });
+		await this.rosterChanged();
 	}
 
-	/** Updates a member's name and picture (null removes it). */
+	/** Updates a member's name and picture (null removes it). Global keeps names only (see auth). */
 	async profile(member, p) {
 		const m = this.members[member];
 		if (typeof p.name === 'string') {
 			m.name = clean(p.name, LIMITS.name) || m.name;
 		}
-		if (p.pic === null) {
+		if (this.global) {
+			delete m.pic;
+		} else if (p.pic === null) {
 			delete m.pic;
 		} else if (typeof p.pic === 'string' && p.pic.length <= LIMITS.pic && PIC_RE.test(p.pic)) {
 			m.pic = p.pic;
 		}
+		this.touch(member);
 		await this.save();
-		this.broadcast({ t: 'pic', n: member, data: m.pic || null });
-		this.broadcast({ t: 'roster', roster: this.roster() });
+		if (!this.global) {
+			this.broadcast({ t: 'pic', n: member, data: m.pic || null });
+		}
+		await this.rosterChanged();
 	}
 
 	/** The group's own picture: admins set or remove it (null). Kept in meta, sent to everyone. */
@@ -877,9 +1209,21 @@ export class Group extends DurableObject {
 		}
 	}
 
-	/** A member leaves; ownership passes on, and an empty group is deleted. */
+	/**
+	 * A member leaves; ownership passes on, and an empty group is deleted. Global is never deleted, even
+	 * empty, and its owner stays its owner (and admin) while out of it; anyone can join again whenever they like.
+	 */
 	async leave(member) {
 		const g = this.meta;
+		if (this.global) {
+			this.drop(member);
+			if (member !== g.owner) {
+				g.admins = g.admins.filter((n) => n !== member);
+			}
+			await this.save();
+			this.closeMember(member, 'left');
+			return await this.rosterChanged();
+		}
 		const name = this.members[member].name;
 		delete this.members[member];
 		g.admins = g.admins.filter((n) => n !== member);
@@ -905,13 +1249,13 @@ export class Group extends DurableObject {
 		await this.save();
 		await this.note(`${name} left`);
 		this.closeMember(member, 'left');
-		this.broadcast({ t: 'roster', roster: this.roster() });
+		await this.rosterChanged();
 		await this.needRekey();
 	}
 
-	/** Deletes the group and closes every connection (owner only). */
+	/** Deletes the group and closes every connection (owner only; never Global). */
 	async disband(by) {
-		if (!this.meta || by !== this.meta.owner) {
+		if (!this.meta || by !== this.meta.owner || this.global) {
 			return;
 		}
 		for (const ws of this.ctx.getWebSockets()) {
@@ -1014,13 +1358,17 @@ export class Group extends DurableObject {
 		if (ekChanged) {
 			await this.dropWraps(member);
 		}
+		this.touch(member);
 		await this.save();
 		this.send(ws, { t: 'rekeyed', x: pub.x });
-		this.broadcast({ t: 'roster', roster: this.roster() });
+		await this.rosterChanged();
 		this.sendKeys();
 	}
-	/** A member left or was removed: the next key must be one they never had. */
+	/** A member left or was removed: the next key must be one they never had (not in Global, which has no group key). */
 	async needRekey() {
+		if (this.global) {
+			return;
+		}
 		if (this.keys.epoch > 0) {
 			this.keys.rekey = true;
 			await this.ctx.storage.put('keys', this.keys);
@@ -1032,6 +1380,9 @@ export class Group extends DurableObject {
 	 * (with the wrapping member) and which members still need the current key.
 	 */
 	sendKeys() {
+		if (this.global) {
+			return;
+		}
 		const k = this.keys;
 		const ep = k.eps[k.epoch] || {};
 		const needs = k.epoch
@@ -1056,9 +1407,26 @@ export class Group extends DurableObject {
 	 * The roster sent to clients. Each member's `kf` lets friends compare it with the key they know; `pub`,
 	 * `ek` and `eks` let members check a member's encryption key before sealing the group key to it; `rk`
 	 * (after a rekey) is the old key and its signature of the new one.
+	 *
+	 * Global's lists only who is online and its admins (GLOBAL.listed at most), with names and key starts,
+	 * and says how many members it has (`count`).
 	 */
 	roster() {
 		const g = this.meta;
+		if (this.global) {
+			const online = this.online();
+			const listed = [...new Set([...online, ...g.admins])].filter((n) => this.members[n]).slice(0, GLOBAL.listed);
+			return {
+				name: g.name,
+				owner: g.owner,
+				admins: g.admins,
+				open: false,
+				global: true,
+				count: Object.keys(this.members).length,
+				online: online.slice(0, GLOBAL.listed),
+				members: listed.map((n) => ({ n, name: this.members[n].name, kf: this.members[n].pub.x.slice(0, 16) })),
+			};
+		}
 		return {
 			name: g.name,
 			owner: g.owner,
@@ -1076,9 +1444,51 @@ export class Group extends DurableObject {
 			})),
 		};
 	}
-	/** Saves meta, members and invites. */
+	/** Saves meta, members and invites. Global writes only the members that changed, each in its own record. */
 	async save() {
-		await this.ctx.storage.put({ meta: this.meta, members: this.members, invites: this.invites });
+		if (!this.global) {
+			await this.ctx.storage.put({ meta: this.meta, members: this.members, invites: this.invites });
+			return;
+		}
+		/** @type {Record<string, unknown>} */
+		const put = { meta: this.meta, invites: this.invites };
+		for (const n of this.dirty) {
+			const m = this.members[n];
+			if (m) {
+				put[`gm:${n}`] = m;
+				// The key this number is bound to, kept after they leave so nobody else can take the number.
+				put[`gb:${n}`] = { x: m.pub.x, y: m.pub.y };
+			}
+		}
+		const gone = [...this.dropped].map((n) => `gm:${n}`);
+		this.dirty.clear();
+		this.dropped.clear();
+		// Storage takes at most 128 keys a call.
+		const entries = Object.entries(put);
+		for (let i = 0; i < entries.length; i += 128) {
+			await this.ctx.storage.put(Object.fromEntries(entries.slice(i, i + 128)));
+		}
+		for (let i = 0; i < gone.length; i += 128) {
+			await this.ctx.storage.delete(gone.slice(i, i + 128));
+		}
+	}
+	/**
+	 * The roster changed: sent to everyone now, or in Global gathered for GLOBAL.rosterEvery (alarm), since its
+	 * comings and goings would otherwise send everyone a new roster each time.
+	 */
+	async rosterChanged() {
+		if (!this.global) {
+			return this.broadcast({ t: 'roster', roster: this.roster() });
+		}
+		if ((await this.ctx.storage.getAlarm()) === null) {
+			await this.ctx.storage.setAlarm(Date.now() + (Number(this.env.GLOBAL_ROSTER_MS) || GLOBAL.rosterEvery));
+		}
+	}
+	/** Sends Global's gathered roster changes. */
+	async alarm() {
+		if (this.global) {
+			this.broadcast({ t: 'roster', roster: this.roster() });
+		}
 	}
 	/** Sends JSON to one connection (ignored if it is closed). */
 	send(ws, x) {

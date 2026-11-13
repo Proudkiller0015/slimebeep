@@ -2351,7 +2351,7 @@ const check = (ok, what) => {
 		await shot('achievements-friend');
 		await p.click('#sb-ask [data-act=close]');
 		check(
-			catAch.title === "🏆 Cat's achievements · 2 / 23" && JSON.stringify(catAch.on) === '["Slimed!","Royal Audience"]' && !catAch.chat,
+			catAch.title === "🏆 Cat's achievements · 2 / 24" && JSON.stringify(catAch.on) === '["Slimed!","Royal Audience"]' && !catAch.chat,
 			`tapping a friend's 🏆 shows their achievements, not their chat (${JSON.stringify(catAch)})`,
 		);
 		// Royal Audience counts seconds in a room with the Slime Queen.
@@ -5297,6 +5297,193 @@ const check = (ok, what) => {
 			c.ws.close();
 		}
 		await p.evaluate(() => {
+			Player.MemberNumber = 1;
+		});
+	}
+	// ---- 🌍 Global: every SlimeBeep player is put in once, muted; leaving sticks, reinstalling keeps you in, bans
+	// hold, and an admin can let back in someone who lost their keys. Played as #8 against a fresh test Global
+	// (the test relay turns ids starting with "globaltest" into Globals, owned by #21).
+	if (relayUp) {
+		const LZ = 'C:/Users/Sam_0/Documents/Project/bc-plushie-modern/BondageClub/Scripts/lib/LZString.js';
+		const gid = `globaltest${Date.now().toString(36)}`;
+		const owner = await relayUser(21, 'Queen');
+		const made = await relayJoin(gid, owner, { create: { name: 'Beta chat', open: false } });
+		made.ws.close();
+		const q = await relayJoin(gid, owner);
+		const ann = await relayUser(11, 'Ann');
+		const a = await relayJoin(gid, ann, { join: true });
+		check(q.welcome && q.welcome.roster.global && a.welcome, 'a test Global is ready (owner and Ann in it)');
+		/**
+		 * A visit as #8. `account`: the account backup the server has (null: none). `wipe`: this browser's
+		 * SlimeBeep data for #8 is gone first (an uninstall, a new browser).
+		 */
+		const visit = async (account, wipe) => {
+			await p.reload();
+			await p.evaluate(stub);
+			await p.addScriptTag({ path: LZ });
+			await p.evaluate(
+				(acct, w, r, g) =>
+					new Promise((res) => {
+						Player.MemberNumber = 8;
+						Player.ExtensionSettings = acct === null ? {} : { SlimeBeep: acct };
+						window.ServerPlayerExtensionSettingsSync = () => {};
+						localStorage.setItem('slimebeep.relay', r);
+						localStorage.setItem('slimebeep.global', g);
+						makeLog();
+						if (!w) {
+							res();
+							return;
+						}
+						for (const k of Object.keys(localStorage)) {
+							if (/^slimebeep\..*\.8$/.test(k)) {
+								localStorage.removeItem(k);
+							}
+						}
+						const del = indexedDB.deleteDatabase('slimebeep');
+						del.onsuccess = del.onerror = del.onblocked = () => res();
+					}),
+				account,
+				wipe,
+				RELAY_URL,
+				gid,
+			);
+			await p.addScriptTag({ content: src });
+		};
+		const inGlobal = () => p.evaluate((g) => !!SlimeBeep.api.group(g), gid);
+		const backup = () => p.evaluate(() => Player.ExtensionSettings.SlimeBeep || null);
+		const backupJson = () => p.evaluate(() => JSON.parse(LZString.decompressFromUTF16(Player.ExtensionSettings.SlimeBeep) || 'null'));
+		/** Opens 👥 Groups. */
+		const groupsTab = async () => {
+			// The panel is open only when shown as flex (see isOpen); the slime takes real clicks.
+			if (!(await p.evaluate(() => (document.getElementById('sb-panel') || { style: {} }).style.display === 'flex'))) {
+				await p.click('#sb-toggle');
+				await wait(300);
+			}
+			for (let i = 0; i < 4 && !(await p.$('[data-tab=groups]')); i++) {
+				await p.click('#sb-back').catch(() => {});
+				await wait(200);
+			}
+			await p.click('[data-tab=groups]');
+			await wait(300);
+		};
+
+		await visit(null, true);
+		const joined = await waitFor(inGlobal, 15000);
+		await wait(800);
+		const first = await p.evaluate(
+			(g) => ({
+				view: SlimeBeep.api.group(g),
+				level: (JSON.parse(localStorage.getItem('slimebeep.options') || '{}').notify || {})[`g:${g}`],
+				done: localStorage.getItem('slimebeep.globalDone.8'),
+			}),
+			gid,
+		);
+		check(
+			joined && first.view.global === true && first.view.memberCount === 3 && first.level === 'none' && first.done === '1',
+			`a first visit puts the player in Global by itself, muted (${JSON.stringify({ joined, global: first.view && first.view.global, count: first.view && first.view.memberCount, level: first.level })})`,
+		);
+		// The backup is written a few seconds after a change.
+		check(
+			await waitFor(async () => ((await backupJson()) || {}).gl === 1, 8000),
+			'and the account backup remembers it (so another browser or a reinstall knows)',
+		);
+
+		await groupsTab();
+		await shot('global-row');
+		const row = await p.evaluate(() => {
+			const r = document.querySelector('#sb-body .sb-row[data-open]');
+			return {
+				first: r && r.textContent,
+				global: !!r && r.classList.contains('sb-global'),
+				btn: !!document.getElementById('sb-join-global'),
+			};
+		});
+		check(row.global && /Global/.test(row.first) && !row.btn, `Global sits first in 👥 Groups, highlighted (${JSON.stringify(row)})`);
+
+		a.send({ t: 'say', text: 'hi everyone' });
+		const got = await waitFor(() => p.evaluate(() => /hi everyone/.test(document.getElementById('sb-body').textContent)), 5000);
+		const cards = await p.evaluate(
+			() => [...document.querySelectorAll('.sb-card')].filter((c) => /hi everyone/.test(c.textContent)).length,
+		);
+		check(got && cards === 0, "Ann's message in Global arrives, with no card while it's muted");
+
+		await p.click(`[data-open="g:${gid}"]`);
+		await wait(300);
+		await shot('global-chat');
+		await p.type('#sb-text', 'hello world');
+		await p.keyboard.press('Enter');
+		const heard = await waitFor(async () => a.got.some((x) => x.t === 'msg' && x.m.text === 'hello world' && x.m.from === 8), 5000);
+		const ach = await p.evaluate(() => (localStorage.getItem('slimebeep.ach.8') || '').includes('gl'));
+		check(heard && ach, `my message reaches Ann, and unlocks 🌍 Hello World (${JSON.stringify({ heard, ach })})`);
+		check((await p.evaluate((g) => SlimeBeep.api.group(g).canInvite, gid)) === false, 'nobody can be invited to Global (anyone joins it)');
+
+		// Leaving sticks: after a reload, and after a reinstall (browser wiped, account backup kept). The achievement
+		// pop-up redraws the chat, so the 🚪 is clicked once it is back.
+		await waitFor(() => p.evaluate(() => !!document.getElementById('sb-leave')), 3000);
+		await p.evaluate(() => document.getElementById('sb-leave').click());
+		await wait(200);
+		await p.evaluate(() => document.querySelector('#sb-ask [data-act="leave"]').click());
+		await waitFor(async () => !((await backupJson()) || { g: [[gid]] }).g.some((x) => x[0] === gid), 8000);
+		const left = await backup();
+		await visit(left, false);
+		await wait(6000);
+		check(!(await inGlobal()), 'after leaving, a new visit does not put the player back');
+		await visit(left, true);
+		await wait(7000);
+		check(!(await inGlobal()), 'nor does a reinstall (the account backup remembers)');
+		await groupsTab();
+		check(!!(await p.$('#sb-join-global')), '🌍 Join Global is there in 👥 Groups');
+		await p.click('#sb-join-global');
+		check(await waitFor(inGlobal, 8000), 'and takes the player back in, on the keys the account backup brought back');
+
+		// Reinstalling while in Global keeps you in it.
+		await waitFor(async () => ((await backupJson()) || { g: [] }).g.some((x) => x[0] === gid), 8000);
+		const inside = await backup();
+		await visit(inside, true);
+		const kept = await waitFor(() => p.evaluate((g) => !!SlimeBeep.api.group(g) && SlimeBeep.api.group(g).memberCount > 1, gid), 15000);
+		await wait(1500);
+		a.send({ t: 'say', text: 'still here?' });
+		const still = await waitFor(() => p.evaluate(() => /still here\?/.test(localStorage.getItem('slimebeep.history.8') || '')), 6000);
+		check(kept && still, `a reinstall while in Global keeps the player in it, getting its messages (${JSON.stringify({ kept, still })})`);
+
+		// A ban puts them out, and the button can't bring them back.
+		q.send({ t: 'ban', member: 8, on: true });
+		const banned = await waitFor(
+			() => p.evaluate(() => [...document.querySelectorAll('.sb-card')].some((c) => /banned from Global/.test(c.textContent))),
+			6000,
+		);
+		check(banned && !(await inGlobal()), 'a ban removes the player from Global and says so');
+		await groupsTab();
+		await p.click('#sb-join-global');
+		const refused = await waitFor(() => p.$eval('#sb-toast', (e) => /banned/.test(e.textContent || '')), 6000);
+		check(refused && !(await inGlobal()), 'while banned, 🌍 Join Global is refused');
+		q.send({ t: 'ban', member: 8, on: false });
+		await wait(500);
+
+		// Keys lost with the account backup: the number is bound to the old keys, so the player is told to ask an
+		// admin, and the admin's code lets them back in.
+		await visit(null, true);
+		const told = await waitFor(
+			() =>
+				p.evaluate(() =>
+					[...document.querySelectorAll('.sb-card')].some((c) => /Ask a Global admin to let you back in/.test(c.textContent)),
+				),
+			15000,
+		);
+		check(told && !(await inGlobal()), 'with the keys lost too, the player is told to ask a Global admin');
+		q.send({ t: 'invite', member: 8 });
+		await wait(500);
+		const code = q.last('invite') && q.last('invite').code;
+		await groupsTab();
+		await p.type('#sb-join-code', `SB-${gid}-${code}`);
+		await p.click('#sb-join');
+		check(!!code && (await waitFor(inGlobal, 8000)), "the admin's code lets them back in on their new keys");
+
+		for (const c of [q, a]) {
+			c.ws.close();
+		}
+		await p.evaluate(() => {
+			localStorage.removeItem('slimebeep.global');
 			Player.MemberNumber = 1;
 		});
 	}
