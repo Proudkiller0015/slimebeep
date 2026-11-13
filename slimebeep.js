@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.14.0';
+	const VERSION = '3.15.0';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -280,7 +280,31 @@
 	 * @property {string} [pic] the group's picture (a data URL)
 	 * @property {boolean} [global] it is Global: `members` lists only who is online and its admins
 	 * @property {number} [count] Global: how many members it has
+	 * @property {Record<number, number>} [timeouts] running timeouts: member number -> when it ends (ms)
 	 */
+	/**
+	 * Running timeouts from the relay, cleaned: member number -> when it ends.
+	 * @param {unknown} x
+	 * @returns {Record<number, number>}
+	 */
+	const takeTimeouts = (x) => {
+		/** @type {Record<number, number>} */
+		const out = {};
+		for (const [k, v] of Object.entries(x && typeof x === 'object' ? x : {}).slice(0, 500)) {
+			if (isNum(Number(k)) && typeof v === 'number' && v > Date.now()) {
+				out[Number(k)] = v;
+			}
+		}
+		return out;
+	};
+	/**
+	 * When your timeout in a group ends (ms), or 0 if you aren't timed out there.
+	 * @param {Group | undefined} g
+	 */
+	const myTimeout = (g) => {
+		const until = (g && g.timeouts && g.timeouts[Player.MemberNumber]) || 0;
+		return until > Date.now() ? until : 0;
+	};
 	/** @type {Record<string, Group>} Groups you are in, by id. */
 	let groups = {};
 	/** How many groups you are in, Global aside (it doesn't count toward LIMITS.groups). */
@@ -1141,6 +1165,15 @@
 		return full ? `${date}, ${time}` : date;
 	};
 	/**
+	 * When something ends (a timeout): the time if it's within the day, else the date and time.
+	 * @param {number} t ms
+	 */
+	const untilText = (t) => {
+		const d = new Date(t);
+		const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+		return t - Date.now() < 20 * 3600000 ? time : `${d.toLocaleDateString([], { day: 'numeric', month: 'short' })}, ${time}`;
+	};
+	/**
 	 * Hue of a member's letter avatar.
 	 * @param {number} n
 	 */
@@ -1480,11 +1513,11 @@
 			background: none; color: #6b2150; font-size: 13px; text-align: left; }
 		.sb-compose #sb-at button.on { background: #ffe6f3; }
 		#sb-ask .sb-pill.on { background: #ff4fa3; border-color: #ff4fa3; color: #fff; }
-		html.sb-night #sb-at, html.sb-night .sb-replybar { background: #253064; color: #dfe6ff; }
+		html.sb-night #sb-at, html.sb-night .sb-replybar, html.sb-night .sb-pinrow { background: #253064; color: #dfe6ff; }
 		html.sb-night .sb-compose #sb-at button { color: #dfe6ff; }
 		html.sb-night .sb-compose #sb-at button.on { background: #1c2450; }
 		html.sb-night #sb-ask .sb-pill.on { background: #5b8cff; border-color: #5b8cff; }
-		html.sb-themed #sb-at, html.sb-themed .sb-replybar { background: var(--sb-t-element); color: var(--sb-t-text); }
+		html.sb-themed #sb-at, html.sb-themed .sb-replybar, html.sb-themed .sb-pinrow { background: var(--sb-t-element); color: var(--sb-t-text); }
 		html.sb-themed .sb-compose #sb-at button { color: var(--sb-t-text); }
 		html.sb-themed .sb-compose #sb-at button.on, html.sb-themed #sb-ask .sb-pill.on { background: var(--sb-t-accent); color: var(--sb-t-text); }
 		#sb-at .sb-av { width: 22px; height: 22px; font-size: 10px; }
@@ -1496,6 +1529,18 @@
 		.sb-b.me { align-self: flex-end; background: linear-gradient(135deg, #ff6fb5, #ff4fa3); color: #fff; border-bottom-right-radius: 6px; }
 		.sb-b em { display: flex; align-items: center; font-style: normal; font-size: 10px; opacity: .7; margin-top: 2px; }
 		.sb-b.me em { justify-content: flex-end; }
+		.sb-pinned { margin-left: 4px; font-size: 10px; }
+		#sb-panel .sb-thead #sb-pins { position: relative; }
+		.sb-pinn { position: absolute; top: -3px; right: -3px; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 7px; background: #ff4fa3;
+			color: #fff; font: bold 9px/14px sans-serif; font-style: normal; }
+		#sb-ask .sb-pins { width: min(340px, 86vw); align-items: stretch; }
+		.sb-pinlist { max-height: 55vh; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+		.sb-pinrow { padding: 6px 8px; border-radius: 12px; background: #fff0f8; text-align: left; }
+		.sb-pintext { white-space: pre-wrap; word-break: break-word; margin: 2px 0; }
+		.sb-pinacts { display: flex; gap: 4px; justify-content: flex-end; }
+		.sb-pinacts .sb-pill { padding: 1px 10px; font-size: 11px; }
+		.sb-b.sb-flash { animation: sb-flash 1.6s ease-out; }
+		@keyframes sb-flash { 0%, 40% { box-shadow: 0 0 0 3px #ffd54f; } 100% { box-shadow: 0 0 0 0 transparent; } }
 		.sb-b .sb-room { display: block; font-size: 11px; margin-top: 3px; opacity: .85; }
 		.sb-emote { font-style: italic; opacity: .85; }
 		.sb-link { color: inherit; text-decoration: underline; word-break: break-all; }
@@ -2930,6 +2975,8 @@
 	 * @property {number} [mskip] asks you, the host, to skip the song with this number (one they added)
 	 * @property {0 | 1} [mlisten] they started (1) or stopped (0) listening along to the song you share
 	 * @property {Status | 0} [st] their status (0: none); every hidden beep but picture pieces has it
+	 * @property {Pin} [pin] they pinned a message in your chat with them
+	 * @property {string} [unpin] they unpinned the pin with this id
 	 */
 	/**
 	 * Picture fields of a hidden beep: `pv` (their picture version; 0 = none) makes us ask for a new one,
@@ -3303,8 +3350,8 @@
 	/**
 	 * A hidden beep (BeepType PROTO) from a friend: JSON with `sb: 1` and any of `kf` (their key start),
 	 * picture fields (pictureNews), `ping`/`pong` (SlimeBeep check), `ginv` (group invite), `music`/`musicEnd`/`mq` (a shared
-	 * song and what comes next) or `madd`/`mskip`/`mlisten` (a listener's songs, and that they listen).
-	 * Ignored from non-friends; the sender's member number comes from the game server.
+	 * song and what comes next), `madd`/`mskip`/`mlisten` (a listener's songs, and that they listen) or `pin`/`unpin`
+	 * (a pin in your chat with them). Ignored from non-friends; the sender's member number comes from the game server.
 	 * @param {ServerBeep} d
 	 */
 	function onHidden(d) {
@@ -3371,6 +3418,12 @@
 		}
 		if ((p.mlisten === 0 || p.mlisten === 1) && sharing === `n:${from}`) {
 			takeEars(`n:${from}`, p.mlisten ? [from] : []);
+		}
+		if (p.pin) {
+			takeDmPin(from, p.pin);
+		}
+		if (isId(p.unpin)) {
+			takeDmUnpin(from, p.unpin);
 		}
 	}
 	/**
@@ -3981,7 +4034,9 @@
 	 * @typedef {object} RelayMessage
 	 * @property {string} t 'hello', 'welcome', 'roster', 'presence', 'msg', 'history', 'keys', 'pic', 'gpic', 'invite', 'music',
 	 * 'musicQueue', 'musicAdd', 'musicSkip', 'musicListeners', 'status', 'statuses', 'pong', 'gone', 'error', 'ok', 'mail', 'rekeyed',
-	 * 'bans' (Global, admins: its ban list in `list`)
+	 * 'bans' (Global, admins: its ban list in `list`), 'timeout' (yours: when it ends in `until`, 0 lifted), 'pins' (the
+	 * group's pinned messages in `list`)
+	 * @property {number} [until] timeout, error 'timed out': when your timeout ends (ms)
 	 * @property {string} [nonce] hello: what to sign
 	 * @property {string} [x] rekeyed: the public x of the key the group now knows you by
 	 * @property {RelayRoster} [roster] welcome, roster
@@ -4019,6 +4074,7 @@
 	 * @property {GroupMember[]} members Global: only who is online and its admins
 	 * @property {boolean} [global] it is Global
 	 * @property {number} [count] Global: how many members it has
+	 * @property {Record<string, number>} [timeouts] running timeouts of the members listed: member number -> when it ends
 	 */
 	/**
 	 * A member number banned from Global, as its admins see the list.
@@ -4463,6 +4519,10 @@
 		}
 		if (got) {
 			retryWaiting(gid);
+			// Pins sealed with a key we didn't have yet open now.
+			if (groupPinsRaw[gid]) {
+				takePins(gid, groupPinsRaw[gid]).catch((x) => warn(x, 'pins'));
+			}
 		}
 		const mine = groupKeys[gid] && groupKeys[gid][epoch];
 		if (epoch === 0 || state.rekey || (mine && state.needs.length)) {
@@ -5271,7 +5331,7 @@
 	 * @property {Handover} [rk] how the keys before them handed over to them
 	 * @property {[string, string][]} [g] the groups you are in: id and name
 	 * @property {Picture | 0} [p] your picture
-	 * @property {1} [gl] you were put in Global once already (see autoGlobal)
+	 * @property {1 | 2} [gl] your Global state: 1 put in once already, 2 banned (see globalState)
 	 */
 	/** @type {number | null} The account whose backup may be written (loadKey decides, once its keys are loaded). */
 	let backupFor = null;
@@ -5311,8 +5371,9 @@
 	 */
 	function takeBackup(b) {
 		const me = Player.MemberNumber;
-		if (b.gl === 1) {
-			markGlobalDone();
+		// The account's Global state, from whichever browser saw it last.
+		if ((b.gl === 1 || b.gl === 2) && globalState() !== b.gl) {
+			setGlobalState(b.gl);
 		}
 		// Global comes on top of LIMITS.groups.
 		for (const x of Array.isArray(b.g) ? b.g.slice(0, LIMITS.groups + 1) : []) {
@@ -5362,7 +5423,7 @@
 			...(k.rk ? { rk: k.rk } : {}),
 			g: Object.values(groups).map((g) => [g.id, g.name]),
 			p: pic || 0,
-			...(globalDone() ? { gl: /** @type {1} */ (1) } : {}),
+			...(globalState() ? { gl: /** @type {1 | 2} */ (globalState()) } : {}),
 		};
 		const json = JSON.stringify(b);
 		const packed = hasLz() ? LZString.compressToUTF16(json) : json;
@@ -5377,27 +5438,33 @@
 		}
 	}
 
-	/** localStorage key of the "put in Global once" mark of the account logged in. */
-	const globalDoneKey = () => `slimebeep.globalDone.${Player.MemberNumber}`;
+	/** localStorage key of the account's Global state (see globalState). */
+	const globalStateKey = () => `slimebeep.globalDone.${Player.MemberNumber}`;
 	/**
-	 * Whether this account was put in Global once already, here or in another browser (the account backup
-	 * says so): from then on it is in only if it stays or joins again, so leaving sticks.
+	 * Where this account stands with Global, here or in another browser (the account backup says so):
+	 * 0 never put in; 1 put in once already, so from then on it is in only if it stays or joins again (leaving
+	 * sticks); 2 banned, so it is put back in once, by itself, when the ban is lifted (see autoGlobal).
+	 * @returns {0 | 1 | 2}
 	 */
-	function globalDone() {
+	function globalState() {
 		try {
-			if (localStorage.getItem(globalDoneKey()) === '1') {
-				return true;
+			const v = localStorage.getItem(globalStateKey());
+			if (v === '1' || v === '2') {
+				return v === '1' ? 1 : 2;
 			}
 		} catch (e) {
 			/* the backup still knows */
 		}
 		const b = canBackup() ? readBackup() : null;
-		return !!b && b.gl === 1;
+		return b && (b.gl === 1 || b.gl === 2) ? b.gl : 0;
 	}
-	/** Marks this account as put in Global once, here and in the account backup. */
-	function markGlobalDone() {
+	/**
+	 * Sets this account's Global state, here and in the account backup.
+	 * @param {1 | 2} state
+	 */
+	function setGlobalState(state) {
 		try {
-			localStorage.setItem(globalDoneKey(), '1');
+			localStorage.setItem(globalStateKey(), String(state));
 		} catch (e) {
 			/* the backup keeps it */
 		}
@@ -5690,6 +5757,14 @@
 			}
 			return;
 		}
+		if (p.t === 'pins') {
+			takePins(gid, /** @type {unknown} */ (p.list)).catch((x) => warn(x, 'pins'));
+			return;
+		}
+		if (p.t === 'timeout' || (p.t === 'error' && p.why === 'timed out')) {
+			takeMyTimeout(gid, Number(p.until) || 0, p.t === 'error');
+			return;
+		}
 		if (p.t === 'bans') {
 			if (isGlobal(gid) && Array.isArray(p.list)) {
 				globalBans = /** @type {unknown[]} */ (p.list)
@@ -5731,8 +5806,12 @@
 					note = null;
 				} else if (why === 'deleted') {
 					note = `${groups[gid].name} was deleted by its owner`;
+				} else if (isGlobal(gid) && /banned/.test(why)) {
+					note = "⛔ You're banned from Global";
+					// Put back in by itself when the ban is lifted (autoGlobal).
+					setGlobalState(2);
 				} else if (isGlobal(gid)) {
-					note = /banned/.test(why) ? "⛔ You're banned from Global" : "You're no longer in Global. You can join again from 👥 Groups.";
+					note = "You're no longer in Global. You can join again from 👥 Groups.";
 				}
 				dropGroup(gid, note);
 			}
@@ -5755,6 +5834,387 @@
 			}
 			notify(`⚠ ${why}`);
 		}
+	}
+
+	/** @type {Record<string, number>} Timer that redraws a group when your timeout there ends, by group id. */
+	const timeoutTimers = {};
+	/**
+	 * Your timeout in a group, from the relay: when it ends (0: lifted or over). A card says so when it starts;
+	 * `refused` (a message the relay turned down) only says how long is left.
+	 * @param {string} gid
+	 * @param {number} until
+	 * @param {boolean} refused
+	 */
+	function takeMyTimeout(gid, until, refused) {
+		const g = groups[gid];
+		if (!g) {
+			return;
+		}
+		const me = Player.MemberNumber;
+		const was = myTimeout(g);
+		g.timeouts = { ...(g.timeouts || {}) };
+		if (until > Date.now()) {
+			g.timeouts[me] = until;
+		} else {
+			delete g.timeouts[me];
+		}
+		clearTimeout(timeoutTimers[gid]);
+		if (until > Date.now()) {
+			// Redrawn when it ends, so the message box comes back. Timers wait at most 2^31-1 ms (~24.8 days, under the
+			// 28-day longest timeout); any later redraw shows the box again too.
+			timeoutTimers[gid] = window.setTimeout(() => isOpen() && render(true), Math.min(until - Date.now() + 500, 2 ** 31 - 1));
+		}
+		if (refused) {
+			notify(`⏳ You're timed out in ${g.name} until ${untilText(until)}`);
+		} else if (until > Date.now() && until !== was) {
+			card({
+				icon: groupAv(g),
+				pic: g.pic,
+				title: `⏳ ${g.name}`,
+				text: `You were timed out until ${untilText(until)}. You can still read the chat.`,
+			});
+		} else if (!until && was) {
+			notify(`⏳ Your timeout in ${g.name} is over`);
+		}
+		if (isOpen()) {
+			render(true);
+		}
+	}
+	// ---- 📌 Pinned messages, as on Discord. A group's pins live on its relay (admins pin, everyone sees them; a
+	// pin keeps a copy of the message, sealed as it was, so it outlives the 200 kept messages). A direct chat's
+	// pins are kept in both browsers: either of you pins, and a hidden beep tells the other's SlimeBeep.
+
+	/**
+	 * A pinned message, as the 📌 list shows it.
+	 * @typedef {object} Pin
+	 * @property {string} id the group's message number, or a direct-chat pin's own id
+	 * @property {number} from who wrote the message
+	 * @property {string} name their name
+	 * @property {string} text
+	 * @property {number} at when it was written (ms)
+	 * @property {number} by who pinned it
+	 */
+	/**
+	 * A pin as a group's relay sends it: the message number, who pinned it and when, and the stored message.
+	 * @typedef {object} RelayPin
+	 * @property {number} id
+	 * @property {number} by
+	 * @property {number} at
+	 * @property {RelayGroupMessage} m
+	 */
+	/** Most pins a chat keeps (the relay's LIMITS.pins, as on Discord). */
+	const PINS_MAX = 50;
+	/** Longest text a direct-chat pin carries: it travels in a hidden beep, which the game cuts at 1000 characters. */
+	const PIN_TEXT = 240;
+	/** @type {Record<string, unknown[]>} Group pins as their relay sent them, opened again when a group key arrives. */
+	const groupPinsRaw = {};
+	/** @type {Record<string, Pin[]>} Group pins, opened, by group id. */
+	const groupPins = {};
+	/**
+	 * A group's pins from its relay: Global's come as text, the others sealed with the key of their epoch.
+	 * @param {string} gid
+	 * @param {unknown} list
+	 */
+	async function takePins(gid, list) {
+		if (!groups[gid] || !Array.isArray(list)) {
+			return;
+		}
+		const raw = list.slice(0, PINS_MAX);
+		groupPinsRaw[gid] = raw;
+		/** @type {Pin[]} */
+		const out = [];
+		for (const x of raw) {
+			const p = /** @type {Partial<RelayPin>} */ (x && typeof x === 'object' ? x : {});
+			const m = p.m;
+			if (!Number.isInteger(p.id) || !m || !isNum(m.from)) {
+				continue;
+			}
+			/** @type {string | null} */
+			let text = null;
+			if (isGlobal(gid)) {
+				text = typeof m.text === 'string' ? m.text : null;
+			} else if (m.enc && Number.isInteger(m.enc.e)) {
+				const key = await groupKey(gid, m.enc.e);
+				try {
+					text = key ? new TextDecoder().decode(await unseal(key, m.enc, `${gid}|${m.enc.e}|${m.from}`)) : null;
+				} catch (e) {
+					text = null;
+				}
+			}
+			out.push({
+				id: String(p.id),
+				from: m.from,
+				name: clean(m.name, LIMITS.name) || `#${m.from}`,
+				text: text === null ? '🔒 This pin opens when the group key reaches you.' : clean(text, LIMITS.text + 100),
+				at: Number(m.at) || 0,
+				by: isNum(p.by) ? p.by : 0,
+			});
+		}
+		// A newer list came in meanwhile.
+		if (groupPinsRaw[gid] !== raw) {
+			return;
+		}
+		groupPins[gid] = out;
+		if (isOpen()) {
+			render(true);
+		}
+	}
+
+	/** @type {{ owner: number, chats: Record<string, Pin[]> } | null} Direct-chat pins of the account logged in. */
+	let dmPinStore = null;
+	/**
+	 * A pin from storage or a hidden beep, cleaned; null if it isn't one.
+	 * @param {unknown} x
+	 * @returns {Pin | null}
+	 */
+	function cleanPin(x) {
+		const p = /** @type {Partial<Pin>} */ (x && typeof x === 'object' ? x : {});
+		if (!isId(p.id) || !isNum(p.from) || typeof p.text !== 'string') {
+			return null;
+		}
+		return {
+			id: p.id,
+			from: p.from,
+			name: clean(p.name, LIMITS.name) || `#${p.from}`,
+			text: clean(p.text, PIN_TEXT + 1),
+			at: Number(p.at) || 0,
+			by: isNum(p.by) ? p.by : 0,
+		};
+	}
+	/** Direct-chat pins of the account logged in, by chat ('n:<member number>'), newest first. */
+	function dmPins() {
+		const me = Player.MemberNumber;
+		if (!dmPinStore || dmPinStore.owner !== me) {
+			/** @type {Record<string, Pin[]>} */
+			const byChat = {};
+			try {
+				const saved = JSON.parse(localStorage.getItem(`slimebeep.pins.${me}`) || '{}');
+				for (const [chat, list] of Object.entries(saved && typeof saved === 'object' ? saved : {})) {
+					if (/^n:\d+$/.test(chat) && Array.isArray(list)) {
+						byChat[chat] = list
+							.map(cleanPin)
+							.filter((p) => !!p)
+							.slice(0, PINS_MAX);
+					}
+				}
+			} catch (e) {
+				/* starts empty */
+			}
+			dmPinStore = { owner: me, chats: byChat };
+		}
+		return dmPinStore.chats;
+	}
+	const saveDmPins = () => {
+		try {
+			localStorage.setItem(`slimebeep.pins.${Player.MemberNumber}`, JSON.stringify(dmPins()));
+		} catch (e) {
+			/* this visit only */
+		}
+	};
+	/**
+	 * A friend pinned a message in your chat with them (hidden beep). It can only be one of theirs or yours.
+	 * @param {number} from
+	 * @param {unknown} x
+	 */
+	function takeDmPin(from, x) {
+		const pin = cleanPin(x);
+		const me = Player.MemberNumber;
+		if (!pin || (pin.from !== from && pin.from !== me)) {
+			return;
+		}
+		const chat = `n:${from}`;
+		const list = dmPins()[chat] || [];
+		if (list.some((p) => p.id === pin.id)) {
+			return;
+		}
+		pin.by = from;
+		pin.name = pin.from === me ? myName() : nameOf(from);
+		dmPins()[chat] = [pin, ...list].slice(0, PINS_MAX);
+		saveDmPins();
+		if (isOpen()) {
+			render(true);
+		}
+	}
+	/**
+	 * A friend unpinned a message in your chat with them (hidden beep).
+	 * @param {number} from
+	 * @param {string} id
+	 */
+	function takeDmUnpin(from, id) {
+		const chat = `n:${from}`;
+		const list = dmPins()[chat] || [];
+		if (!list.some((p) => p.id === id)) {
+			return;
+		}
+		dmPins()[chat] = list.filter((p) => p.id !== id);
+		saveDmPins();
+		if (isOpen()) {
+			render(true);
+		}
+	}
+	/**
+	 * A chat's pins, newest first.
+	 * @param {string} chat a muteKey
+	 * @returns {Pin[]}
+	 */
+	const pinsOf = (chat) => (chat.startsWith('g:') ? groupPins[chat.slice(2)] || [] : dmPins()[chat] || []);
+	/**
+	 * Whether you may pin and unpin in a chat: a group's admins (while connected), either side of a direct chat
+	 * with someone who has SlimeBeep.
+	 * @param {string} chat a muteKey
+	 */
+	const canPin = (chat) => {
+		if (!loggedIn()) {
+			return false;
+		}
+		if (chat.startsWith('g:')) {
+			const gid = chat.slice(2);
+			return isAdmin(groups[gid], Player.MemberNumber) && !!conns[gid] && conns[gid].ready;
+		}
+		return peers.has(Number(chat.slice(2)));
+	};
+	/**
+	 * A message's text as a direct-chat pin carries it (cut to PIN_TEXT).
+	 * @param {string} text
+	 */
+	const pinText = (text) => (text.length > PIN_TEXT ? `${text.slice(0, PIN_TEXT - 1)}…` : text);
+	/**
+	 * The pin of a message, if it is pinned. Direct chats match on who wrote it, its text and roughly when (each
+	 * side's beep has its own time).
+	 * @param {HistEntry} h
+	 * @returns {Pin | undefined}
+	 */
+	function pinFor(h) {
+		if (h.sys) {
+			return undefined;
+		}
+		if (h.group) {
+			return (groupPins[h.group] || []).find((p) => `g:${h.group}:${p.id}` === h.k);
+		}
+		const from = h.Sent ? Player.MemberNumber : h.MemberNumber;
+		const text = pinText(textOf(h));
+		return (dmPins()[`n:${h.MemberNumber}`] || []).find((p) => p.from === from && p.text === text && Math.abs(p.at - h.Time) < 600000);
+	}
+	/**
+	 * Pins a message or unpins it (the 📌 on a message).
+	 * @param {string} k its HistEntry key
+	 */
+	function pinMessage(k) {
+		const h = hist.find((x) => x.k === k);
+		if (!h || h.sys) {
+			return;
+		}
+		const chat = muteKey(h);
+		if (!canPin(chat)) {
+			return;
+		}
+		const was = pinFor(h);
+		if (h.group) {
+			relaySend(h.group, { t: 'pin', id: Number(k.split(':').pop()), on: !was });
+			notify(was ? '📌 Unpinned' : '📌 Pinned');
+			return;
+		}
+		const n = h.MemberNumber;
+		const list = dmPins()[chat] || [];
+		if (was) {
+			dmPins()[chat] = list.filter((p) => p !== was);
+			sendHidden(n, { sb: 1, unpin: was.id });
+		} else {
+			if (list.length >= PINS_MAX) {
+				notify(`📌 A chat keeps ${PINS_MAX} pins at most: unpin one first`);
+				return;
+			}
+			const me = Player.MemberNumber;
+			/** @type {Pin} */
+			const pin = { id: newId(), from: h.Sent ? me : n, name: h.Sent ? myName() : nameOf(n), text: pinText(textOf(h)), at: h.Time, by: me };
+			dmPins()[chat] = [pin, ...list];
+			sendHidden(n, { sb: 1, pin });
+		}
+		saveDmPins();
+		notify(was ? '📌 Unpinned' : '📌 Pinned');
+		render(true);
+	}
+	/**
+	 * The message a pin points at, if this chat still has it.
+	 * @param {string} chat
+	 * @param {Pin} pin
+	 * @returns {HistEntry | undefined}
+	 */
+	const pinnedEntry = (chat, pin) =>
+		chat.startsWith('g:') ? hist.find((h) => h.k === `${chat}:${pin.id}`) : hist.find((h) => muteKey(h) === chat && pinFor(h) === pin);
+	/**
+	 * The 📌 button of a chat's header, with how many pins it has; shown once it has any, or when you may pin.
+	 * @param {string} chat a muteKey
+	 */
+	const pinsButton = (chat) => {
+		const n = pinsOf(chat).length;
+		return (
+			(n > 0 || canPin(chat)) && html`<button id="sb-pins" title="Pinned messages">📌${n > 0 && html`<i class="sb-pinn">${n}</i>`}</button>`
+		);
+	};
+	/**
+	 * The 📌 box: a chat's pinned messages, with Jump (if the chat still has it) and Unpin (if you may).
+	 * @param {string} chat a muteKey
+	 */
+	function openPins(chat) {
+		const pins = pinsOf(chat);
+		const can = canPin(chat);
+		askBox(
+			html`<div class="sb-crop-card sb-pins">
+			<b>📌 Pinned messages</b>
+			<div class="sb-pinlist">${
+				pins.length
+					? pins.map(
+							(
+								p,
+							) => html`<div class="sb-pinrow"><div class="sb-sub"><b>${p.name}</b> · ${timeOf(p.at, true)}</div><div class="sb-pintext">${rich(p.text)}</div>
+							<div class="sb-pinacts">${!!pinnedEntry(chat, p) && html`<button class="sb-pill" data-act="jump:${p.id}">Jump</button>`}${can && html`<button class="sb-pill" data-act="unpin:${p.id}">Unpin</button>`}</div></div>`,
+						)
+					: html`<div class="sb-empty">No pinned messages yet.${can && ' Pin one with the 📌 on a message.'}</div>`
+			}</div>
+			<div class="sb-crop-btns"><button class="sb-pill" data-act="cancel">Close</button></div>
+		</div>`,
+			(act, close) => {
+				const [what, id] = [act.slice(0, act.indexOf(':')), act.slice(act.indexOf(':') + 1)];
+				const pin = pins.find((p) => p.id === id);
+				if (!pin) {
+					return;
+				}
+				close();
+				const h = pinnedEntry(chat, pin);
+				if (what === 'unpin') {
+					if (chat.startsWith('g:')) {
+						relaySend(chat.slice(2), { t: 'pin', id: Number(pin.id), on: false });
+						notify('📌 Unpinned');
+					} else if (h) {
+						pinMessage(h.k);
+					} else {
+						dmPins()[chat] = (dmPins()[chat] || []).filter((p) => p !== pin);
+						saveDmPins();
+						sendHidden(Number(chat.slice(2)), { sb: 1, unpin: pin.id });
+						notify('📌 Unpinned');
+						render(true);
+					}
+				} else if (what === 'jump' && h) {
+					jumpTo(h.k);
+				}
+			},
+		);
+	}
+	/**
+	 * Scrolls the open chat to a message and makes it glow for a moment.
+	 * @param {string} k its HistEntry key
+	 */
+	function jumpTo(k) {
+		const box = $('sb-msgs');
+		const del = box && $$(box, '[data-del]').find((b) => b.dataset.del === k);
+		const bubble = del && del.closest('.sb-b');
+		if (!bubble) {
+			return;
+		}
+		bubble.scrollIntoView({ block: 'center' });
+		bubble.classList.add('sb-flash');
+		setTimeout(() => bubble.classList.remove('sb-flash'), 1600);
 	}
 
 	/**
@@ -5820,6 +6280,7 @@
 			last: old ? old.last || 0 : 0,
 			picv: old ? old.picv : undefined,
 			pic: old ? old.pic : undefined,
+			timeouts: takeTimeouts(r.timeouts),
 			...(global
 				? { global: true, count: Number.isInteger(r.count) && /** @type {number} */ (r.count) > 0 ? r.count : members.length }
 				: {}),
@@ -5940,6 +6401,8 @@
 		delete groups[gid];
 		delete groupKeys[gid];
 		delete keyState[gid];
+		delete groupPins[gid];
+		delete groupPinsRaw[gid];
 		waitingKey.delete(gid);
 		saveGroupKeys();
 		const c = conns[gid];
@@ -6213,11 +6676,13 @@
 			onFail: (why) => notify(`⚠ Couldn't join${why ? `: ${why}` : ''}`),
 		});
 	}
-	/** The account autoGlobal already tried this visit, 0 for none (a failed try waits for the next visit). */
-	let globalTriedFor = 0;
+	/** How often a banned account checks whether its Global ban was lifted, while the visit lasts (ms). */
+	const GLOBAL_RETRY = 15 * 60000;
+	/** @type {Map<number, number>} Account -> when autoGlobal last tried this visit. */
+	const globalTried = new Map();
 	/**
 	 * Joins Global (no code needed there).
-	 * @param {boolean} auto put in by autoGlobal: quietly, and muted
+	 * @param {boolean} auto put in by autoGlobal: quietly (muted, the first time)
 	 * @param {(gid: string) => void} [done] runs once in, or at once if already a member
 	 */
 	function joinGlobal(auto, done) {
@@ -6237,12 +6702,15 @@
 		if (!auto) {
 			notify('🌍 Joining Global…');
 		}
+		const wasBanned = globalState() === 2;
 		connectGroup(gid, {
 			join: true,
 			onWelcome: () => {
 				// Also writes the account backup, which now lists Global.
-				markGlobalDone();
-				if (auto) {
+				setGlobalState(1);
+				if (auto && wasBanned) {
+					card({ icon: groupAv({}), pic: ICON, title: '🌍 Global', text: 'Your Global ban was lifted: you are back in.' });
+				} else if (auto) {
 					// Muted until you choose otherwise (the bell in its chat).
 					opts.notify = { ...opts.notify, [`g:${gid}`]: 'none' };
 					saveOpts();
@@ -6254,11 +6722,16 @@
 				}
 			},
 			onFail: (why) => {
-				// Banned, or the number belongs to keys this browser doesn't have: trying on every visit won't help.
-				if (/banned|taken/.test(why)) {
-					markGlobalDone();
+				// Banned: put back in by itself once the ban is lifted. Bound to keys this browser doesn't have: an
+				// admin's code is the way back, so it isn't tried again. The relay says "taken" when the number left
+				// Global, and "not a member" when it is still in it on those other keys: a join can't mean anything else.
+				const otherKeys = /taken|not a member/.test(why);
+				if (/banned/.test(why)) {
+					setGlobalState(2);
+				} else if (otherKeys) {
+					setGlobalState(1);
 				}
-				if (/taken/.test(why)) {
+				if (otherKeys) {
 					card({
 						icon: groupAv({}),
 						pic: ICON,
@@ -6272,15 +6745,22 @@
 		});
 	}
 	/**
-	 * Puts this account in Global once, muted: every SlimeBeep player, those who had it before included, on their
-	 * first visit with this version. Never again after that (globalDone, kept in the account backup), so leaving
-	 * sticks across browsers and reinstalls; a visit that can't reach the relay tries again next time.
+	 * Puts this account in Global by itself: once, muted, on the first visit with this version (every SlimeBeep
+	 * player, those who had it before included), and once more after a ban is lifted. Never otherwise
+	 * (globalState, kept in the account backup), so leaving sticks across browsers and reinstalls. A first try
+	 * that can't reach the relay waits for the next visit; a banned account checks every GLOBAL_RETRY.
 	 */
 	function autoGlobal() {
-		if (globalTriedFor === Player.MemberNumber || globalDone() || groups[globalId()] || conns[globalId()]) {
+		const me = Player.MemberNumber;
+		const state = globalState();
+		const last = globalTried.get(me);
+		if (state === 1 || groups[globalId()] || conns[globalId()]) {
 			return;
 		}
-		globalTriedFor = Player.MemberNumber;
+		if (last !== undefined && (state === 0 || Date.now() - last < GLOBAL_RETRY)) {
+			return;
+		}
+		globalTried.set(me, Date.now());
 		joinGlobal(true);
 	}
 	/**
@@ -7559,6 +8039,42 @@
 			},
 		);
 	}
+	/** Timeout lengths offered (as on Discord): label and seconds. */
+	const TIMEOUTS = [
+		['60 s', 60],
+		['5 min', 300],
+		['10 min', 600],
+		['1 hour', 3600],
+		['1 day', 86400],
+		['1 week', 604800],
+	];
+	/**
+	 * The ⏳ box: time a member out for one of TIMEOUTS, or lift their timeout.
+	 * @param {string} gid
+	 * @param {number} n
+	 * @param {string} name
+	 */
+	function askTimeout(gid, n, name) {
+		const g = groups[gid];
+		const until = g && g.timeouts && g.timeouts[n] > Date.now() ? g.timeouts[n] : 0;
+		askBox(
+			html`<div class="sb-crop-card">
+			<b>⏳ Time out ${name}?</b>
+			<span class="sb-hint" style="text-align:center">${until ? `Timed out until ${untilText(until)}. A new length starts from now.` : "They can still read the chat, but can't send messages until it ends."}</span>
+			<div class="sb-crop-btns" style="flex-wrap:wrap;justify-content:center">${TIMEOUTS.map(([label, secs]) => html`<button class="sb-pill" data-act="t${secs}">${label}</button>`)}</div>
+			<div class="sb-crop-btns"><button class="sb-pill" data-act="cancel">Cancel</button>${!!until && html`<button class="sb-go" data-act="t0">Lift timeout</button>`}</div>
+		</div>`,
+			(act, close) => {
+				const secs = /^t\d+$/.test(act) ? Number(act.slice(1)) : -1;
+				if (secs < 0) {
+					return;
+				}
+				close();
+				relaySend(gid, { t: 'timeout', member: n, secs });
+				notify(secs ? `⏳ ${name} is timed out` : `⏳ ${name}'s timeout is lifted`);
+			},
+		);
+	}
 	/**
 	 * Asks before banning a member number from Global.
 	 * @param {string} gid
@@ -7583,11 +8099,16 @@
 		);
 	}
 	/**
-	 * The ↩ and 🗑 of a message bubble, shown on hover (or after a tap on touch screens).
+	 * The ↩, 📌 (who may pin) and 🗑 of a message bubble, shown on hover (or after a tap on touch screens), and a
+	 * 📌 that stays on a pinned message.
 	 * @param {HistEntry} h
 	 */
-	const msgButtons = (h) =>
-		html`<span class="sb-acts"><button class="sb-rep" data-rep="${h.k}" title="Reply">↩</button><button class="sb-del" data-del="${h.k}" title="Delete this message (for you only)">🗑</button></span>`;
+	const msgButtons = (h) => {
+		const pinned = !!pinFor(h);
+		const pinBtn =
+			canPin(muteKey(h)) && html`<button class="sb-pinb" data-pin="${h.k}" title="${pinned ? 'Unpin' : 'Pin this message'}">📌</button>`;
+		return html`${pinned && html`<span class="sb-pinned" title="Pinned">📌</span>`}<span class="sb-acts"><button class="sb-rep" data-rep="${h.k}" title="Reply">↩</button>${pinBtn}<button class="sb-del" data-del="${h.k}" title="Delete this message (for you only)">🗑</button></span>`;
+	};
 	/** @type {{ chat: string, name: string, text: string } | null} The message the next one in `chat` answers. */
 	let replyTo = null;
 	/**
@@ -8239,6 +8760,7 @@
 						acts.push(html`<button class="sb-pill" data-act="down" data-n="${n}" title="Take admin">✩</button>`);
 					}
 					if ((admin && !isAdmin(g, n)) || owner) {
+						acts.push(html`<button class="sb-pill" data-act="timeout" data-n="${n}" title="Time out">⏳</button>`);
 						acts.push(html`<button class="sb-pill" data-act="kick" data-n="${n}" title="Remove">✕</button>`);
 						if (global) {
 							acts.push(html`<button class="sb-pill" data-act="ban" data-n="${n}" title="Ban from Global">⛔</button>`);
@@ -8251,7 +8773,7 @@
 				const dot = on(n) ? html`<span class="sb-on" title="Online"></span>` : html`<span class="sb-off" title="Offline"></span>`;
 				const prof = n !== me && html` data-prof="${n}" data-g="${g.id}" title="See their profile"`;
 				return html`<div class="sb-row" style="cursor:default"><span${prof}>${avatar(n, memberName(g, n))}</span>
-					<div class="sb-main"><div class="sb-name">${dot}<span${prof}>${memberName(g, n)}</span>${keyMark(m)}${peers.has(n) && ' 🫧'}${n !== me && notFriendMark(n)}</div><div class="sb-sub">${role} · #${n}${!on(n) && ' · offline'}</div>${on(n) && statusLine(n)}</div>
+					<div class="sb-main"><div class="sb-name">${dot}<span${prof}>${memberName(g, n)}</span>${keyMark(m)}${peers.has(n) && ' 🫧'}${n !== me && notFriendMark(n)}</div><div class="sb-sub">${role} · #${n}${!on(n) && ' · offline'}${!!(g.timeouts && g.timeouts[n] > Date.now()) && ` · ⏳ until ${untilText(g.timeouts[n])}`}</div>${on(n) && statusLine(n)}</div>
 					<div class="sb-side" style="display:flex;gap:3px">${acts}</div></div>`;
 			});
 		// Anyone joins Global from 👥 Groups: no invites there.
@@ -8347,6 +8869,9 @@
 				}
 				if (b.dataset.act === 'ban') {
 					askBan(id, n, memberName(g, n));
+				}
+				if (b.dataset.act === 'timeout') {
+					askTimeout(id, n, memberName(g, n));
 				}
 				if (b.dataset.act === 'unban') {
 					act({ t: 'ban', member: n, on: false });
@@ -8532,6 +9057,9 @@
 		for (const b of $$(box, '[data-rep]')) {
 			b.addEventListener('click', () => startReply(b.dataset.rep || ''));
 		}
+		for (const b of $$(box, '[data-pin]')) {
+			b.addEventListener('click', () => pinMessage(b.dataset.pin || ''));
+		}
 		if ($('sb-rep-x')) {
 			$('sb-rep-x').addEventListener('click', () => {
 				replyTo = null;
@@ -8582,6 +9110,8 @@
 		const online = conns[id] && conns[id].ready;
 		const here = new Set([...(g.online || []), Player.MemberNumber]).size;
 		const status = online ? html`<span class="sb-on"></span>${here} online · ` : '⏳ connecting… · ';
+		// Timed out: reading only, so the message box is locked until it ends.
+		const timedOut = myTimeout(g);
 		/**
 		 * @param {HistEntry} h
 		 * @param {number} i
@@ -8608,15 +9138,15 @@
 			<div class="sb-thead"><button id="sb-back" title="Back">${ICONS.back}</button>${groupAv(g)}
 				<div class="sb-main"><div class="sb-name">${g.name}</div>
 				<div class="sb-sub" title="${names.join(', ')}">${status}${g.global ? `${g.count || g.members.length} members` : html`${g.members.length} members: You${names.length > 0 && `, ${names.join(', ')}`}`}</div></div>
-				${trSettingsButton(`g:${id}`)}${muteButton(`g:${id}`)}${moreButton(`g:${id}`)}<button id="sb-members" title="Members and invites">👥</button><button id="sb-leave" title="${g.owner === Player.MemberNumber && !g.global ? 'Leave or delete the group' : 'Leave the group'}">🚪</button></div>
+				${trSettingsButton(`g:${id}`)}${pinsButton(`g:${id}`)}${muteButton(`g:${id}`)}${moreButton(`g:${id}`)}<button id="sb-members" title="Members and invites">👥</button><button id="sb-leave" title="${g.owner === Player.MemberNumber && !g.global ? 'Leave or delete the group' : 'Leave the group'}">🚪</button></div>
 			${jamLine(`g:${id}`)}
 			<div class="sb-msgwrap"><div class="sb-msgs" id="sb-msgs">${msgs.length ? msgs.map(bubble) : html`<div class="sb-empty">🫧 Say hi to the group!</div>`}</div>
 				<button class="sb-pill sb-jump" id="sb-jump"></button></div>
 			${replyBar(`g:${id}`)}
 			<div class="sb-compose">
 				<button class="pin" id="sb-emo" title="Emoji">😊</button>${trWriteButton(`g:${id}`)}
-				<textarea id="sb-text" maxlength="${LIMITS.text}" placeholder="Message ${g.name}…"></textarea>
-				<button id="sb-send" title="Send (Enter)">${ICONS.send}</button>
+				<textarea id="sb-text" maxlength="${LIMITS.text}" placeholder="${timedOut ? `⏳ Timed out until ${untilText(timedOut)}` : `Message ${g.name}…`}" ${timedOut && 'disabled'}></textarea>
+				<button id="sb-send" title="Send (Enter)" ${timedOut && 'disabled'}>${ICONS.send}</button>
 			</div>`,
 		);
 		const box = placeMsgs(`g:${id}`, msgs.length, before, keepScroll);
@@ -8632,6 +9162,9 @@
 			render();
 		});
 		$('sb-mute').addEventListener('click', () => openNotify(`g:${id}`, g.name));
+		if ($('sb-pins')) {
+			$('sb-pins').addEventListener('click', () => openPins(`g:${id}`));
+		}
 		$('sb-more').addEventListener('click', () => openChatMenu(`g:${id}`));
 		$('sb-trset').addEventListener('click', () => openTranslate(`g:${id}`));
 		if ($('sb-trw')) {
@@ -8951,7 +9484,7 @@
 			html`
 			<div class="sb-thead"><button id="sb-back" title="Back">${ICONS.back}</button>${avatar(n, nameOf(n))}
 				<div class="sb-main"><div class="sb-name">${nameOf(n)} <small style="font-weight:normal;color:#c08aaa">#${n}</small></div>
-				<div class="sb-sub">${f && html`<span class="sb-on"></span>`}${where(f)}</div>${!!f && statusLine(n)}</div>${trSettingsButton(`n:${n}`)}${muteButton(`n:${n}`)}${moreButton(`n:${n}`)}</div>
+				<div class="sb-sub">${f && html`<span class="sb-on"></span>`}${where(f)}</div>${!!f && statusLine(n)}</div>${trSettingsButton(`n:${n}`)}${pinsButton(`n:${n}`)}${muteButton(`n:${n}`)}${moreButton(`n:${n}`)}</div>
 			${jamLine(`n:${n}`)}
 			<div class="sb-msgwrap"><div class="sb-msgs" id="sb-msgs">${bubbles}${waitingBubbles}</div>
 				<button class="sb-pill sb-jump" id="sb-jump"></button></div>
@@ -8984,6 +9517,9 @@
 			});
 		}
 		$('sb-mute').addEventListener('click', () => openNotify(`n:${n}`, nameOf(n)));
+		if ($('sb-pins')) {
+			$('sb-pins').addEventListener('click', () => openPins(`n:${n}`));
+		}
 		$('sb-more').addEventListener('click', () => openChatMenu(`n:${n}`));
 		$('sb-trset').addEventListener('click', () => openTranslate(`n:${n}`));
 		if ($('sb-trw')) {
