@@ -27,6 +27,7 @@ Click the pink slime (drag it anywhere you like; it stays there). A pink dot on 
 - **🖼 Profile picture:** pick one in ⚙ Settings. It's shrunk to a small square and only SlimeBeep friends get it, as image data, never a web link.
 - **🖼 Profile pictures:** choose one in ⚙ Settings, then drag and zoom it to fit the circle (**Adjust** places it again later). Yours shows in SlimeBeep's header; click anyone's picture to see it big.
 - **📍 Join:** a beep sent from a chat room has a **Join** button that takes you there.
+- **🌍 Global:** one group chat for everyone with SlimeBeep, with no member cap. Everyone is put in once, muted (the 🔕 at the top of its chat turns it on); leave with 🚪 and come back any time with **🌍 Join Global** in 👥 Groups. It sits at the top of 👥 Groups. Its owner 👑 and admins ⭐ remove people and can **ban** a member number (⛔) until they lift it; someone who lost their SlimeBeep keys can be let back in with a code from an admin. There is no listening along in Global.
 - **🚪 Leave or delete a group:** the 🚪 at the top of a group chat. Anyone can leave; the owner can also delete the group for everyone.
 - **🔕 Do not disturb:** the 🔔 button in SlimeBeep's header silences it: no sounds, pop-ups or desktop notifications until you tap it again. Messages still arrive and show as unread.
 - **😊 Emoji and commands:** the 😊 by the chat box opens emoji (your last ones first). Commands: `/me waves`, `/shrug`, `/roll 20`, `/flip`, `/help`. Actions read like the game shows them: `*waves` or `/me waves` from Ann is *Ann waves*, and `**the lights flicker**` has no name.
@@ -65,6 +66,7 @@ SlimeBeep has an API at `window.SlimeBeep.api` (groups, friends with SlimeBeep, 
 SlimeBeep runs its own small server on Cloudflare (a Worker with Durable Objects, free plan; the code is in the `relay/` folder). It stores:
 
 - **Group chats:** each group's name, members and roles, open invite codes (7 days), the last 200 messages (end-to-end encrypted), the group's and members' pictures, and the song the group is listening to (its link and where it is, kept 12 hours; never the sound).
+- **Global:** its members' names and keys, its ban list, and its last 200 messages, stored encrypted with a key only the server holds. Global is not end-to-end encrypted like other groups: anyone can join it, so anything said there is readable by everyone in it. Keep private things to your own groups and chats.
 - **Mailboxes:** beeps left for a SlimeBeep friend who was offline (end-to-end encrypted), until they read them (at most 14 days).
 
 That's all. Beeps to someone online are ordinary game beeps and never touch the server. In your browser, SlimeBeep keeps your chat history (if **keep** is on), options, friends' pictures, your keys and your groups' keys.

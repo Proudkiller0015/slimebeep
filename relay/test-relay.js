@@ -541,6 +541,175 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 		}
 	}
 
+	// Global: the test relay (npm run dev:test) makes every group id starting with GLOBAL_PREFIX a Global.
+	const GLOBAL_PREFIX = process.env.GLOBAL_PREFIX || 'globaltest';
+	if (BASE.startsWith('ws://')) {
+		await testGlobal(`${GLOBAL_PREFIX}${Date.now().toString(36)}`);
+	} else {
+		console.log('skip Global (needs the local test relay)');
+	}
+
 	console.log(failed ? `\n${failed} FAILED` : '\nall passed');
 	process.exit(failed ? 1 : 0);
 })();
+
+/** Plain texts in what a connection received (Global sends text, not sealed messages). */
+const plainTexts = (c) => c.got.flatMap(messagesOf).map((m) => m.text);
+
+async function testGlobal(gid) {
+	const own = await makePeer(21, 'Owner');
+	const cat = await makePeer(23, 'Cat');
+	const zed = await makePeer(29, 'Zed');
+	const eve = await makePeer(26, 'Eve');
+	const all = [];
+	/** A connection to Global, closed at the end. */
+	const join = async (who, extra = {}) => {
+		const c = await connect(gid, who, extra);
+		all.push(c);
+		return c;
+	};
+
+	// The group exists before it becomes Global (the beta group chat did): made, then reached again.
+	const made = await join(own, { fields: { create: { name: 'Beta chat', open: false } } });
+	await wait(300);
+	made.ws.close();
+	await wait(100);
+	const o = await join(own);
+	const w = o.last('welcome');
+	check(
+		w &&
+			w.roster.global === true &&
+			w.roster.name === 'Global' &&
+			w.roster.owner === 21 &&
+			o.last('gpic') &&
+			/^data:image\/png;base64,/.test(o.last('gpic').data),
+		'the group reached under the Global id becomes Global: renamed, the slime logo, same owner',
+	);
+	check(!o.got.some((x) => x.t === 'keys'), 'Global hands out no group keys');
+
+	const c = await join(cat, { fields: { join: true } });
+	check(c.last('welcome') && c.last('welcome').roster.global === true, 'Cat joins Global with no invite');
+	const e = await join(eve, { as: 23, fields: { join: true } });
+	check(e.closed && /not a member/.test(JSON.stringify(e.got)), "Eve can't take Cat's member number by joining with her own key");
+
+	// No member cap: well past the 40 of other groups.
+	const crowd = [];
+	for (let i = 0; i < 45; i++) {
+		crowd.push(await join(await makePeer(1000 + i, `Crowd ${i}`), { fields: { join: true } }));
+	}
+	await wait(3600);
+	const r = o.last('roster').roster;
+	check(
+		crowd.every((x) => x.last('welcome')) && r.count === 47 && r.online.length === 47,
+		`no member cap: 45 more join and everyone is counted (${r.count} members, ${r.online.length} online)`,
+	);
+	check(
+		r.members.every((m) => m.kf && !m.pub && !m.ek),
+		'its roster lists names and key starts only, never whole keys',
+	);
+	for (const x of crowd) {
+		x.ws.close();
+	}
+	await wait(3600);
+	check(o.last('roster').roster.online.length === 2 && o.last('roster').roster.count === 47, 'leaving the page is not leaving Global');
+
+	c.send({ t: 'say', text: 'hello global <b>hi</b>' });
+	c.send({ t: 'say', text: 'too quick' });
+	await wait(400);
+	check(plainTexts(o).includes('hello global <b>hi</b>'), 'Cat says hello and the owner gets it');
+	check(
+		!plainTexts(o).includes('too quick') && /slow down/.test(c.last('error').why),
+		'a second message right after is refused (slow down)',
+	);
+	const later = await join(zed, { fields: { join: true, after: 0 } });
+	check(plainTexts(later).includes('hello global <b>hi</b>'), 'Zed joins later and gets the history (stored sealed, opened for him)');
+	c.send({ t: 'music', u: 'https://example.com/a.mp3', p: 0, pl: true });
+	c.send({ t: 'gkey', e: 1, fresh: true, wraps: [] });
+	await wait(300);
+	check(
+		c.got.some((x) => x.t === 'error' && /no music in Global/.test(x.why)),
+		'no music in Global',
+	);
+
+	later.send({ t: 'invite' });
+	later.send({ t: 'kick', member: 23 });
+	await wait(300);
+	check(/admins/.test(later.last('error').why) && o.last('roster') && c.ws.readyState === 1, "a member can't make codes or remove anyone");
+
+	o.send({ t: 'ban', member: 23, on: true });
+	await wait(400);
+	check(c.closed && /banned from Global/.test(JSON.stringify(c.got)), "the owner bans Cat: she's out at once");
+	check(o.last('bans') && o.last('bans').list.some((b) => b.n === 23 && b.name === 'Cat'), 'the owner gets the ban list');
+	check(!later.got.some((x) => x.t === 'bans'), "members don't get the ban list");
+	const c2 = await join(cat, { fields: { join: true } });
+	check(c2.closed && /banned from Global/.test(JSON.stringify(c2.got)), "Cat can't join again while banned");
+	o.send({ t: 'ban', member: 23, on: false });
+	await wait(300);
+	const c3 = await join(cat, { fields: { join: true } });
+	check(c3.last('welcome') && !o.last('bans').list.length, 'unbanned, Cat joins again');
+
+	o.send({ t: 'admin', member: 29, on: true });
+	await wait(300);
+	check(later.last('bans') && Array.isArray(later.last('bans').list), 'a new admin gets the ban list');
+	later.send({ t: 'ban', member: 21, on: true });
+	later.send({ t: 'kick', member: 21 });
+	await wait(300);
+	check(o.ws.readyState === 1 && o.last('roster').roster.owner === 21, "an admin can't ban or remove the owner");
+
+	c3.send({ t: 'leave' });
+	o.send({ t: 'disband' });
+	await wait(3600);
+	// 47 and Zed, less Cat.
+	check(c3.closed && o.last('roster').roster.count === 47, 'Cat leaves Global');
+	check(o.ws.readyState === 1 && o.last('roster').roster.name === 'Global', "the owner can't delete Global");
+	const squat = await join(eve, { as: 23, fields: { join: true } });
+	check(squat.closed && /taken/.test(JSON.stringify(squat.got)), "Eve can't take Cat's member number now that Cat has left");
+	const back = await join(cat, { fields: { join: true } });
+	check(!!back.last('welcome'), 'Cat comes back whenever she likes, on her own key');
+
+	// Zed loses his keys (browser and account backup both gone): his number is bound to the old ones.
+	const zedNew = await makePeer(29, 'Zed');
+	const lost = await join(zedNew, { fields: { join: true } });
+	check(
+		lost.closed && /not a member|taken/.test(JSON.stringify(lost.got)),
+		'Zed on new keys is refused: his number is bound to the old ones',
+	);
+	o.send({ t: 'invite', member: 29 });
+	await wait(300);
+	const letIn = o.last('invite');
+	const zedBack = letIn && (await join(zedNew, { fields: { invite: letIn.code } }));
+	check(zedBack && zedBack.last('welcome'), 'the owner makes a code for #29 and Zed is back in on his new keys');
+	const zedOld = await join(zed);
+	check(zedOld.closed && later.closed, 'and his old keys no longer sign in (the old connection is closed too)');
+
+	o.send({ t: 'leave' });
+	await wait(3600);
+	const ownerSquat = await join(eve, { as: 21, fields: { join: true } });
+	check(ownerSquat.closed && /taken/.test(JSON.stringify(ownerSquat.got)), "the owner leaves; nobody can join as the owner's number");
+	const r2 = back.last('roster').roster;
+	check(o.closed && r2.owner === 21 && r2.count === 47, 'Global stays, still owned by the owner, who is out of it');
+	const o2 = await join(own, { fields: { join: true } });
+	await wait(300);
+	check(
+		o2.last('welcome') && o2.last('welcome').roster.owner === 21 && !!o2.last('bans'),
+		'the owner joins again and is the owner, with the ban list',
+	);
+	back.send({ t: 'leave' });
+	o2.send({ t: 'leave' });
+	zedBack.send({ t: 'leave' });
+	await wait(500);
+	const empty = await join(zedNew, { fields: { join: true } });
+	check(!!empty.last('welcome') && empty.last('welcome').roster.name === 'Global', 'with everyone gone, Global is still there to join');
+
+	// One address can't sign up member numbers in bulk (the crowd above came from this address too).
+	const bulk = await join(await makePeer(5000, 'Bulk'), { fields: { join: true } });
+	check(bulk.closed && /too many/.test(JSON.stringify(bulk.got)), 'one address joining too many new numbers is stopped');
+
+	for (const x of all) {
+		try {
+			x.ws.close();
+		} catch (err) {
+			/* closed */
+		}
+	}
+}

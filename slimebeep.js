@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.13.2';
+	const VERSION = '3.14.0';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -218,6 +218,25 @@
 			return RELAY;
 		}
 	};
+	/**
+	 * Global: the public group chat every SlimeBeep player is put in once (muted) and can leave and join again.
+	 * The relay keeps its messages sealed with a key of its own instead of members sharing one, and has no member cap.
+	 */
+	const GLOBAL_ID = 'lr0c521s94bn115u';
+	/** GLOBAL_ID, or a test Global set in localStorage 'slimebeep.global' while a local relay is used (the tests). */
+	const globalId = () => {
+		try {
+			const local = localStorage.getItem('slimebeep.global');
+			return relayUrl() !== RELAY && local && /^[a-z0-9]{8,24}$/.test(local) ? local : GLOBAL_ID;
+		} catch (e) {
+			return GLOBAL_ID;
+		}
+	};
+	/**
+	 * Whether a group id is Global's.
+	 * @param {string} gid
+	 */
+	const isGlobal = (gid) => gid === globalId();
 	/** Limits (the first four match the relay's). */
 	const LIMITS = {
 		/** Longest group or member name. */
@@ -228,8 +247,10 @@
 		members: 40,
 		/** Most admins in a group. */
 		admins: 10,
-		/** Most groups you can be in. */
+		/** Most groups you can be in (Global aside). */
 		groups: 30,
+		/** Most members Global's roster lists (those online, then its admins). */
+		globalListed: 300,
 		/** Hidden beeps accepted from one friend per minute. */
 		perMinute: 60,
 	};
@@ -257,9 +278,13 @@
 	 * @property {number} last id of the newest message received
 	 * @property {string} [picv] version of your picture already sent to it
 	 * @property {string} [pic] the group's picture (a data URL)
+	 * @property {boolean} [global] it is Global: `members` lists only who is online and its admins
+	 * @property {number} [count] Global: how many members it has
 	 */
 	/** @type {Record<string, Group>} Groups you are in, by id. */
 	let groups = {};
+	/** How many groups you are in, Global aside (it doesn't count toward LIMITS.groups). */
+	const groupCount = () => Object.keys(groups).filter((id) => !isGlobal(id)).length;
 	/** @type {Set<number>} Friends known to have SlimeBeep. */
 	let peers = new Set();
 	/** @type {Record<number, string>} Friend -> first 16 chars of their public key, as their own SlimeBeep sent it. */
@@ -367,11 +392,11 @@
 	 */
 	const isMember = (g, n) => !!g && g.members.some((m) => m.n === n);
 	/**
-	 * Whether member `n` may invite people to `g`.
+	 * Whether member `n` may invite people to `g` (nobody to Global: anyone joins it).
 	 * @param {Group} g
 	 * @param {number} n
 	 */
-	const canInvite = (g, n) => isMember(g, n) && (g.open || isAdmin(g, n));
+	const canInvite = (g, n) => !g.global && isMember(g, n) && (g.open || isAdmin(g, n));
 	/**
 	 * A member's name as shown in a group ('You' for yourself).
 	 * @param {Group | undefined} g
@@ -1330,6 +1355,8 @@
 		.sb-row { display: flex; align-items: center; gap: 8px; padding: 7px 8px; margin: 4px 0; border-radius: 16px; background: #fff;
 			border: 1px solid #ffe0ef; cursor: pointer; }
 		.sb-row:hover { background: #fff0f8; border-color: #ffb3d9; }
+		.sb-row.sb-global, .sb-pill.sb-global { background: linear-gradient(135deg, #f1fff6, #fff2fa); border-color: #b9ecc9; }
+		.sb-row.sb-global:hover, .sb-pill.sb-global:hover { background: linear-gradient(135deg, #e3fbec, #ffe6f3); border-color: #8fdcab; }
 		.sb-av { flex: none; width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
 			font-weight: bold; color: #6b2457; border: 2px solid #fff; box-shadow: 0 1px 3px #0002; }
 		.sb-main { flex: 1; min-width: 0; }
@@ -1593,6 +1620,8 @@
 		html.sb-night .sb-tabs button.on i { background: #fff; color: #3b55c4; }
 		html.sb-night .sb-row, html.sb-night .sb-group label { background: #1d2550; border-color: #2c3866; color: #dfe6ff; }
 		html.sb-night .sb-row:hover { background: #253064; border-color: #5b8cff; }
+		html.sb-night .sb-row.sb-global, html.sb-night .sb-pill.sb-global { background: linear-gradient(135deg, #1b3a3a, #2a2350); border-color: #3f8f7a; color: #dfe6ff; }
+		html.sb-night .sb-row.sb-global:hover, html.sb-night .sb-pill.sb-global:hover { background: linear-gradient(135deg, #21474a, #332a60); border-color: #5fc9a8; }
 		html.sb-night .sb-sub, html.sb-night .sb-hint, html.sb-night .sb-side, html.sb-night .sb-empty { color: #8f9fd6; }
 		html.sb-night .sb-dot { background: #5b8cff; }
 		html.sb-night .sb-av { border-color: #141a33; }
@@ -1655,6 +1684,7 @@
 		html.sb-themed .sb-tabs button.on i { background: var(--sb-t-text); color: var(--sb-t-accent); }
 		html.sb-themed .sb-row, html.sb-themed .sb-group label { background: var(--sb-t-element); border-color: var(--sb-t-element-hover); color: var(--sb-t-text); }
 		html.sb-themed .sb-row:hover { background: var(--sb-t-element-hover); border-color: var(--sb-t-accent); }
+		html.sb-themed .sb-row.sb-global, html.sb-themed .sb-pill.sb-global { border-color: var(--sb-t-accent); box-shadow: inset 3px 0 0 var(--sb-t-accent); }
 		html.sb-themed .sb-sub, html.sb-themed .sb-hint, html.sb-themed .sb-side, html.sb-themed .sb-empty { color: var(--sb-t-text-disabled); }
 		html.sb-themed .sb-search, html.sb-themed .sb-compose textarea, html.sb-themed .sb-group textarea {
 			background: var(--sb-t-main); color: var(--sb-t-text); border-color: var(--sb-t-element-hover); }
@@ -2364,7 +2394,9 @@
 			owner: g.owner,
 			admins: [...g.admins],
 			anyoneCanInvite: !!g.open,
-			canInvite: canInvite(g, me) && g.members.length < LIMITS.members,
+			canInvite: !g.global && canInvite(g, me) && g.members.length < LIMITS.members,
+			global: !!g.global,
+			memberCount: g.global ? g.count || g.members.length : g.members.length,
 			members: g.members.map((m) => ({
 				memberNumber: m.n,
 				name: m.n === me ? myName() : m.name,
@@ -2677,6 +2709,7 @@
 		['rs', '💚', 'Slimed by Royalty', 'Get Slime from the Slime Queen herself', false],
 		['fb', '💌', 'First Beep', 'Send a beep with SlimeBeep', false],
 		['ps', '👥', 'Party Starter', 'Make a group chat', false],
+		['gl', '🌍', 'Hello World', 'Send a message in Global', false],
 		['bw', '🌊', 'Big Wave', 'WaveBeep 10 friends at once', false],
 		['gu', '🎨', 'Glow Up', 'Choose a profile picture', false],
 		['st', '💬', "What's Up", 'Set a status', false],
@@ -3947,7 +3980,8 @@
 	 * A message from the relay (JSON). Which fields are set depends on `t`; see relay/src/index.js.
 	 * @typedef {object} RelayMessage
 	 * @property {string} t 'hello', 'welcome', 'roster', 'presence', 'msg', 'history', 'keys', 'pic', 'gpic', 'invite', 'music',
-	 * 'musicQueue', 'musicAdd', 'musicSkip', 'musicListeners', 'status', 'statuses', 'pong', 'gone', 'error', 'ok', 'mail', 'rekeyed'
+	 * 'musicQueue', 'musicAdd', 'musicSkip', 'musicListeners', 'status', 'statuses', 'pong', 'gone', 'error', 'ok', 'mail', 'rekeyed',
+	 * 'bans' (Global, admins: its ban list in `list`)
 	 * @property {string} [nonce] hello: what to sign
 	 * @property {string} [x] rekeyed: the public x of the key the group now knows you by
 	 * @property {RelayRoster} [roster] welcome, roster
@@ -3982,8 +4016,19 @@
 	 * @property {number[]} admins
 	 * @property {boolean} open
 	 * @property {number[]} online
-	 * @property {GroupMember[]} members
+	 * @property {GroupMember[]} members Global: only who is online and its admins
+	 * @property {boolean} [global] it is Global
+	 * @property {number} [count] Global: how many members it has
 	 */
+	/**
+	 * A member number banned from Global, as its admins see the list.
+	 * @typedef {object} GlobalBan
+	 * @property {number} n
+	 * @property {string} name the name it had
+	 * @property {number} at when, in ms
+	 */
+	/** @type {GlobalBan[]} Global's ban list (admins only; the relay sends it). */
+	let globalBans = [];
 	/**
 	 * A stored group message.
 	 * @typedef {object} RelayGroupMessage
@@ -4017,6 +4062,7 @@
 	 * @property {((code: string | null, why?: string) => void)[]} waiters callbacks of invite requests, in order
 	 * @property {{ name: string, open: boolean }} [create] makes the group on sign-in
 	 * @property {string} [invite] joins with this invite secret on sign-in
+	 * @property {boolean} [join] joins Global on sign-in (no invite needed there)
 	 * @property {(gid: string) => void} [onWelcome] called once signed in
 	 * @property {(why: string) => void} [onFail] called if the sign-in fails
 	 * @property {boolean} [dead] closed on purpose (no reconnect)
@@ -4442,7 +4488,9 @@
 	}
 	/**
 	 * Opens group messages: sealed ones with the key of their epoch (kept waiting if we don't have it yet);
-	 * system lines ("X joined") come from the relay as they are.
+	 * system lines ("X joined") come from the relay as they are, and so does text in Global (the relay seals
+	 * it when storing it). Text that isn't sealed is taken from Global only, so the relay can never slip
+	 * words into a private group.
 	 * @param {string} gid
 	 * @param {RelayGroupMessage[]} msgs
 	 */
@@ -4451,11 +4499,12 @@
 		const out = [];
 		/** @type {RelayGroupMessage[]} */
 		const later = [];
+		const global = isGlobal(gid);
 		for (const m of msgs.slice(-200)) {
 			if (!m || typeof m !== 'object') {
 				continue;
 			}
-			if (m.sys === true) {
+			if (m.sys === true || (global && typeof m.text === 'string' && isNum(m.from))) {
 				out.push(m);
 				continue;
 			}
@@ -4525,12 +4574,19 @@
 		return out;
 	};
 	/**
-	 * Seals a message with the group's current key and sends it; waits up to 20 s for the key.
+	 * Seals a message with the group's current key and sends it; waits up to 20 s for the key. Global's go as
+	 * they are (see openMsgs) and unlock Hello World.
 	 * @param {string} gid
 	 * @param {string} text
 	 */
 	async function sendGroup(gid, text) {
 		konamiText(text);
+		if (isGlobal(gid)) {
+			// Over the encrypted connection; the relay seals it when storing it.
+			relaySend(gid, { t: 'say', text });
+			unlock('gl');
+			return;
+		}
 		const t0 = Date.now();
 		let told = false;
 		for (;;) {
@@ -5215,6 +5271,7 @@
 	 * @property {Handover} [rk] how the keys before them handed over to them
 	 * @property {[string, string][]} [g] the groups you are in: id and name
 	 * @property {Picture | 0} [p] your picture
+	 * @property {1} [gl] you were put in Global once already (see autoGlobal)
 	 */
 	/** @type {number | null} The account whose backup may be written (loadKey decides, once its keys are loaded). */
 	let backupFor = null;
@@ -5254,9 +5311,13 @@
 	 */
 	function takeBackup(b) {
 		const me = Player.MemberNumber;
-		for (const x of Array.isArray(b.g) ? b.g.slice(0, LIMITS.groups) : []) {
+		if (b.gl === 1) {
+			markGlobalDone();
+		}
+		// Global comes on top of LIMITS.groups.
+		for (const x of Array.isArray(b.g) ? b.g.slice(0, LIMITS.groups + 1) : []) {
 			const id = Array.isArray(x) ? x[0] : null;
-			if (!isId(id) || groups[id] || Object.keys(groups).length >= LIMITS.groups) {
+			if (!isId(id) || groups[id] || (!isGlobal(id) && groupCount() >= LIMITS.groups)) {
 				continue;
 			}
 			groups[id] = {
@@ -5295,7 +5356,14 @@
 		}
 		const pic = myPfp();
 		/** @type {Backup} */
-		const b = { v: 1, k: k.jwk, ...(k.rk ? { rk: k.rk } : {}), g: Object.values(groups).map((g) => [g.id, g.name]), p: pic || 0 };
+		const b = {
+			v: 1,
+			k: k.jwk,
+			...(k.rk ? { rk: k.rk } : {}),
+			g: Object.values(groups).map((g) => [g.id, g.name]),
+			p: pic || 0,
+			...(globalDone() ? { gl: /** @type {1} */ (1) } : {}),
+		};
 		const json = JSON.stringify(b);
 		const packed = hasLz() ? LZString.compressToUTF16(json) : json;
 		if (settings[BACKUP] === packed) {
@@ -5309,6 +5377,33 @@
 		}
 	}
 
+	/** localStorage key of the "put in Global once" mark of the account logged in. */
+	const globalDoneKey = () => `slimebeep.globalDone.${Player.MemberNumber}`;
+	/**
+	 * Whether this account was put in Global once already, here or in another browser (the account backup
+	 * says so): from then on it is in only if it stays or joins again, so leaving sticks.
+	 */
+	function globalDone() {
+		try {
+			if (localStorage.getItem(globalDoneKey()) === '1') {
+				return true;
+			}
+		} catch (e) {
+			/* the backup still knows */
+		}
+		const b = canBackup() ? readBackup() : null;
+		return !!b && b.gl === 1;
+	}
+	/** Marks this account as put in Global once, here and in the account backup. */
+	function markGlobalDone() {
+		try {
+			localStorage.setItem(globalDoneKey(), '1');
+		} catch (e) {
+			/* the backup keeps it */
+		}
+		saveBackup();
+	}
+
 	/**
 	 * Opens (or returns) the relay connection for a group.
 	 * @param {string} gid
@@ -5320,7 +5415,7 @@
 			return { ws: null, ready: false, queue: [], waiters: [], dead: true };
 		}
 		const old = conns[gid];
-		if (old && !extra.create && !extra.invite && old.ws && old.ws.readyState <= 1) {
+		if (old && !extra.create && !extra.invite && !extra.join && old.ws && old.ws.readyState <= 1) {
 			return old;
 		}
 		if (old && old.ws) {
@@ -5332,7 +5427,8 @@
 			}
 		}
 		// A group still owed a hand-over is signed in to with the previous keys (see loadKey).
-		const owed = !extra.create && !extra.invite && !!prevKey && prevKey.owner === Player.MemberNumber && prevKey.owed.includes(gid);
+		const owed =
+			!extra.create && !extra.invite && !extra.join && !!prevKey && prevKey.owner === Player.MemberNumber && prevKey.owed.includes(gid);
 		/** @type {Conn} */
 		const c = { ws: null, ready: false, retry: old ? old.retry || 0 : 0, queue: [], waiters: [], old: owed, ...extra };
 		conns[gid] = c;
@@ -5433,6 +5529,7 @@
 					after: g ? g.last || 0 : 0,
 					...(c.create ? { create: c.create } : {}),
 					...(c.invite ? { invite: c.invite } : {}),
+					...(c.join ? { join: true } : {}),
 				}),
 			);
 			return;
@@ -5443,7 +5540,8 @@
 			takeRoster(gid, p.roster);
 			const g = groups[gid];
 			const pic = myPfp();
-			if (g && (pic ? g.picv !== pic.v : g.picv)) {
+			// Global keeps no member pictures.
+			if (g && !isGlobal(gid) && (pic ? g.picv !== pic.v : g.picv)) {
 				ws.send(JSON.stringify({ t: 'profile', pic: pic ? pic.data : null }));
 				g.picv = pic ? pic.v : undefined;
 				saveGC();
@@ -5455,6 +5553,7 @@
 			const done = c.onWelcome;
 			c.create = undefined;
 			c.invite = undefined;
+			c.join = undefined;
 			c.onWelcome = undefined;
 			c.onFail = undefined;
 			for (const x of c.queue.splice(0)) {
@@ -5557,7 +5656,10 @@
 			return;
 		}
 		if (p.t === 'statuses' && Array.isArray(p.list)) {
-			for (const x of /** @type {{ n?: unknown, s?: unknown }[]} */ (/** @type {unknown} */ (p.list)).slice(0, LIMITS.members)) {
+			for (const x of /** @type {{ n?: unknown, s?: unknown }[]} */ (/** @type {unknown} */ (p.list)).slice(
+				0,
+				isGlobal(gid) ? LIMITS.globalListed : LIMITS.members,
+			)) {
 				if (x && isNum(x.n) && x.n !== me) {
 					takeStatus(/** @type {number} */ (x.n), x.s);
 				}
@@ -5588,6 +5690,19 @@
 			}
 			return;
 		}
+		if (p.t === 'bans') {
+			if (isGlobal(gid) && Array.isArray(p.list)) {
+				globalBans = /** @type {unknown[]} */ (p.list)
+					.slice(0, 500)
+					.map((x) => /** @type {Partial<GlobalBan>} */ (x))
+					.filter((b) => b && isNum(b.n))
+					.map((b) => ({ n: /** @type {number} */ (b.n), name: clean(b.name, LIMITS.name) || `#${b.n}`, at: Number(b.at) || 0 }));
+				if (isOpen() && membersOpen === gid) {
+					render(true);
+				}
+			}
+			return;
+		}
 		if (p.t === 'invite') {
 			const cb = c.waiters.shift();
 			if (cb) {
@@ -5609,13 +5724,15 @@
 				connectGroup(gid, { old: !c.old, retried: true, waiters: c.waiters });
 				return;
 			}
-			if (groups[gid] && (p.t === 'gone' || /not a member|no such group/.test(why))) {
+			if (groups[gid] && (p.t === 'gone' || /not a member|no such group|banned/.test(why))) {
 				/** @type {string | null} */
 				let note = `You're no longer in ${groups[gid].name}`;
 				if (why === 'left') {
 					note = null;
 				} else if (why === 'deleted') {
 					note = `${groups[gid].name} was deleted by its owner`;
+				} else if (isGlobal(gid)) {
+					note = /banned/.test(why) ? "⛔ You're banned from Global" : "You're no longer in Global. You can join again from 👥 Groups.";
 				}
 				dropGroup(gid, note);
 			}
@@ -5672,8 +5789,9 @@
 			return;
 		}
 		const old = groups[gid];
+		const global = isGlobal(gid) && r.global === true;
 		const members = r.members
-			.slice(0, LIMITS.members)
+			.slice(0, global ? LIMITS.globalListed : LIMITS.members)
 			.filter((m) => m && isNum(m.n))
 			.map((m) => ({
 				n: m.n,
@@ -5682,10 +5800,11 @@
 				...memberKeys(m),
 			}));
 		const rosterOnline = r.online;
-		if (!members.some((m) => m.n === Player.MemberNumber)) {
+		// Global lists who is online, which is you whenever its roster reaches you.
+		if (!global && !members.some((m) => m.n === Player.MemberNumber)) {
 			return;
 		}
-		if (!old && Object.keys(groups).length >= LIMITS.groups) {
+		if (!old && !isGlobal(gid) && groupCount() >= LIMITS.groups) {
 			return;
 		}
 		groups[gid] = {
@@ -5695,10 +5814,15 @@
 			admins: Array.isArray(r.admins) ? r.admins.filter(isNum).slice(0, LIMITS.admins) : [],
 			open: r.open === true,
 			members,
-			online: Array.isArray(rosterOnline) ? rosterOnline.filter(isNum).slice(0, LIMITS.members) : (old && old.online) || [],
+			online: Array.isArray(rosterOnline)
+				? rosterOnline.filter(isNum).slice(0, global ? LIMITS.globalListed : LIMITS.members)
+				: (old && old.online) || [],
 			last: old ? old.last || 0 : 0,
 			picv: old ? old.picv : undefined,
 			pic: old ? old.pic : undefined,
+			...(global
+				? { global: true, count: Number.isInteger(r.count) && /** @type {number} */ (r.count) > 0 ? r.count : members.length }
+				: {}),
 		};
 		saveGC();
 		emit('group', groupView(groups[gid]));
@@ -5907,6 +6031,9 @@
 		if (!isNum(n) || !loggedIn() || n === Player.MemberNumber) {
 			return Promise.resolve({ ok: false, why: 'bad member number' });
 		}
+		if (g.global) {
+			return Promise.resolve({ ok: false, why: 'anyone can join Global from 👥 Groups' });
+		}
 		// An admin's code for someone already listed lets them back in with new keys (they lost theirs).
 		const back = isMember(g, n);
 		if (back && !isAdmin(g, Player.MemberNumber)) {
@@ -6069,7 +6196,7 @@
 			}
 			return;
 		}
-		if (Object.keys(groups).length >= LIMITS.groups) {
+		if (groupCount() >= LIMITS.groups) {
 			return notify('You are in too many groups');
 		}
 		notify('👥 Joining…');
@@ -6085,6 +6212,76 @@
 			},
 			onFail: (why) => notify(`⚠ Couldn't join${why ? `: ${why}` : ''}`),
 		});
+	}
+	/** The account autoGlobal already tried this visit, 0 for none (a failed try waits for the next visit). */
+	let globalTriedFor = 0;
+	/**
+	 * Joins Global (no code needed there).
+	 * @param {boolean} auto put in by autoGlobal: quietly, and muted
+	 * @param {(gid: string) => void} [done] runs once in, or at once if already a member
+	 */
+	function joinGlobal(auto, done) {
+		const gid = globalId();
+		if (!secure()) {
+			if (!auto) {
+				needHttps();
+			}
+			return;
+		}
+		if (groups[gid]) {
+			if (done) {
+				done(gid);
+			}
+			return;
+		}
+		if (!auto) {
+			notify('🌍 Joining Global…');
+		}
+		connectGroup(gid, {
+			join: true,
+			onWelcome: () => {
+				// Also writes the account backup, which now lists Global.
+				markGlobalDone();
+				if (auto) {
+					// Muted until you choose otherwise (the bell in its chat).
+					opts.notify = { ...opts.notify, [`g:${gid}`]: 'none' };
+					saveOpts();
+				} else {
+					notify('🌍 Joined Global');
+				}
+				if (done) {
+					done(gid);
+				}
+			},
+			onFail: (why) => {
+				// Banned, or the number belongs to keys this browser doesn't have: trying on every visit won't help.
+				if (/banned|taken/.test(why)) {
+					markGlobalDone();
+				}
+				if (/taken/.test(why)) {
+					card({
+						icon: groupAv({}),
+						pic: ICON,
+						title: '🌍 Global',
+						text: "Global knows your member number from SlimeBeep keys this browser doesn't have. Ask a Global admin to let you back in.",
+					});
+				} else if (!auto) {
+					notify(`⚠ Couldn't join Global${why ? `: ${why}` : ''}`);
+				}
+			},
+		});
+	}
+	/**
+	 * Puts this account in Global once, muted: every SlimeBeep player, those who had it before included, on their
+	 * first visit with this version. Never again after that (globalDone, kept in the account backup), so leaving
+	 * sticks across browsers and reinstalls; a visit that can't reach the relay tries again next time.
+	 */
+	function autoGlobal() {
+		if (globalTriedFor === Player.MemberNumber || globalDone() || groups[globalId()] || conns[globalId()]) {
+			return;
+		}
+		globalTriedFor = Player.MemberNumber;
+		joinGlobal(true);
 	}
 	/**
 	 * Leaves a group on the relay, then forgets it here.
@@ -6114,14 +6311,19 @@
 		const owner = g.owner === Player.MemberNumber;
 		const others = g.members.filter((m) => m.n !== Player.MemberNumber).length;
 		let leaveHint = "You're the only one in it, so leaving deletes it.";
-		if (others) {
+		if (g.global) {
+			leaveHint = owner
+				? 'Global stays, and stays yours. Come back any time with 🌍 Join Global in 👥 Groups.'
+				: 'Come back any time with 🌍 Join Global in 👥 Groups.';
+		} else if (others) {
 			leaveHint = owner
 				? 'If you leave, the group stays and passes to an admin (or whoever has been in it longest).'
 				: 'You can come back only with a new invite.';
 		}
 		const box = document.createElement('div');
 		box.id = 'sb-ask';
-		const canDelete = owner && others > 0;
+		// Global can't be deleted.
+		const canDelete = owner && others > 0 && !g.global;
 		setHtml(
 			box,
 			html`<div class="sb-crop-card">
@@ -6167,7 +6369,8 @@
 	/** Sends your current picture to every group. */
 	function pushPicture() {
 		const pic = myPfp();
-		for (const id of Object.keys(groups)) {
+		// Global keeps no member pictures.
+		for (const id of Object.keys(groups).filter((x) => !isGlobal(x))) {
 			relaySend(id, { t: 'profile', pic: pic ? pic.data : null });
 			groups[id].picv = pic ? pic.v : undefined;
 		}
@@ -6212,6 +6415,8 @@
 				connectGroup(id);
 			}
 		}
+		// Only now: the account backup (read with the keys) has said whether Global was joined before.
+		autoGlobal();
 		if (Date.now() - mailChecked > 300000) {
 			checkMail();
 		}
@@ -7355,6 +7560,29 @@
 		);
 	}
 	/**
+	 * Asks before banning a member number from Global.
+	 * @param {string} gid
+	 * @param {number} n
+	 * @param {string} name
+	 */
+	function askBan(gid, n, name) {
+		askBox(
+			html`<div class="sb-crop-card">
+			<b>⛔ Ban ${name} from Global?</b>
+			<span class="sb-hint" style="text-align:center">#${n} is removed and can't join again until an admin unbans them (the list is on this page).</span>
+			<div class="sb-crop-btns"><button class="sb-pill" data-act="cancel">Cancel</button><button class="sb-go sb-danger" data-act="go">⛔ Ban</button></div>
+		</div>`,
+			(act, close) => {
+				if (act !== 'go') {
+					return;
+				}
+				close();
+				relaySend(gid, { t: 'ban', member: n, on: true });
+				notify(`⛔ ${name} is banned from Global`);
+			},
+		);
+	}
+	/**
 	 * The ↩ and 🗑 of a message bubble, shown on hover (or after a tap on touch screens).
 	 * @param {HistEntry} h
 	 */
@@ -7769,16 +7997,19 @@
 			const last = msgs[msgs.length - 1];
 			const n = msgs.filter(unread).length;
 			const pinned = isPinned(`g:${g.id}`);
+			const global = !!g.global;
 			rows.push({
 				pinned,
+				global,
 				time: last ? last.Time : 0,
-				html: html`<div class="sb-row" data-open="g:${g.id}">${groupAv(g)}
-				<div class="sb-main"><div class="sb-name">${g.name} <small style="font-weight:normal;color:#c08aaa">${g.members.length}</small></div>
+				html: html`<div class="sb-row${global && ' sb-global'}" data-open="g:${g.id}">${groupAv(g)}
+				<div class="sb-main"><div class="sb-name">${global && '🌍 '}${g.name} <small style="font-weight:normal;color:#c08aaa">${global ? g.count || g.members.length : g.members.length}</small></div>
 				<div class="sb-sub">${lastLine(last)}</div></div>
 				<div class="sb-side">${pinned && pinMark}${last && timeOf(last.Time)}${n > 0 && html`<br><span class="sb-dot">${n}</span>`}</div></div>`,
 			});
 		}
-		return rows.sort(pinnedFirst).map((r) => r.html);
+		// Global sits on top, highlighted.
+		return rows.sort((a, b) => Number(b.global) - Number(a.global) || pinnedFirst(a, b)).map((r) => r.html);
 	}
 	/**
 	 * The preview line of a group: "Name: text" of its last message.
@@ -7838,13 +8069,24 @@
 		const httpNote =
 			!secure() &&
 			html`<div class="sb-hint" style="margin:0 2px 6px">🔒 Group chats need the game's secure address: <a href="${httpsUrl()}">open it with https</a> (you'll log in again there).</div>`;
-		return html`${httpNote}<button class="sb-pill" id="sb-newgc" style="width:100%;margin:2px 0 6px">👥 New group chat</button>
+		const joinGlobalBtn =
+			!groups[globalId()] &&
+			html`<button class="sb-pill sb-global" id="sb-join-global" style="width:100%;margin:2px 0 6px">🌍 Join Global <span class="sb-hint">everyone with SlimeBeep</span></button>`;
+		return html`${httpNote}${joinGlobalBtn}<button class="sb-pill" id="sb-newgc" style="width:100%;margin:2px 0 6px">👥 New group chat</button>
 			<div class="sb-line" style="margin:0 0 6px"><input class="sb-search" id="sb-join-code" placeholder="Have a code? SB-…" style="margin:0"><button class="sb-pill" id="sb-join">Join</button></div>
 			${inv.length > 0 && html`<div class="sb-hint" style="margin:2px 2px 0">📨 Invitations</div>${inv}`}`;
 	}
 	/** Wires groupsTop's buttons. */
 	function wireGroupsTop() {
 		const list = invitations.filter((i) => !groups[codeGroup(i.code)]);
+		if ($('sb-join-global')) {
+			$('sb-join-global').addEventListener('click', () =>
+				joinGlobal(false, (gid) => {
+					thread = `g:${gid}`;
+					render();
+				}),
+			);
+		}
 		for (const b of $$($('sb-view'), '[data-join]')) {
 			b.addEventListener('click', () => {
 				const i = list[Number(b.dataset.join)];
@@ -7962,11 +8204,13 @@
 		const me = Player.MemberNumber;
 		const admin = isAdmin(g, me);
 		const owner = g.owner === me;
+		const global = !!g.global;
 		const view = $('sb-view');
+		const fields = ['sb-gm-name', 'sb-gm-for', 'sb-gm-ban', 'sb-gm-back'];
 		// Typed text and focus survive the redraw.
 		/** @type {Record<string, string>} */
 		const typing = {};
-		for (const k of ['sb-gm-name', 'sb-gm-for']) {
+		for (const k of fields) {
 			if ($(k) && $(k).dataset.touched) {
 				typing[k] = $input(k).value;
 			}
@@ -7996,6 +8240,9 @@
 					}
 					if ((admin && !isAdmin(g, n)) || owner) {
 						acts.push(html`<button class="sb-pill" data-act="kick" data-n="${n}" title="Remove">✕</button>`);
+						if (global) {
+							acts.push(html`<button class="sb-pill" data-act="ban" data-n="${n}" title="Ban from Global">⛔</button>`);
+						}
 					}
 					if (owner) {
 						acts.push(html`<button class="sb-pill" data-act="own" data-n="${n}" title="Make owner">👑</button>`);
@@ -8007,13 +8254,38 @@
 					<div class="sb-main"><div class="sb-name">${dot}<span${prof}>${memberName(g, n)}</span>${keyMark(m)}${peers.has(n) && ' 🫧'}${n !== me && notFriendMark(n)}</div><div class="sb-sub">${role} · #${n}${!on(n) && ' · offline'}</div>${on(n) && statusLine(n)}</div>
 					<div class="sb-side" style="display:flex;gap:3px">${acts}</div></div>`;
 			});
-		const invite = canInvite(g, me) && g.members.length < LIMITS.members;
+		// Anyone joins Global from 👥 Groups: no invites there.
+		const invite = !global && canInvite(g, me) && g.members.length < LIMITS.members;
 		const memberNums = g.members.map((m) => m.n);
+		let hint = g.open ? 'Anyone can invite people here.' : 'Only admins can invite people here.';
+		if (global) {
+			hint = "Anyone with SlimeBeep can join Global. Listed: who's online, and the admins.";
+		}
 		const settings = admin
 			? html`<div class="sb-line"><input class="sb-search" id="sb-gm-name" maxlength="${LIMITS.name}" value="${g.name}" style="margin:0"><button class="sb-pill" id="sb-gm-rename">Rename</button></div>
 				<div class="sb-line"><span>🖼 Group picture</span><span style="display:flex;gap:4px">${g.pic && html`<button class="sb-pill" id="sb-gm-picoff">Remove</button>`}<button class="sb-pill" id="sb-gm-pic">${g.pic ? 'Change' : 'Add'}</button></span></div>
-				<label><input type="checkbox" id="sb-gm-open" ${g.open && 'checked'}><span>Anyone can invite</span></label>`
-			: html`<div class="sb-hint">${g.open ? 'Anyone can invite people here.' : 'Only admins can invite people here.'}</div>`;
+				${global ? html`<div class="sb-hint">${hint}</div>` : html`<label><input type="checkbox" id="sb-gm-open" ${g.open && 'checked'}><span>Anyone can invite</span></label>`}`
+			: html`<div class="sb-hint">${hint}</div>`;
+		const banRows = globalBans.map(
+			(b) => html`<div class="sb-row" style="cursor:default">${avatar(b.n, b.name)}
+				<div class="sb-main"><div class="sb-name">${b.name}</div><div class="sb-sub">#${b.n}${b.at > 0 && ` · ${timeOf(b.at)}`}</div></div>
+				<div class="sb-side"><button class="sb-pill" data-act="unban" data-n="${b.n}">Unban</button></div></div>`,
+		);
+		const globalTools =
+			global &&
+			admin &&
+			html`<div class="sb-line"><b>⛔ Ban a member number</b></div>
+				<div class="sb-hint">They're removed and can't join again until unbanned, online or not.</div>
+				<div class="sb-line"><input class="sb-search" id="sb-gm-ban" placeholder="Member #" style="margin:0;width:150px"><button class="sb-go sb-danger" id="sb-gm-banbtn">Ban</button></div>
+				<div class="sb-line"><b>🔑 Let back in</b></div>
+				<div class="sb-hint">For someone who lost their SlimeBeep keys (Global still knows their number by the old ones): a code only their number can use, once.</div>
+				<div class="sb-line"><input class="sb-search" id="sb-gm-back" placeholder="Member #" style="margin:0;width:150px"><button class="sb-go" id="sb-gm-backbtn">Make a code</button></div>
+				<div id="sb-gm-out"></div>
+				<div class="sb-line"><b>Banned (${globalBans.length})</b></div>
+				${banRows.length ? banRows : html`<div class="sb-empty">Nobody is banned.</div>`}`;
+		const sub = global
+			? `${g.count || g.members.length} members · ${(g.online || []).length} online`
+			: `${g.members.length} / ${LIMITS.members} members`;
 		const inviting =
 			invite &&
 			html`<div class="sb-line"><b>🔗 Invite with a code</b></div>
@@ -8026,14 +8298,15 @@
 			view,
 			html`
 			<div class="sb-thead"><button id="sb-back" title="Back to the chat">${ICONS.back}</button>${groupAv(g)}
-				<div class="sb-main"><div class="sb-name">${g.name}</div><div class="sb-sub">${g.members.length} / ${LIMITS.members} members</div></div></div>
+				<div class="sb-main"><div class="sb-name">${g.name}</div><div class="sb-sub">${sub}</div></div></div>
 			<div class="sb-body sb-group" id="sb-body">
 				${settings}
 				${rows}
 				${inviting}
+				${globalTools}
 			</div>`,
 		);
-		for (const k of ['sb-gm-name', 'sb-gm-for']) {
+		for (const k of fields) {
 			const el = $input(k);
 			if (!el) {
 				continue;
@@ -8072,7 +8345,38 @@
 				if (b.dataset.act === 'own') {
 					act({ t: 'owner', member: n });
 				}
+				if (b.dataset.act === 'ban') {
+					askBan(id, n, memberName(g, n));
+				}
+				if (b.dataset.act === 'unban') {
+					act({ t: 'ban', member: n, on: false });
+				}
 			});
+		}
+		if ($('sb-gm-banbtn')) {
+			$('sb-gm-banbtn').addEventListener('click', () => {
+				const n = Number($input('sb-gm-ban').value.replace(/\D/g, ''));
+				if (!isNum(n) || n === me || n === g.owner) {
+					return notify('Put the member number to ban');
+				}
+				askBan(id, n, isMember(g, n) ? memberName(g, n) : `#${n}`);
+			});
+		}
+		if ($('sb-gm-backbtn')) {
+			$('sb-gm-backbtn').addEventListener('click', () => {
+				const n = Number($input('sb-gm-back').value.replace(/\D/g, ''));
+				if (!isNum(n)) {
+					return notify('Put the member number to let back in');
+				}
+				requestInvite(id, n, (code, why) => {
+					if (!code) {
+						return notify(`⚠ ${why || 'No code'}`);
+					}
+					lastCode = { id, code, forWho: n };
+					showCode();
+				});
+			});
+			showCode();
 		}
 		if ($('sb-gm-rename')) {
 			$('sb-gm-rename').addEventListener('click', () => {
@@ -8303,8 +8607,8 @@
 			html`
 			<div class="sb-thead"><button id="sb-back" title="Back">${ICONS.back}</button>${groupAv(g)}
 				<div class="sb-main"><div class="sb-name">${g.name}</div>
-				<div class="sb-sub" title="${names.join(', ')}">${status}${g.members.length} members: You${names.length > 0 && `, ${names.join(', ')}`}</div></div>
-				${trSettingsButton(`g:${id}`)}${muteButton(`g:${id}`)}${moreButton(`g:${id}`)}<button id="sb-members" title="Members and invites">👥</button><button id="sb-leave" title="${g.owner === Player.MemberNumber ? 'Leave or delete the group' : 'Leave the group'}">🚪</button></div>
+				<div class="sb-sub" title="${names.join(', ')}">${status}${g.global ? `${g.count || g.members.length} members` : html`${g.members.length} members: You${names.length > 0 && `, ${names.join(', ')}`}`}</div></div>
+				${trSettingsButton(`g:${id}`)}${muteButton(`g:${id}`)}${moreButton(`g:${id}`)}<button id="sb-members" title="Members and invites">👥</button><button id="sb-leave" title="${g.owner === Player.MemberNumber && !g.global ? 'Leave or delete the group' : 'Leave the group'}">🚪</button></div>
 			${jamLine(`g:${id}`)}
 			<div class="sb-msgwrap"><div class="sb-msgs" id="sb-msgs">${msgs.length ? msgs.map(bubble) : html`<div class="sb-empty">🫧 Say hi to the group!</div>`}</div>
 				<button class="sb-pill sb-jump" id="sb-jump"></button></div>
@@ -9338,10 +9642,11 @@
 		return nameOf(Number(chat.slice(2)));
 	};
 	/**
-	 * Whether a chat can listen along: a group chat, or a friend who has SlimeBeep.
+	 * Whether a chat can listen along: a group chat (Global has no music), or a friend who has SlimeBeep.
 	 * @param {string} chat a chat key
 	 */
-	const canShare = (chat) => (chat.startsWith('g:') ? !!groups[chat.slice(2)] : peers.has(Number(chat.slice(2))));
+	const canShare = (chat) =>
+		chat.startsWith('g:') ? !!groups[chat.slice(2)] && !isGlobal(chat.slice(2)) : peers.has(Number(chat.slice(2)));
 	/**
 	 * The chat open now as a chat key; '' on other pages.
 	 * @returns {string}
@@ -10287,6 +10592,9 @@
 			share.disabled = !m;
 		} else {
 			share.textContent = chat ? `🎧 ${chatLabel(chat)} doesn't have SlimeBeep` : '🎧 Open a chat to share with it';
+			if (chat && chat.startsWith('g:') && isGlobal(chat.slice(2))) {
+				share.textContent = '🎧 No listening along in Global';
+			}
 			share.disabled = true;
 		}
 		const jq = following ? jamQueues.get(following) || [] : [];
@@ -11599,7 +11907,7 @@
 			how = peers.has(n) ? `${name} has SlimeBeep: they get an invite card.` : `${name} gets a beep with the code.`;
 		}
 		const results = inviteFor.results;
-		const list = Object.values(groups).filter((g) => canInvite(g, Player.MemberNumber));
+		const list = Object.values(groups).filter((g) => !g.global && canInvite(g, Player.MemberNumber));
 		const rows = list.map((g) => {
 			const res = results[g.id];
 			// Admins can still let a listed member back in, for when they lost their keys.
