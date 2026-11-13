@@ -412,5 +412,11 @@
     "date": "13 Nov 2026",
     "title": "📢 SlimeBeep 3.14",
     "text": "🌍 Global: one group chat for everyone with SlimeBeep, no member cap. You are put in once, muted (tap 🔕 in the chat to hear it), and you can leave and come back any time with 🌍 Join Global in 👥 Groups. Its admins can remove and ban. New achievement: 🌍 Hello World, for your first message in Global."
+  },
+  {
+    "id": "3.15.0",
+    "date": "13 Nov 2026",
+    "title": "📢 SlimeBeep 3.15",
+    "text": "📌 Pinned messages, like Discord: in group chats and Global, owners and admins pin a message with its 📌, and everyone finds them in the 📌 at the top of the chat. In a direct chat with a SlimeBeep friend, either of you can pin. ⏳ Timeouts too: admins can time someone out from 60 seconds to a week, and they can still read but not send. Someone unbanned from Global is put back in by themselves."
   }
 ]

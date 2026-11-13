@@ -541,6 +541,8 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 		}
 	}
 
+	await testTimeoutsAndPins(`tp${Date.now().toString(36)}`);
+
 	// Global: the test relay (npm run dev:test) makes every group id starting with GLOBAL_PREFIX a Global.
 	const GLOBAL_PREFIX = process.env.GLOBAL_PREFIX || 'globaltest';
 	if (BASE.startsWith('ws://')) {
@@ -555,6 +557,99 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 
 /** Plain texts in what a connection received (Global sends text, not sealed messages). */
 const plainTexts = (c) => c.got.flatMap(messagesOf).map((m) => m.text);
+
+/** Timeouts and pins in an ordinary (end-to-end) group: owner Ann, admin Cat, member Zed. */
+async function testTimeoutsAndPins(gid) {
+	const ann = await makePeer(41, 'Ann');
+	const cat = await makePeer(43, 'Cat');
+	const zed = await makePeer(49, 'Zed');
+	const a = await connect(gid, ann, { fields: { create: { name: 'Mods', open: false } } });
+	await wait(300);
+	a.send({ t: 'invite', member: 43 });
+	a.send({ t: 'invite', member: 49 });
+	await wait(300);
+	const codes = a.got.filter((x) => x.t === 'invite');
+	const c = await connect(gid, cat, { fields: { invite: codes.find((x) => x.member === 43).code } });
+	const z = await connect(gid, zed, { fields: { invite: codes.find((x) => x.member === 49).code } });
+	a.send({ t: 'admin', member: 43, on: true });
+	await wait(600);
+
+	z.send({ t: 'timeout', member: 43, secs: 60 });
+	c.send({ t: 'timeout', member: 41, secs: 60 });
+	await wait(300);
+	check(!Object.keys(a.last('roster').roster.timeouts).length, "a member can't time anyone out, and an admin can't time out the owner");
+	c.send({ t: 'timeout', member: 49, secs: 60 });
+	await wait(400);
+	const until = z.last('timeout') && z.last('timeout').until;
+	check(
+		until > Date.now() + 50000 &&
+			a.last('roster').roster.timeouts[49] === until &&
+			(await a.texts()).includes('Cat timed out Zed for 1 minute'),
+		'an admin times Zed out for a minute: he is told until when, everyone sees it, and the chat says so',
+	);
+	await z.say('can I talk?');
+	await wait(300);
+	check(
+		z.last('error').why === 'timed out' && z.last('error').until === until && !(await a.texts()).includes('can I talk?'),
+		"timed out, Zed's message is refused",
+	);
+	z.ws.close();
+	await wait(200);
+	const z2 = await connect(gid, zed);
+	check(z2.last('timeout') && z2.last('timeout').until === until, 'signing in again, Zed is still timed out (and told so)');
+	c.send({ t: 'timeout', member: 49, secs: LIMITS_TIMEOUT + 1 });
+	await wait(200);
+	check(a.last('roster').roster.timeouts[49] === until, 'a timeout longer than 28 days is refused');
+	c.send({ t: 'timeout', member: 49, secs: 0 });
+	await wait(400);
+	await z2.say('back!');
+	await wait(400);
+	check(
+		z2.last('timeout').until === 0 && (await a.texts()).includes('back!') && (await a.texts()).includes("Cat lifted Zed's timeout"),
+		'lifting it lets Zed talk again',
+	);
+
+	// Pins: admins only, a copy that outlives the 200 kept messages, sealed as the message was.
+	await a.say('read the rules');
+	await wait(300);
+	const ruleId = a
+		.raw()
+		.filter((m) => !m.sys && m.from === 41)
+		.pop().id;
+	z2.send({ t: 'pin', id: ruleId, on: true });
+	await wait(300);
+	check(!a.got.some((x) => x.t === 'pins'), "a member can't pin");
+	c.send({ t: 'pin', id: ruleId, on: true });
+	await wait(400);
+	const pins = a.last('pins');
+	check(
+		pins &&
+			pins.list.length === 1 &&
+			pins.list[0].id === ruleId &&
+			pins.list[0].by === 43 &&
+			pins.list[0].m.enc &&
+			!('text' in pins.list[0].m),
+		'an admin pins a message: everyone gets the pin, still sealed with the group key',
+	);
+	check((await a.texts()).includes('Cat pinned a message'), 'and the chat says so');
+	c.send({ t: 'pin', id: 999999, on: true });
+	await wait(300);
+	check(/too old/.test(c.last('error').why), "a message the group no longer keeps can't be pinned");
+	const z3 = await connect(gid, zed);
+	check(z3.last('pins') && z3.last('pins').list[0].id === ruleId, 'signing in, members get the pins');
+	c.send({ t: 'pin', id: ruleId, on: false });
+	await wait(400);
+	check(a.last('pins').list.length === 0, 'unpinning takes it off for everyone');
+	for (const x of [a, c, z, z2, z3]) {
+		try {
+			x.ws.close();
+		} catch (e) {
+			/* closed */
+		}
+	}
+}
+/** The relay's longest timeout (LIMITS.timeout), in seconds. */
+const LIMITS_TIMEOUT = 28 * 86400;
 
 async function testGlobal(gid) {
 	const own = await makePeer(21, 'Owner');
@@ -623,6 +718,14 @@ async function testGlobal(gid) {
 	);
 	const later = await join(zed, { fields: { join: true, after: 0 } });
 	check(plainTexts(later).includes('hello global <b>hi</b>'), 'Zed joins later and gets the history (stored sealed, opened for him)');
+	const helloId = o.got.flatMap(messagesOf).find((m) => m.text === 'hello global <b>hi</b>').id;
+	o.send({ t: 'pin', id: helloId, on: true });
+	await wait(400);
+	const gp = later.last('pins');
+	check(
+		gp && gp.list[0].m.text === 'hello global <b>hi</b>' && !gp.list[0].m.sec,
+		"the owner pins Cat's hello: members get the pin opened, like Global's messages",
+	);
 	c.send({ t: 'music', u: 'https://example.com/a.mp3', p: 0, pl: true });
 	c.send({ t: 'gkey', e: 1, fresh: true, wraps: [] });
 	await wait(300);
@@ -647,6 +750,14 @@ async function testGlobal(gid) {
 	await wait(300);
 	const c3 = await join(cat, { fields: { join: true } });
 	check(c3.last('welcome') && !o.last('bans').list.length, 'unbanned, Cat joins again');
+	o.send({ t: 'timeout', member: 23, secs: 300 });
+	await wait(400);
+	c3.send({ t: 'leave' });
+	await wait(400);
+	const c4 = await join(cat, { fields: { join: true } });
+	check(c4.last('timeout') && c4.last('timeout').until > Date.now(), 'leaving Global and joining again does not end a timeout');
+	o.send({ t: 'timeout', member: 23, secs: 0 });
+	await wait(300);
 
 	o.send({ t: 'admin', member: 29, on: true });
 	await wait(300);
@@ -656,11 +767,11 @@ async function testGlobal(gid) {
 	await wait(300);
 	check(o.ws.readyState === 1 && o.last('roster').roster.owner === 21, "an admin can't ban or remove the owner");
 
-	c3.send({ t: 'leave' });
+	c4.send({ t: 'leave' });
 	o.send({ t: 'disband' });
 	await wait(3600);
 	// 47 and Zed, less Cat.
-	check(c3.closed && o.last('roster').roster.count === 47, 'Cat leaves Global');
+	check(c4.closed && o.last('roster').roster.count === 47, 'Cat leaves Global');
 	check(o.ws.readyState === 1 && o.last('roster').roster.name === 'Global', "the owner can't delete Global");
 	const squat = await join(eve, { as: 23, fields: { join: true } });
 	check(squat.closed && /taken/.test(JSON.stringify(squat.got)), "Eve can't take Cat's member number now that Cat has left");

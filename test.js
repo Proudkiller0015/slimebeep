@@ -1190,6 +1190,69 @@ const check = (ok, what) => {
 		await p.keyboard.press('Enter');
 		await wait(700);
 		check((await a.texts()).includes('hello group'), 'my message reaches Ann, sealed with the group key');
+		// 📌 Pins: the owner pins Ann's message; Ann gets it, and the chat shows it pinned.
+		const pinned = await p.evaluate(() => {
+			const b = [...document.querySelectorAll('.sb-b.them')].find((x) => /hi from Ann/.test(x.textContent || ''));
+			const btn = b && b.querySelector('[data-pin]');
+			if (btn) {
+				btn.click();
+			}
+			return !!btn;
+		});
+		const annPins = await waitFor(async () => !!a.last('pins') && a.last('pins').list.length === 1, 5000);
+		const pinShown = await waitFor(
+			() =>
+				p.evaluate(
+					() => /1/.test((document.querySelector('#sb-pins .sb-pinn') || {}).textContent || '') && !!document.querySelector('.sb-pinned'),
+				),
+			5000,
+		);
+		check(
+			pinned && annPins && pinShown,
+			`the owner pins Ann's message: Ann gets the pin, and the chat marks it (${JSON.stringify({ pinned, annPins, pinShown })})`,
+		);
+		await p.click('#sb-pins');
+		await wait(200);
+		await shot('pins');
+		const pinBox = await p.evaluate(() => ({
+			text: (document.querySelector('.sb-pinlist') || {}).textContent || '',
+			jump: !!document.querySelector('.sb-pins [data-act^="jump:"]'),
+		}));
+		check(/hi from Ann/.test(pinBox.text) && pinBox.jump, `📌 lists it, with Jump (${JSON.stringify(pinBox)})`);
+		await p.evaluate(() => document.querySelector('.sb-pins [data-act^="unpin:"]').click());
+		check(await waitFor(async () => a.last('pins').list.length === 0, 5000), 'Unpin there takes it off for everyone');
+		// 📌 in a direct chat with Ann (she has SlimeBeep): either of us pins, and the other's SlimeBeep is told.
+		await p.evaluate(() => {
+			hidden.length = 0;
+			SlimeBeep.api.openChat(11);
+		});
+		await wait(300);
+		await p.evaluate(() => {
+			const b = [...document.querySelectorAll('.sb-b.them')].find((x) => /hiii/.test(x.textContent || ''));
+			b.querySelector('[data-pin]').click();
+		});
+		await wait(400);
+		const sentPin = await p.evaluate(() =>
+			hidden.map((h) => JSON.parse(h.Message || '{}')).find((m) => m.pin && m.pin.text === 'hiii' && m.pin.from === 11),
+		);
+		check(!!sentPin && (await p.$eval('#sb-pins .sb-pinn', (e) => e.textContent)) === '1', "pinning Ann's beep tells her SlimeBeep");
+		await hide(11, 'Ann', {
+			sb: 1,
+			pin: { id: 'annpin0001', from: 1, name: 'Me', text: 'hey Ann <3', at: Date.now() - 45 * 60000, by: 11 },
+		});
+		await wait(300);
+		const both = await p.evaluate(() => ({
+			count: (document.querySelector('#sb-pins .sb-pinn') || {}).textContent,
+			marked: [...document.querySelectorAll('.sb-b.me')].some(
+				(b) => /hey Ann/.test(b.textContent || '') && !!b.querySelector('.sb-pinned'),
+			),
+		}));
+		check(both.count === '2' && both.marked, `Ann's SlimeBeep pins one of mine: it shows here too (${JSON.stringify(both)})`);
+		await hide(11, 'Ann', { sb: 1, unpin: 'annpin0001' });
+		await wait(300);
+		check((await p.$eval('#sb-pins .sb-pinn', (e) => e.textContent)) === '1', 'and her unpin takes it off');
+		await p.evaluate((g) => SlimeBeep.api.openGroup(g), gid);
+		await wait(300);
 		// @: typing it lists the members; Enter writes the name.
 		await p.type('#sb-text', 'hey @an');
 		await wait(150);
@@ -5416,6 +5479,41 @@ const check = (ok, what) => {
 		const ach = await p.evaluate(() => (localStorage.getItem('slimebeep.ach.8') || '').includes('gl'));
 		check(heard && ach, `my message reaches Ann, and unlocks 🌍 Hello World (${JSON.stringify({ heard, ach })})`);
 		check((await p.evaluate((g) => SlimeBeep.api.group(g).canInvite, gid)) === false, 'nobody can be invited to Global (anyone joins it)');
+		// 📌 In Global only admins pin: #8 gets no 📌 on messages, but sees the owner's pin.
+		check((await p.$$eval('[data-pin]', (b) => b.length)) === 0, 'a member of Global gets no 📌 on messages (admins pin)');
+		const hiId = a.got.find((x) => x.t === 'msg' && x.m.text === 'hi everyone').m.id;
+		q.send({ t: 'pin', id: hiId, on: true });
+		check(
+			await waitFor(() => p.evaluate(() => (document.querySelector('#sb-pins .sb-pinn') || {}).textContent === '1'), 6000),
+			"the owner pins Ann's hello: it shows in Global's 📌",
+		);
+		// ⏳ A timeout locks the message box (reading only) and says until when; lifting it brings the box back.
+		q.send({ t: 'timeout', member: 8, secs: 60 });
+		const locked = await waitFor(
+			() =>
+				p.evaluate(() => {
+					const t = /** @type {HTMLTextAreaElement | null} */ (document.getElementById('sb-text'));
+					return !!t && t.disabled && /Timed out until/.test(t.placeholder);
+				}),
+			6000,
+		);
+		const timeCard = await p.evaluate(() =>
+			[...document.querySelectorAll('.sb-card')].some((c) => /timed out until/i.test(c.textContent || '')),
+		);
+		await shot('timed-out');
+		check(locked && timeCard, `timed out: the message box locks and a card says until when (${JSON.stringify({ locked, timeCard })})`);
+		q.send({ t: 'timeout', member: 8, secs: 0 });
+		check(
+			await waitFor(
+				() =>
+					p.evaluate(
+						() =>
+							!!document.getElementById('sb-text') && !(/** @type {HTMLTextAreaElement} */ (document.getElementById('sb-text')).disabled),
+					),
+				6000,
+			),
+			'lifted, the message box is back',
+		);
 
 		// Leaving sticks: after a reload, and after a reinstall (browser wiped, account backup kept). The achievement
 		// pop-up redraws the chat, so the 🚪 is clicked once it is back.
@@ -5457,8 +5555,20 @@ const check = (ok, what) => {
 		await p.click('#sb-join-global');
 		const refused = await waitFor(() => p.$eval('#sb-toast', (e) => /banned/.test(e.textContent || '')), 6000);
 		check(refused && !(await inGlobal()), 'while banned, 🌍 Join Global is refused');
+		// The account backup remembers the ban, so a later visit checks, and once it is lifted puts the player back.
+		await waitFor(async () => ((await backupJson()) || {}).gl === 2, 8000);
+		const bannedBackup = await backup();
 		q.send({ t: 'ban', member: 8, on: false });
 		await wait(500);
+		await visit(bannedBackup, false);
+		const back = await waitFor(inGlobal, 15000);
+		const liftedCard = await p.evaluate(() =>
+			[...document.querySelectorAll('.sb-card')].some((c) => /ban was lifted/.test(c.textContent || '')),
+		);
+		check(
+			back && liftedCard,
+			`unbanned, the next visit puts the player back in Global by itself, once (${JSON.stringify({ back, liftedCard })})`,
+		);
 
 		// Keys lost with the account backup: the number is bound to the old keys, so the player is told to ask an
 		// admin, and the admin's code lets them back in.

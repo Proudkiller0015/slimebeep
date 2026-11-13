@@ -88,6 +88,10 @@ const LIMITS = {
 	queueTitle: 40,
 	/** Longest status line (each part). */
 	status: 60,
+	/** Longest timeout, in seconds (28 days, as on Discord). */
+	timeout: 28 * 86400,
+	/** Most pinned messages in a group (as on Discord). */
+	pins: 50,
 	/** Most achievements a status lists. */
 	achievements: 40,
 };
@@ -240,11 +244,12 @@ export default {
 };
 
 /**
- * One group chat. Members' statuses and who listens along live on their connections, not in storage. Storage: 'meta' { name, owner, admins, open, created, pic, e2e }, 'members' (member
+ * One group chat. Members' statuses and who listens along live on their connections, not in storage. Storage: 'meta' { name, owner, admins, open, created, pic, e2e, timeouts }, 'members' (member
  * number -> { n, name, pub, ek, eks, joined, pic, rk }), 'invites' (secret -> { member, by, exp, uses }),
  * 'msg:<seq>' sealed messages, 'keys' { epoch, rekey, eps: epoch -> member -> wrap } and 'music'
  * { u, ti, p, pl, d, i, b, by, name, at, q }: the song playing, only its link and where it is, never the sound,
- * and the titles of the songs queued after it.
+ * and the titles of the songs queued after it. 'pins' [{ id, by, at, m }]: pinned messages, each with a copy of
+ * the stored message `m` so it outlives LIMITS.keep. meta.timeouts: member number -> when their timeout ends.
  *
  * Global (meta.global) keeps each member as 'gm:<member number>' instead of one 'members' record, since it has
  * no cap; meta also holds its `bans` (member number -> { name, by, at }). Its 'msg:<seq>' records keep their
@@ -348,7 +353,7 @@ export class Group extends DurableObject {
 		for (const n of Object.keys(this.members)) {
 			this.touch(Number(n));
 		}
-		await this.ctx.storage.delete(['keys', 'members', 'music']);
+		await this.ctx.storage.delete(['keys', 'members', 'music', 'pins']);
 		await this.ctx.storage.put('seq', this.seq);
 		await this.save();
 		await this.note('This chat is now Global: everyone with SlimeBeep can join');
@@ -442,7 +447,7 @@ export class Group extends DurableObject {
 
 	/**
 	 * A client message (JSON with `t`). Before sign-in only 'auth'; then 'say', 'history', 'gkey', 'rekey', 'invite', 'kick',
-	 * 'ban' (Global), 'admin', 'owner', 'rename', 'open', 'profile', 'gpic', 'music', 'musicEnd', 'musicQueue', 'musicAdd',
+	 * 'ban' (Global), 'timeout', 'pin', 'admin', 'owner', 'rename', 'open', 'profile', 'gpic', 'music', 'musicEnd', 'musicQueue', 'musicAdd',
 	 * 'musicSkip', 'musicListen', 'status', 'leave' and 'disband'. Rate limited per connection.
 	 */
 	async webSocketMessage(ws, raw) {
@@ -482,9 +487,18 @@ export class Group extends DurableObject {
 			if (this.global && (p.t === 'gkey' || p.t.startsWith('music'))) {
 				return this.send(ws, { t: 'error', why: p.t === 'gkey' ? 'unknown' : 'no music in Global' });
 			}
+			// Timed out: reading only, as on Discord (no messages, no songs shared with the group).
+			const until = this.timedOut(att.member);
+			if (until && (p.t === 'say' || p.t === 'music' || p.t === 'musicAdd')) {
+				return this.send(ws, { t: 'error', why: 'timed out', until });
+			}
 			switch (p.t) {
 				case 'say':
 					return await (this.global ? this.sayGlobal(att.member, p) : this.say(att.member, p));
+				case 'timeout':
+					return await this.timeout(att.member, p.member, p.secs);
+				case 'pin':
+					return await this.pin(att.member, p.id, p.on === true);
 				case 'history':
 					return this.history(ws, p.after);
 				case 'gkey':
@@ -702,6 +716,13 @@ export class Group extends DurableObject {
 		if (this.global && this.meta.admins.includes(member)) {
 			this.sendBans(ws);
 		}
+		if (this.timedOut(member)) {
+			this.send(ws, { t: 'timeout', until: this.timedOut(member) });
+		}
+		const pins = await this.pinList();
+		if (pins.length) {
+			this.send(ws, { t: 'pins', list: pins });
+		}
 		const music = this.global ? null : await this.ctx.storage.get('music');
 		if (music && Date.now() - music.at < LIMITS.songHours * 36e5) {
 			const { at, q, ...song } = music;
@@ -892,6 +913,103 @@ export class Group extends DurableObject {
 		this.closeMember(target, 'removed');
 		await this.rosterChanged();
 		await this.needRekey();
+	}
+
+	/**
+	 * When a member's timeout ends (ms), or 0 if they aren't timed out. Ended timeouts are forgotten at the next
+	 * change (see timeout).
+	 */
+	timedOut(n) {
+		const until = this.meta && this.meta.timeouts ? this.meta.timeouts[n] || 0 : 0;
+		return until > Date.now() ? until : 0;
+	}
+	/**
+	 * Times a member out for `secs` (at most LIMITS.timeout), or lifts their timeout (0): admins, like
+	 * removing someone; only the owner times out an admin, and nobody the owner. A timed-out member still reads
+	 * the chat but can't post (see webSocketMessage). Kept by member number, so leaving and joining again
+	 * doesn't end it.
+	 */
+	async timeout(by, target, secs) {
+		const g = this.meta;
+		if (!isNum(target) || !this.members[target] || target === g.owner || target === by || !g.admins.includes(by)) {
+			return;
+		}
+		if (g.admins.includes(target) && by !== g.owner) {
+			return;
+		}
+		if (!Number.isInteger(secs) || secs < 0 || secs > LIMITS.timeout) {
+			return;
+		}
+		const now = Date.now();
+		const timeouts = Object.fromEntries(Object.entries(g.timeouts || {}).filter(([, until]) => until > now));
+		const was = timeouts[target] || 0;
+		if (!secs && !was) {
+			return;
+		}
+		const name = this.members[target].name;
+		if (secs) {
+			timeouts[target] = now + secs * 1000;
+		} else {
+			delete timeouts[target];
+		}
+		g.timeouts = timeouts;
+		await this.save();
+		await this.note(
+			secs ? `${this.members[by].name} timed out ${name} for ${spell(secs)}` : `${this.members[by].name} lifted ${name}'s timeout`,
+		);
+		this.sendMember(target, { t: 'timeout', until: timeouts[target] || 0 });
+		await this.rosterChanged();
+	}
+
+	/**
+	 * Pins a message (on) or unpins it (admins). A pin keeps a copy of the stored message, so it outlives the
+	 * LIMITS.keep window; at most LIMITS.pins, newest first. Pinning says so in the chat, unpinning doesn't (as
+	 * on Discord). Messages too old to be kept any more can't be pinned.
+	 */
+	async pin(by, id, on) {
+		if (!this.meta.admins.includes(by) || !Number.isInteger(id) || id <= 0) {
+			return;
+		}
+		const pins = (await this.ctx.storage.get('pins')) || [];
+		const i = pins.findIndex((x) => x.id === id);
+		if (on) {
+			if (i >= 0) {
+				return;
+			}
+			if (pins.length >= LIMITS.pins) {
+				return this.sendMember(by, { t: 'error', why: `a chat keeps ${LIMITS.pins} pins at most: unpin one first` });
+			}
+			const m = await this.ctx.storage.get(`msg:${String(id).padStart(10, '0')}`);
+			if (!m || m.sys) {
+				return this.sendMember(by, { t: 'error', why: 'that message is too old to pin' });
+			}
+			pins.unshift({ id, by, at: Date.now(), m });
+			await this.ctx.storage.put('pins', pins);
+			await this.note(`${this.members[by].name} pinned a message`);
+		} else {
+			if (i < 0) {
+				return;
+			}
+			pins.splice(i, 1);
+			await this.ctx.storage.put('pins', pins);
+		}
+		this.broadcast({ t: 'pins', list: await this.pinList() });
+	}
+	/** The pins as members get them: Global's opened (its copies are sealed with GLOBAL_KEY, like its messages). */
+	async pinList() {
+		const pins = (await this.ctx.storage.get('pins')) || [];
+		if (!this.global) {
+			return pins;
+		}
+		const out = [];
+		for (const x of pins) {
+			const { sec, ...m } = x.m;
+			const text = await this.openText(sec, m.id);
+			if (text !== null) {
+				out.push({ ...x, m: { ...m, text } });
+			}
+		}
+		return out;
 	}
 
 	/**
@@ -1406,7 +1524,8 @@ export class Group extends DurableObject {
 	/**
 	 * The roster sent to clients. Each member's `kf` lets friends compare it with the key they know; `pub`,
 	 * `ek` and `eks` let members check a member's encryption key before sealing the group key to it; `rk`
-	 * (after a rekey) is the old key and its signature of the new one.
+	 * (after a rekey) is the old key and its signature of the new one. `timeouts` has the running timeouts of
+	 * the members listed (member number -> when it ends).
 	 *
 	 * Global's lists only who is online and its admins (GLOBAL.listed at most), with names and key starts,
 	 * and says how many members it has (`count`).
@@ -1425,6 +1544,7 @@ export class Group extends DurableObject {
 				count: Object.keys(this.members).length,
 				online: online.slice(0, GLOBAL.listed),
 				members: listed.map((n) => ({ n, name: this.members[n].name, kf: this.members[n].pub.x.slice(0, 16) })),
+				timeouts: this.timeoutsOf(listed),
 			};
 		}
 		return {
@@ -1433,6 +1553,7 @@ export class Group extends DurableObject {
 			admins: g.admins,
 			open: g.open,
 			online: this.online(),
+			timeouts: this.timeoutsOf(Object.keys(this.members).map(Number)),
 			members: Object.values(this.members).map((m) => ({
 				n: m.n,
 				name: m.name,
@@ -1443,6 +1564,17 @@ export class Group extends DurableObject {
 				...(m.rk ? { rk: m.rk } : {}),
 			})),
 		};
+	}
+	/** The running timeouts of these members: member number -> when it ends (ms). */
+	timeoutsOf(nums) {
+		/** @type {Record<number, number>} */
+		const out = {};
+		for (const n of nums) {
+			if (this.timedOut(n)) {
+				out[n] = this.timedOut(n);
+			}
+		}
+		return out;
 	}
 	/** Saves meta, members and invites. Global writes only the members that changed, each in its own record. */
 	async save() {
@@ -1763,6 +1895,18 @@ export class Mailbox extends DurableObject {
 
 /** Whether two public keys are the same. */
 const samePub = (a, b) => !!a && !!b && a.x === b.x && a.y === b.y;
+/** A length of time in words ("10 minutes", "1 week"), in the largest whole unit. */
+function spell(secs) {
+	const units = [
+		['week', 604800],
+		['day', 86400],
+		['hour', 3600],
+		['minute', 60],
+	];
+	const [unit, size] = units.find(([, s]) => secs % s === 0) || ['second', 1];
+	const n = secs / size;
+	return `${n} ${unit}${n === 1 ? '' : 's'}`;
+}
 
 /** Verifies an ECDSA P-256 / SHA-256 signature (base64url r||s) of `text`. */
 async function verify(pub, sig, text) {
