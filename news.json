@@ -442,5 +442,11 @@
     "date": "14 Nov 2026",
     "title": "📢 SlimeBeep 3.17",
     "text": "👥 Other add-ons can now bring you into their own group chat with a code made just for you, and those chats can hold up to 150 people."
+  },
+  {
+    "id": "3.17.1",
+    "date": "14 Nov 2026",
+    "title": "📢 SlimeBeep 3.17.1",
+    "text": "🛠 Bigger groups keep everyone's pictures safely; add-ons joining a group no longer wait forever."
   }
 ]
