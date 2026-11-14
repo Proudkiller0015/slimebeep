@@ -333,6 +333,10 @@ export class Group extends DurableObject {
 	 * @returns {Promise<Response>} { code, gid }, { member: true, gid } when they are in already, or an error
 	 */
 	async linkInvite(member, gid) {
+		if (this.meta && !this.meta.linked) {
+			// Only a group made under this id by someone else (which sign-in now refuses) is not linked: start over.
+			await this.wipe('deleted');
+		}
 		if (!this.meta) {
 			const owner = Number(this.env.LINK_OWNER) || GLOBAL_OWNER;
 			this.meta = { name: this.env.LINK_NAME || 'Void Order', owner, admins: [owner], open: false, created: Date.now(), e2e: 1, linked: 1 };
@@ -347,14 +351,38 @@ export class Group extends DurableObject {
 		if (Object.keys(this.members).length >= this.memberCap) {
 			return new Response('Group is full', { status: 409 });
 		}
-		const code = secret();
-		this.invites[code] = { member, by: 0, exp: Date.now() + LIMITS.inviteDays * 864e5, uses: 0 };
+		const now = Date.now();
+		let code = null;
+		for (const [k, v] of Object.entries(this.invites)) {
+			if (v.exp < now) {
+				delete this.invites[k];
+			} else if (v.by === 0 && v.member === member) {
+				code = k;
+			}
+		}
+		if (!code) {
+			code = secret();
+			this.invites[code] = { member, by: 0, exp: now + LIMITS.inviteDays * 864e5, uses: 0 };
+		}
 		await this.save();
 		return Response.json({ code, gid });
 	}
 	/** Takes a member out of the linked group (they left the partner's order); never its owner. */
 	async linkRemove(member) {
-		if (!this.meta || !this.members[member] || member === this.meta.owner) {
+		if (!this.meta || !this.meta.linked) {
+			return Response.json({ removed: false });
+		}
+		let voided = false;
+		for (const [k, v] of Object.entries(this.invites)) {
+			if (v.member === member) {
+				delete this.invites[k];
+				voided = true;
+			}
+		}
+		if (!this.members[member] || member === this.meta.owner) {
+			if (voided) {
+				await this.save();
+			}
 			return Response.json({ removed: false });
 		}
 		const name = this.members[member].name;
@@ -705,6 +733,9 @@ export class Group extends DurableObject {
 		const eks = p.eks;
 		const name = clean(p.name, LIMITS.name) || `#${member}`;
 		if (p.create) {
+			if (att.gid === this.env.LINK_GID) {
+				return this.fail(ws, 'that group id is reserved');
+			}
 			if (this.meta) {
 				return this.fail(ws, 'group exists');
 			}
@@ -946,6 +977,9 @@ export class Group extends DurableObject {
 
 	/** Makes an invite: for one member number (p.member) or open. Admins only unless the group is open. */
 	async invite(ws, member, p) {
+		if (this.meta.linked) {
+			return this.send(ws, { t: 'error', why: 'members join this group through its add-on' });
+		}
 		const admin = this.meta.admins.includes(member);
 		if (!admin && !this.meta.open) {
 			return this.send(ws, { t: 'error', why: 'only admins can invite here' });
@@ -1186,7 +1220,7 @@ export class Group extends DurableObject {
 	/** Hands the group to another member (owner only). */
 	async setOwner(by, target) {
 		const g = this.meta;
-		if (by !== g.owner || !isNum(target) || !this.members[target] || target === by) {
+		if (g.linked || by !== g.owner || !isNum(target) || !this.members[target] || target === by) {
 			return;
 		}
 		g.owner = target;
@@ -1212,7 +1246,7 @@ export class Group extends DurableObject {
 
 	/** Lets every member invite, or admins only (admins; not in Global, which anyone joins). */
 	async setOpen(by, on) {
-		if (this.global || !this.meta.admins.includes(by) || this.meta.open === on) {
+		if (this.global || this.meta.linked || !this.meta.admins.includes(by) || this.meta.open === on) {
 			return;
 		}
 		this.meta.open = on;
@@ -1438,9 +1472,12 @@ export class Group extends DurableObject {
 		}
 		const name = this.members[member].name;
 		delete this.members[member];
-		g.admins = g.admins.filter((n) => n !== member);
+		// A linked group's owner stays its owner (and admin) while out of it, and the group stays when empty.
+		if (!g.linked || member !== g.owner) {
+			g.admins = g.admins.filter((n) => n !== member);
+		}
 		const left = Object.values(this.members);
-		if (!left.length) {
+		if (!left.length && !g.linked) {
 			// Last member out: delete everything.
 			this.closeMember(member, 'left');
 			await this.ctx.storage.deleteAll();
@@ -1451,7 +1488,7 @@ export class Group extends DurableObject {
 			this.seq = 0;
 			return;
 		}
-		if (g.owner === member) {
+		if (g.owner === member && !g.linked) {
 			// Ownership passes to an admin, else the longest member.
 			g.owner = g.admins[0] || left.sort((a, b) => a.joined - b.joined)[0].n;
 			if (!g.admins.includes(g.owner)) {
@@ -1467,13 +1504,18 @@ export class Group extends DurableObject {
 
 	/** Deletes the group and closes every connection (owner only; never Global). */
 	async disband(by) {
-		if (!this.meta || by !== this.meta.owner || this.global) {
+		if (!this.meta || by !== this.meta.owner || this.global || this.meta.linked) {
 			return;
 		}
+		await this.wipe('deleted');
+	}
+
+	/** Deletes everything this group holds and closes every connection, telling them why. */
+	async wipe(why) {
 		for (const ws of this.ctx.getWebSockets()) {
-			this.send(ws, { t: 'gone', why: 'deleted' });
+			this.send(ws, { t: 'gone', why });
 			try {
-				ws.close(4000, 'deleted');
+				ws.close(4000, why);
 			} catch (e) {
 				/* gone */
 			}
