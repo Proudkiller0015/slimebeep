@@ -424,5 +424,11 @@
     "date": "13 Nov 2026",
     "title": "📢 SlimeBeep 3.16",
     "text": "✖ A beep to a friend who is online but hasn't added you back now says it can't be sent, instead of waiting forever as if they were offline. 📬 Beeps left for you while you were away now arrive straight away. 🫧 Anyone can message SlimeBeep's owner, and she can answer, friends or not: those messages come through SlimeBeep instead of as game beeps."
+  },
+  {
+    "id": "3.16.1",
+    "date": "14 Nov 2026",
+    "title": "📢 SlimeBeep 3.16.1",
+    "text": "⭐ Global can have up to 50 admins now (10 was the limit for small group chats). When a group already has all the admins it can, the ⭐ stays visible and says so."
   }
 ]

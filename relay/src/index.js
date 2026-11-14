@@ -110,6 +110,8 @@ const isGlobalId = (gid, env) => (env.GLOBAL_GID ? gid.startsWith(env.GLOBAL_GID
 const GLOBAL = {
 	/** Most open connections. */
 	sockets: 3000,
+	/** Most admins (a group chat's 10 is too few for everyone's chat). */
+	admins: 50,
 	/** Most messages it takes per day. */
 	perDay: 5000,
 	/** Shortest gap between one member's messages (ms). */
@@ -1092,7 +1094,7 @@ export class Group extends DurableObject {
 		if (!isNum(target) || !this.members[target] || target === g.owner) {
 			return;
 		}
-		if (on && (!g.admins.includes(by) || g.admins.includes(target) || g.admins.length >= LIMITS.admins)) {
+		if (on && (!g.admins.includes(by) || g.admins.includes(target) || g.admins.length >= (this.global ? GLOBAL.admins : LIMITS.admins))) {
 			return;
 		}
 		if (!on && (by !== g.owner || !g.admins.includes(target))) {

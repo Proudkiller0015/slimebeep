@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.16.0';
+	const VERSION = '3.16.1';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -265,8 +265,9 @@
 		text: 500,
 		/** Most members in a group. */
 		members: 40,
-		/** Most admins in a group. */
+		/** Most admins in a group, and in Global. */
 		admins: 10,
+		globalAdmins: 50,
 		/** Most groups you can be in (Global aside). */
 		groups: 30,
 		/** Most members Global's roster lists (those online, then its admins). */
@@ -6669,7 +6670,7 @@
 			id: gid,
 			name: clean(r.name, LIMITS.name) || 'Group chat',
 			owner: isNum(r.owner) ? r.owner : 0,
-			admins: Array.isArray(r.admins) ? r.admins.filter(isNum).slice(0, LIMITS.admins) : [],
+			admins: Array.isArray(r.admins) ? r.admins.filter(isNum).slice(0, global ? LIMITS.globalAdmins : LIMITS.admins) : [],
 			open: r.open === true,
 			members,
 			online: Array.isArray(rosterOnline)
@@ -9172,8 +9173,13 @@
 				const role = { owner: '👑 Owner', admin: '⭐ Admin', member: 'Member' }[roleOf(g, n)];
 				const acts = [];
 				if (n !== me && n !== g.owner) {
-					if (admin && !isAdmin(g, n) && g.admins.length < LIMITS.admins) {
-						acts.push(html`<button class="sb-pill" data-act="up" data-n="${n}" title="Make admin">⭐</button>`);
+					if (admin && !isAdmin(g, n)) {
+						const most = global ? LIMITS.globalAdmins : LIMITS.admins;
+						acts.push(
+							g.admins.length < most
+								? html`<button class="sb-pill" data-act="up" data-n="${n}" title="Make admin">⭐</button>`
+								: html`<button class="sb-pill" disabled title="${`${most} admins already, the most a ${global ? 'Global' : 'group'} can have`}">⭐</button>`,
+						);
 					}
 					if (owner && isAdmin(g, n)) {
 						acts.push(html`<button class="sb-pill" data-act="down" data-n="${n}" title="Take admin">✩</button>`);
