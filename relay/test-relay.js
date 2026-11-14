@@ -904,6 +904,29 @@ async function testLink() {
 	check(!!w && w.roster.linked === true && w.roster.owner === 21, 'that member joins with it: a linked group, owned by LINK_OWNER');
 	const again = await (await post('/link/invite', { member: n })).json();
 	check(again.member === true, 'asking again for someone already in says so');
+	c.send({ t: 'invite', member: n + 1 });
+	await wait(200);
+	check(/through its add-on/.test(JSON.stringify(c.got)), 'in a linked group only the partner server brings people in');
+	const squat = await connect(made.gid, await makePeer(n + 2, 'Squatter'), { fields: { create: { name: 'Mine now', open: true } } });
+	check(squat.closed && /reserved/.test(JSON.stringify(squat.got)), "nobody can make a group under the linked group's id");
+	const first = await (await post('/link/invite', { member: n + 3 })).json();
+	const second = await (await post('/link/invite', { member: n + 3 })).json();
+	check(!!first.code && first.code === second.code, 'one code per member, reused while it lasts');
+	await post('/link/remove', { member: n + 3 });
+	const late = await connect(made.gid, await makePeer(n + 3, 'Late'), { fields: { invite: first.code } });
+	check(late.closed && !late.last('welcome'), 'removing someone voids the code they had not used yet');
+	const boss = await (await post('/link/invite', { member: 21 })).json();
+	const o = await connect(made.gid, await makePeer(21, 'Owner'), { fields: { invite: boss.code } });
+	check(!!o.last('welcome'), 'the owner joins with a code like everyone');
+	o.send({ t: 'owner', member: n });
+	await wait(200);
+	o.send({ t: 'leave' });
+	await wait(300);
+	const back = await connect(made.gid, who);
+	check(
+		!!back.last('welcome') && back.last('welcome').roster.owner === 21,
+		'a linked group is never handed on: its owner stays its owner after leaving',
+	);
 	const removed = await (await post('/link/remove', { member: n })).json();
 	await wait(300);
 	check(removed.removed === true && c.closed, 'removing them (they left the order) takes them out');
