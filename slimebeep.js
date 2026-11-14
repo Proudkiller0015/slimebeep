@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.15.0';
+	const VERSION = '3.16.0';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -179,6 +179,9 @@
 	 * @property {boolean} [mail] went through a mailbox
 	 * @property {boolean} [whisper] a whisper in a chat room, not a beep
 	 * @property {boolean} [unchecked] mailbox beep whose sender key could not be checked
+	 * @property {boolean} [direct] went through a mailbox under the owner's exception (ownerExempt), not as a game beep
+	 * @property {boolean} [unsure] a direct one the relay took but didn't confirm
+	 * @property {string} [failed] not sent, and why
 	 * @property {string} [announceText] the card text, when different from the message
 	 */
 	/**
@@ -237,6 +240,23 @@
 	 * @param {string} gid
 	 */
 	const isGlobal = (gid) => gid === globalId();
+	/** SlimeBeep's owner (SlimeQueenSamantha): 🐞 reports can be beeped to her, and she has the owner's exception (ownerExempt). */
+	const OWNER = 255659;
+	/** OWNER, or a test owner set in localStorage 'slimebeep.owner' while a local relay is used (the tests). */
+	const ownerId = () => {
+		try {
+			const local = Number(localStorage.getItem('slimebeep.owner'));
+			return relayUrl() !== RELAY && Number.isInteger(local) && local > 0 ? local : OWNER;
+		} catch (e) {
+			return OWNER;
+		}
+	};
+	/**
+	 * The owner's exception: SlimeBeep's owner and anyone else can message each other without being Bondage Club friends.
+	 * Those messages go through the relay to the other's mailbox (relayDm), sealed to the keys Global holds for them.
+	 * @param {number} n
+	 */
+	const ownerExempt = (n) => n !== Player.MemberNumber && (Player.MemberNumber === ownerId() || n === ownerId());
 	/** Limits (the first four match the relay's). */
 	const LIMITS = {
 		/** Longest group or member name. */
@@ -317,6 +337,17 @@
 	let peerEks = {};
 	/** @type {Record<number, string>} Friend -> the key start they had before moving to new keys (followKey); their mailbox beeps signed with it still count. */
 	let peerWas = {};
+	/**
+	 * What Global said about a member, for the owner's exception (lookupPeer).
+	 * @typedef {object} PeerInfo
+	 * @property {string} kf the first 16 chars of their public key ('' when Global has no keys for them)
+	 * @property {string} ek their encryption public key ("x.y"), its signature checked
+	 * @property {string} name their name in Global
+	 * @property {boolean} on online in Global
+	 * @property {number} at when Global said so
+	 */
+	/** @type {Map<number, PeerInfo>} Member -> what Global last said about them. */
+	const peerInfo = new Map();
 	/**
 	 * A group invite from a friend, not joined yet.
 	 * @typedef {object} Invitation
@@ -468,6 +499,15 @@
 		peerKeys = {};
 		peerEks = {};
 		peerWas = {};
+		peerInfo.clear();
+		dropLookups();
+		closeMailbox();
+		closeMailOutboxes();
+		mailSockTried = 0;
+		mailSockGap = 30000;
+		sendingNow = [];
+		dmChains.clear();
+		strayFrom.clear();
 		invitations = [];
 		groupKeys = loadGroupKeys();
 		keyCache.clear();
@@ -1002,7 +1042,7 @@
 		render(true);
 	}
 	/**
-	 * A member's name: from the online friends, the friend list, or the last beep they sent.
+	 * A member's name: from the online friends, the friend list, the last beep they sent, or what 🌍 Global calls them.
 	 * @param {number} n
 	 * @returns {string}
 	 */
@@ -1016,7 +1056,8 @@
 			return known;
 		}
 		const b = [...log()].reverse().find((x) => x.MemberNumber === n && !x.Sent);
-		return b ? b.MemberName : `#${n}`;
+		const info = peerInfo.get(n);
+		return b ? b.MemberName : (info && info.name) || `#${n}`;
 	};
 	/**
 	 * A message as the action it is, the way the game shows them: "*waves" (or "*waves*", /me) from Ann reads
@@ -1626,6 +1667,7 @@
 		/* A small mark for someone who isn't on your Bondage Club friend list. */
 		.sb-nf { display: inline-block; margin-left: 4px; padding: 0 5px; border-radius: 8px; background: #eee; color: #777; font-size: 10px; font-weight: bold; vertical-align: middle; cursor: help; }
 		html.sb-night .sb-nf { background: #2c3866; color: #b8c4f0; }
+		.sb-fail { display: inline-block; padding: 0 5px; border-radius: 6px; background: #fff; color: #c2185b; font-weight: bold; cursor: help; }
 		/* Someone's profile card (a name tapped in a group). */
 		#sb-ask .sb-prof-card { width: 260px; gap: 6px; }
 		#sb-ask .sb-prof-card .sb-av { width: 84px; height: 84px; font-size: 30px; }
@@ -2098,6 +2140,7 @@
 				}
 				friends = answer.Result.filter((f) => f && f.MemberNumber !== Player.MemberNumber);
 				friendsKnown = true;
+				friendsAt = Date.now();
 				sendWaiting();
 				if (isOpen() && tab !== 'chats') {
 					render(true);
@@ -3825,6 +3868,7 @@
 	/** The mark for someone who isn't on your Bondage Club friend list. */
 	const notFriendMark = (/** @type {number} */ n) =>
 		!isFriend(n) &&
+		!ownerExempt(n) &&
 		html`<span class="sb-nf" title="Not on your Bondage Club friend list: your beeps only reach them if they added you">✖ BC friend</span>`;
 
 	/**
@@ -4035,7 +4079,7 @@
 	 * @property {string} t 'hello', 'welcome', 'roster', 'presence', 'msg', 'history', 'keys', 'pic', 'gpic', 'invite', 'music',
 	 * 'musicQueue', 'musicAdd', 'musicSkip', 'musicListeners', 'status', 'statuses', 'pong', 'gone', 'error', 'ok', 'mail', 'rekeyed',
 	 * 'bans' (Global, admins: its ban list in `list`), 'timeout' (yours: when it ends in `until`, 0 lifted), 'pins' (the
-	 * group's pinned messages in `list`)
+	 * group's pinned messages in `list`), 'lookup' (Global: a member's keys, for the owner's exception)
 	 * @property {number} [until] timeout, error 'timed out': when your timeout ends (ms)
 	 * @property {string} [nonce] hello: what to sign
 	 * @property {string} [x] rekeyed: the public x of the key the group now knows you by
@@ -4062,6 +4106,12 @@
 	 * @property {boolean} [rekey] keys: a member left or the key is old, so a new key is needed
 	 * @property {{ e: number, w: { to: number, by: number, ek: string, iv: string, ct: string, sig: string } }[]} [mine] keys: the wraps sent to you
 	 * @property {number[]} [needs] keys: members who don't have the current key yet
+	 * @property {number} [member] lookup: who was looked up
+	 * @property {{ x: string, y: string }} [pub] lookup: their public key in Global
+	 * @property {string} [ek] lookup: their encryption key in Global
+	 * @property {string} [eks] lookup: its signature
+	 * @property {string} [name] lookup: their name in Global
+	 * @property {boolean} [on] lookup: whether they are online in Global
 	 */
 	/**
 	 * A group's roster as the relay sends it.
@@ -4291,16 +4341,17 @@
 		return c && c.key ? Promise.resolve(c.key) : getKey();
 	};
 	/**
-	 * Seals a mailbox beep to friend `to`: a one-time key pair agrees a key with their encryption key, so only
-	 * they can open it; the sender and recipient numbers are bound in, so the relay can't pass it off as another's.
+	 * Seals a mailbox beep to `to`: a one-time key pair agrees a key with their encryption key, so only they can
+	 * open it; the sender and recipient numbers are bound in, so the relay can't pass it off as another's.
 	 * @param {number} to
 	 * @param {string} text
+	 * @param {string} [ek] their encryption key (else the one their own SlimeBeep sent us)
 	 */
-	async function sealMail(to, text) {
+	async function sealMail(to, text, ek = peerEks[to]) {
 		const me = Player.MemberNumber;
 		const once = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
 		const jwk = await crypto.subtle.exportKey('jwk', once.publicKey);
-		const key = await agree(once.privateKey, peerEks[to], `slimebeep mail v1|${me}|${to}`);
+		const key = await agree(once.privateKey, ek, `slimebeep mail v1|${me}|${to}`);
 		return { e: `${jwk.x}.${jwk.y}`, ...(await seal(key, new TextEncoder().encode(text), `${me}|${to}`)) };
 	}
 	/**
@@ -4844,31 +4895,15 @@
 				for (const w of mine) {
 					w.tried = Date.now();
 				}
-				/** @type {Map<string, boolean>} beep id -> left in the mailbox */
-				const answers = new Map();
-				let ws;
+				/** @type {MailOutbox} */
+				let box;
 				try {
-					ws = await mailOpen(n, (p) => {
-						if ((p.t === 'ok' || p.t === 'error') && typeof p.ref === 'string') {
-							answers.set(p.ref, p.t === 'ok');
-						}
-					});
+					box = await mailOutbox(n);
 				} catch (e) {
 					continue;
 				}
-				for (const w of mine) {
-					ws.send(JSON.stringify({ t: 'put', kf: peerKeys[n], enc: await sealMail(n, w.text), ref: w.id }));
-				}
-				const t0 = Date.now();
-				while (Date.now() - t0 < 8000 && mine.some((w) => !answers.has(w.id))) {
-					await new Promise((r) => setTimeout(r, 100));
-				}
-				try {
-					ws.close();
-				} catch (e) {
-					/* gone */
-				}
-				const left = mine.filter((w) => answers.get(w.id) === true && waiting.includes(w));
+				const answers = await Promise.all(mine.map(async (w) => box.put(peerKeys[n], await sealMail(n, w.text))));
+				const left = mine.filter((w, i) => answers[i] === 'ok' && waiting.includes(w));
 				if (!left.length) {
 					continue;
 				}
@@ -4893,13 +4928,326 @@
 			mailing = false;
 		}
 	}
+	/**
+	 * A connection to someone's mailbox for leaving beeps (mailOutbox).
+	 * @typedef {object} MailOutbox
+	 * @property {(kf: string, enc: Sealed & { e: string }) => Promise<string>} put leaves a sealed beep for key start `kf`;
+	 * resolves 'ok', the relay's reason for refusing it, or '' when the relay didn't answer within 8 s
+	 * @property {() => void} close
+	 */
+	/** @type {Map<number, Promise<MailOutbox>>} Open mail outboxes, by member. */
+	const mailOutboxes = new Map();
+	/**
+	 * Member `n`'s mail outbox, opened when needed and closed two minutes after its last beep, so a conversation reuses it.
+	 * @param {number} n
+	 * @returns {Promise<MailOutbox>}
+	 */
+	function mailOutbox(n) {
+		const open = mailOutboxes.get(n);
+		if (open) {
+			return open;
+		}
+		/** @type {Map<string, (answer: string) => void>} Beeps waiting for the relay's answer, by ref. */
+		const answers = new Map();
+		const answer = (/** @type {string} */ ref, /** @type {string} */ a) => {
+			const done = answers.get(ref);
+			if (done) {
+				answers.delete(ref);
+				done(a);
+			}
+		};
+		let idle = 0;
+		const made = mailOpen(n, (p) => {
+			if ((p.t === 'ok' || p.t === 'error') && typeof p.ref === 'string') {
+				answer(p.ref, p.t === 'ok' ? 'ok' : clean(p.why, 80) || 'refused');
+			}
+		}).then((ws) => {
+			ws.addEventListener('close', () => {
+				mailOutboxes.delete(n);
+				for (const ref of [...answers.keys()]) {
+					answer(ref, '');
+				}
+			});
+			/** @type {MailOutbox} */
+			const box = {
+				close: () => ws.close(),
+				put: (kf, enc) =>
+					new Promise((resolve) => {
+						clearTimeout(idle);
+						idle = window.setTimeout(() => ws.close(), 120000);
+						const ref = newId();
+						answers.set(ref, resolve);
+						setTimeout(() => answer(ref, ''), 8000);
+						ws.send(JSON.stringify({ t: 'put', kf, enc, ref }));
+					}),
+			};
+			return box;
+		});
+		made.catch(() => mailOutboxes.delete(n));
+		mailOutboxes.set(n, made);
+		return made;
+	}
+	/** Closes every mail outbox (another account logged in). */
+	function closeMailOutboxes() {
+		for (const made of mailOutboxes.values()) {
+			made.then((box) => box.close()).catch(() => {});
+		}
+		mailOutboxes.clear();
+	}
+
+	/** @type {Map<number, { waiting: ((info: PeerInfo | null) => void)[], timer: number }>} Lookups waiting for Global's answer. */
+	const lookups = new Map();
+	/** @type {number[]} Members to ask Global about, one every LOOKUP_GAP ms (Global limits messages per connection). */
+	const lookupQueue = [];
+	const LOOKUP_GAP = 400;
+	let lookupTimer = 0;
+	/**
+	 * Asks Global for member `n`'s keys and whether they are online, for the owner's exception (Global answers only the
+	 * owner, or about the owner). Resolves null when it can't be asked: not in Global, not connected, no answer.
+	 * @param {number} n
+	 * @param {number} [maxAge] an answer newer than this (ms) is reused
+	 * @returns {Promise<PeerInfo | null>}
+	 */
+	function lookupPeer(n, maxAge = 60000) {
+		const had = peerInfo.get(n);
+		if (had && Date.now() - had.at < maxAge) {
+			return Promise.resolve(had);
+		}
+		if (!ownerExempt(n) || !globalReady()) {
+			return Promise.resolve(null);
+		}
+		return new Promise((resolve) => {
+			const pending = lookups.get(n);
+			if (pending) {
+				pending.waiting.push(resolve);
+				return;
+			}
+			lookups.set(n, { waiting: [resolve], timer: window.setTimeout(() => answerLookup(n, null), 10000) });
+			lookupQueue.push(n);
+			sendLookups();
+		});
+	}
+	/** Whether the connection to Global is up. */
+	const globalReady = () => {
+		const c = conns[globalId()];
+		return !!c && !!c.ready && !!c.ws && c.ws.readyState === 1;
+	};
+	/** Sends the next queued lookup, then the rest LOOKUP_GAP apart. */
+	function sendLookups() {
+		if (lookupTimer || !lookupQueue.length) {
+			return;
+		}
+		const n = /** @type {number} */ (lookupQueue.shift());
+		const c = conns[globalId()];
+		if (globalReady() && c && c.ws) {
+			c.ws.send(JSON.stringify({ t: 'lookup', member: n }));
+		} else {
+			answerLookup(n, null);
+		}
+		lookupTimer = window.setTimeout(() => {
+			lookupTimer = 0;
+			sendLookups();
+		}, LOOKUP_GAP);
+	}
+	/**
+	 * Hands an answer about member `n` to everyone waiting for it.
+	 * @param {number} n
+	 * @param {PeerInfo | null} info
+	 */
+	function answerLookup(n, info) {
+		const pending = lookups.get(n);
+		if (!pending) {
+			return;
+		}
+		lookups.delete(n);
+		clearTimeout(pending.timer);
+		for (const r of pending.waiting) {
+			r(info);
+		}
+	}
+	/** Forgets every lookup (another account logged in): those waiting get null. */
+	function dropLookups() {
+		lookupQueue.length = 0;
+		for (const n of [...lookups.keys()]) {
+			answerLookup(n, null);
+		}
+	}
+	/**
+	 * Global's answer to a lookup. Its keys count only with a valid signature and, for a friend whose own SlimeBeep told
+	 * us their key, only if it is that key.
+	 * @param {RelayMessage} p
+	 */
+	async function takeLookup(p) {
+		const n = Number(p.member);
+		if (!lookups.has(n)) {
+			return;
+		}
+		const pub = p.pub;
+		const ek = p.ek || '';
+		const signed =
+			!!pub &&
+			typeof pub.x === 'string' &&
+			typeof pub.y === 'string' &&
+			EK_RE.test(ek) &&
+			typeof p.eks === 'string' &&
+			(await verifySig(pub, p.eks, `ek|${globalId()}|${n}|${ek}`));
+		const kf = signed && pub ? pub.x.slice(0, 16) : '';
+		const ok = !!kf && (!peerKeys[n] || peerKeys[n] === kf);
+		const info = { kf: ok ? kf : '', ek: ok ? ek : '', name: clean(p.name, LIMITS.name), on: p.on === true, at: Date.now() };
+		peerInfo.set(n, info);
+		answerLookup(n, info);
+	}
+	/** What relayDm answers when the relay took a message but didn't confirm it. */
+	const UNSURE = 'unsure';
+	/**
+	 * Sends a message to member `n`'s mailbox under the owner's exception: they get it straight away while SlimeBeep is
+	 * open, or when they log in. Answers '' once the relay has it, UNSURE when it was sent but not confirmed (it is kept
+	 * in the chat, marked), or why it couldn't be sent.
+	 * @param {number} n
+	 * @param {string} text
+	 * @returns {Promise<string>}
+	 */
+	async function relayDm(n, text) {
+		if (!secure()) {
+			return 'this page has no encryption (http), so only a game beep could go';
+		}
+		const info = await lookupPeer(n, 600000);
+		if (!info) {
+			return groups[globalId()]
+				? "🌍 Global isn't connected right now, try again in a moment"
+				: "you aren't in 🌍 Global, which these messages go through";
+		}
+		if (!info.kf) {
+			return "they aren't in SlimeBeep's 🌍 Global";
+		}
+		let answer = '';
+		try {
+			const box = await mailOutbox(n);
+			answer = await box.put(info.kf, await sealMail(n, text, info.ek));
+		} catch (e) {
+			return "the relay couldn't be reached, try again";
+		}
+		if (answer && answer !== 'ok') {
+			return answer;
+		}
+		const k = `mail:${newId()}`;
+		hist.push({
+			k,
+			MemberNumber: n,
+			MemberName: nameOf(n),
+			Sent: true,
+			Time: Date.now(),
+			Message: text,
+			mail: true,
+			direct: true,
+			...(answer ? {} : { unsure: true }),
+		});
+		histKeys.add(k);
+		saveHistory();
+		return answer ? '' : UNSURE;
+	}
+	/** @type {{ id: string, n: number, text: string }[]} Messages relayDm is still sending, shown in their chat. */
+	let sendingNow = [];
+	/** @type {Map<number, Promise<unknown>>} The last send to each member, so their messages go one after another. */
+	const dmChains = new Map();
+
+	/** @type {WebSocket | null} The connection to your own mailbox, kept open so beeps left for you arrive at once. */
+	let mailSock = null;
+	/** Whose mailbox `mailSock` is. */
+	let mailSockOwner = 0;
+	/** While keepMailbox is connecting. */
+	let mailSockTrying = false;
+	/** When keepMailbox last tried, and how long it waits before the next try (doubling while it fails, up to 10 min). */
+	let mailSockTried = 0;
+	let mailSockGap = 30000;
+	/** When the kept connection was last pinged, and when its last pong came. */
+	let mailPinged = 0;
+	let mailPonged = 0;
+	/** Keeps your own mailbox connected with your current keys (from relayTick). */
+	function keepMailbox() {
+		const me = Player.MemberNumber;
+		if (mailSock && mailSockOwner !== me) {
+			closeMailbox();
+		}
+		if (mailSock || mailSockTrying || !loggedIn() || !secure() || Date.now() - mailSockTried < mailSockGap) {
+			return;
+		}
+		mailSockTried = Date.now();
+		mailSockTrying = true;
+		getKey()
+			.then((k) =>
+				mailOpen(
+					me,
+					(p, sock) => {
+						if (p.t === 'mail') {
+							takeMail(p.list, sock, k).catch((e) => warn(e, 'mail'));
+						} else if (p.t === 'pong') {
+							mailPonged = Date.now();
+						}
+					},
+					k,
+				),
+			)
+			.then((ws) => {
+				if (mailSock || Player.MemberNumber !== me) {
+					ws.close();
+					return;
+				}
+				mailSock = ws;
+				mailSockOwner = me;
+				mailSockGap = 30000;
+				mailPinged = 0;
+				ws.addEventListener('close', () => {
+					if (mailSock === ws) {
+						mailSock = null;
+					}
+				});
+			})
+			.catch(() => {
+				// A little randomness, so everyone doesn't come back at once after the relay was down.
+				mailSockGap = Math.min(600000, mailSockGap * 2) * (0.8 + Math.random() * 0.4);
+			})
+			.finally(() => {
+				mailSockTrying = false;
+			});
+	}
+	/**
+	 * Pings the kept mailbox connection every 4 minutes; one that didn't answer the last ping within 30 s is closed, so
+	 * keepMailbox opens a new one (a computer waking from sleep can leave a dead connection the browser hasn't noticed).
+	 */
+	function pingMailbox() {
+		if (!mailSock || mailSock.readyState !== 1) {
+			return;
+		}
+		const now = Date.now();
+		if (mailPinged && mailPonged < mailPinged && now - mailPinged > 30000) {
+			closeMailbox();
+			return;
+		}
+		if (now - mailPinged > 240000) {
+			mailPinged = now;
+			mailSock.send('{"t":"ping"}');
+		}
+	}
+	/** Closes the kept mailbox connection (another account logged in, or it went dead). */
+	function closeMailbox() {
+		const ws = mailSock;
+		mailSock = null;
+		if (ws) {
+			try {
+				ws.close();
+			} catch (e) {
+				/* gone */
+			}
+		}
+	}
 	/** When your mailbox was last checked. */
 	let mailChecked = 0;
 	/** True while checkMail runs. */
 	let mailBusy = false;
 	/**
-	 * Fetches your mailbox (at login, then every 5 minutes from relayTick): the beeps for your keys and, after a
-	 * hand-over, those still left for your previous ones.
+	 * Fetches your mailbox every 5 minutes from relayTick, for what the kept connection (keepMailbox) doesn't bring: the
+	 * beeps for your keys while it is down, and, after a hand-over, those still left for your previous ones.
 	 */
 	async function checkMail() {
 		if (mailBusy || !loggedIn() || !secure()) {
@@ -4908,7 +5256,7 @@
 		mailBusy = true;
 		mailChecked = Date.now();
 		try {
-			const keys = [await getKey()];
+			const keys = mailSock || mailSockTrying ? [] : [await getKey()];
 			if (prevKey && prevKey.owner === Player.MemberNumber) {
 				keys.push(prevKey);
 			}
@@ -4941,8 +5289,10 @@
 		}
 	}
 	/**
-	 * Opens mailbox beeps, adds them to `hist` and acks them. Beeps from non-friends, with a wrong sender key (one
-	 * not handed over from the key we know, see followKey) or that don't open with our encryption key are dropped.
+	 * Opens mailbox beeps, adds them to `hist` and acks them. Beeps from non-friends (but for the owner's exception),
+	 * with a wrong sender key (one not handed over from the key we know, see followKey) or that don't open with our
+	 * encryption key are dropped. One under the owner's exception whose sender key Global can't confirm yet stays in
+	 * the mailbox and is fetched again in a while.
 	 * @param {MailItem[] | undefined} list
 	 * @param {WebSocket} sock
 	 * @param {KeyPair} [mine] the keys the mailbox connection signed in with
@@ -4955,13 +5305,28 @@
 		const ids = [];
 		/** @type {HistEntry[]} */
 		const fresh = [];
+		let later = false;
 		for (const m of list.slice(0, 100)) {
 			if (!m || typeof m.id !== 'string' || !/^[A-Z2-9]{10}$/.test(m.id)) {
 				continue;
 			}
-			ids.push(m.id);
 			const from = m.from;
-			if (!isNum(from) || from === Player.MemberNumber || !isFriend(from)) {
+			const friend = isNum(from) && isFriend(from);
+			// The owner's exception, from someone whose own SlimeBeep never told us its key: it must be the key Global has
+			// (asked again when it differs, in case they moved to new keys since).
+			const ask = isNum(from) && !peerKeys[from] && ownerExempt(from);
+			let vouched = ask ? await lookupPeer(from, 600000) : null;
+			if (vouched && vouched.kf !== m.fromKf) {
+				vouched = await lookupPeer(from, 0);
+			}
+			// Global couldn't be asked (not in it, not connected): left in the mailbox, not deleted.
+			if (ask && !friend && !vouched) {
+				later = true;
+				continue;
+			}
+			ids.push(m.id);
+			const direct = !friend && !!vouched && !!vouched.kf && vouched.kf === m.fromKf;
+			if (!isNum(from) || from === Player.MemberNumber || !(friend || direct)) {
 				continue;
 			}
 			// Signed with another key than the one their own SlimeBeep sent us (or the one before it, which they left beeps
@@ -4985,6 +5350,7 @@
 			if (!text.trim() || histKeys.has(k) || deletedKeys.has(k)) {
 				continue;
 			}
+			const checked = !!known || (!!vouched && vouched.kf === m.fromKf);
 			const h = {
 				k,
 				MemberNumber: from,
@@ -4994,7 +5360,8 @@
 				Message: text,
 				mail: true,
 				unread: true,
-				...(known ? {} : { unchecked: true }),
+				...(direct ? { direct: true } : {}),
+				...(checked ? {} : { unchecked: true }),
 			};
 			hist.push(h);
 			histKeys.add(k);
@@ -5018,6 +5385,31 @@
 				/* again next time */
 			}
 		}
+		if (later) {
+			mailRecheck(sock);
+		} else {
+			recheckGap = 20000;
+		}
+	}
+	/** The timer of the next mailbox check for beeps left waiting (mailRecheck), and its gap (doubling, up to 10 min). */
+	let recheckTimer = 0;
+	let recheckGap = 20000;
+	/**
+	 * Fetches the kept mailbox again in a while, for beeps whose sender Global couldn't check yet; only while you are in
+	 * Global (otherwise they wait for the next login).
+	 * @param {WebSocket} sock
+	 */
+	function mailRecheck(sock) {
+		if (recheckTimer || !groups[globalId()]) {
+			return;
+		}
+		recheckTimer = window.setTimeout(() => {
+			recheckTimer = 0;
+			if (sock === mailSock && sock.readyState === 1) {
+				sock.send('{"t":"check"}');
+			}
+		}, recheckGap);
+		recheckGap = Math.min(600000, recheckGap * 2);
 	}
 
 	/**
@@ -5680,6 +6072,12 @@
 		}
 		if (p.t === 'keys') {
 			return takeKeys(gid, p);
+		}
+		if (p.t === 'lookup') {
+			return takeLookup(p);
+		}
+		if (p.t === 'error' && isNum(p.member) && lookups.has(Number(p.member))) {
+			return answerLookup(Number(p.member), null);
 		}
 		if (p.t === 'pic') {
 			if (isNum(p.n) && (p.data === null || (typeof p.data === 'string' && p.data.length <= PFP_MAX && PFP_RE.test(p.data)))) {
@@ -6897,10 +7295,22 @@
 		}
 		// Only now: the account backup (read with the keys) has said whether Global was joined before.
 		autoGlobal();
+		keepMailbox();
 		if (Date.now() - mailChecked > 300000) {
 			checkMail();
 		}
 		mailWaiting();
+		pingMailbox();
+		// Waiting for a friend who turns out to be online but doesn't have you back: it would wait forever.
+		const stuck = waiting.filter((w) => cantReach(w.n));
+		if (stuck.length) {
+			waiting = waiting.filter((w) => !stuck.includes(w));
+			saveWaiting();
+			failBeeps(stuck, NOT_FRIENDS);
+			if (isOpen()) {
+				render(true);
+			}
+		}
 		// '{"t":"ping"}' is answered by the relay's auto-response. In a group sharing a song it also times the way there.
 		for (const [id, c] of Object.entries(conns)) {
 			const every = sharing === `g:${id}` || following === `g:${id}` ? 15000 : 240000;
@@ -8362,7 +8772,7 @@
 				html`${tabs}<div class="sb-body" id="sb-body">
 				${tab === 'groups' && groupsTop()}
 				${tab === 'friends' && loggedIn() && meRow()}
-				<input class="sb-search" id="sb-search" placeholder="🔍 Search ${what}…" value="${search}">
+				<input class="sb-search" id="sb-search" placeholder="🔍 Search ${what}${tab === 'chats' && Player.MemberNumber === ownerId() ? ' or open a member #' : ''}…" value="${search}">
 				${(tab === 'chats' || tab === 'groups') && hist.some(unread) && html`<button class="sb-pill sb-readall" id="sb-readall">✓ Mark all as read</button>`}
 				${rows.length ? rows : html`<div class="sb-empty">${empty}</div>`}
 			</div>`,
@@ -8489,7 +8899,7 @@
 			.filter((c) => !q || c.name.toLowerCase().includes(q) || String(c.n).includes(q))
 			.map((c) => {
 				const friend = friends.find((f) => f.MemberNumber === c.n);
-				const online = !!friend;
+				const online = !!friend || seenOnline(c.n);
 				const text = replyBody(textOf(c.last));
 				const pinned = isPinned(`n:${c.n}`);
 				return {
@@ -8501,7 +8911,16 @@
 				<div class="sb-side">${pinned && pinMark}${timeOf(c.last.Time)}${c.unread > 0 && html`<br><span class="sb-dot">${c.unread}</span>`}${rowJoin(friend)}</div></div>`,
 				};
 			});
-		return rows.sort(pinnedFirst).map((r) => r.html);
+		const sorted = rows.sort(pinnedFirst).map((r) => r.html);
+		// The owner opens a chat with anyone by member number (the owner's exception).
+		const num = Number(q.replace(/^#/, ''));
+		const listed = chats().some((c) => c.n === num);
+		if (Player.MemberNumber === ownerId() && /^#?\d{1,9}$/.test(q) && isNum(num) && num !== Player.MemberNumber && !listed) {
+			sorted.unshift(
+				html`<div class="sb-row" data-open="${num}"><div class="sb-main"><div class="sb-name">🔎 Open #${num}</div><div class="sb-sub">Message them through SlimeBeep, friends or not (owner only)</div></div></div>`,
+			);
+		}
+		return sorted;
 	}
 
 	/**
@@ -9440,16 +9859,39 @@
 		const pinOn = !!room && (threadPin ?? opts.shareRoom);
 		const waitingHere = waiting.filter((w) => w.n === n);
 		const offline = isOffline(n);
+		const exempt = ownerExempt(n) && !f;
+		const seen = !f && seenOnline(n);
+		const inRoom = !f && sameRoom(n);
+		const lastAsked = peerInfo.get(n);
+		if (exempt && (!lastAsked || Date.now() - lastAsked.at > 60000)) {
+			lookupPeer(n).then((info) => {
+				if (info && thread === n && isOpen()) {
+					render(true);
+				}
+			});
+		}
 		/** @param {HistEntry} b */
 		const mailMark = (b) => {
 			if (!b.mail) {
 				return '';
+			}
+			if (b.direct) {
+				let title =
+					"Came through SlimeBeep, not as a game beep (SlimeBeep's owner and anyone can message each other); its sender checked against the key 🌍 Global has for their number";
+				if (b.Sent) {
+					title = b.unsure
+						? "Sent through SlimeBeep, but the relay didn't confirm it arrived"
+						: "Sent through SlimeBeep, not as a game beep (SlimeBeep's owner and anyone can message each other): they get it now if SlimeBeep is open, or when they log in";
+				}
+				return html`<span title="${title}">${b.unsure ? '🫧❔' : '🫧'}</span> `;
 			}
 			const title = b.Sent
 				? 'Left in their SlimeBeep mailbox while they were offline'
 				: 'Left in your SlimeBeep mailbox while you were offline';
 			return html`<span title="${title}">📬</span> `;
 		};
+		/** @param {HistEntry} b */
+		const failMark = (b) => b.failed && html`<span class="sb-fail" title="${b.failed}">✖ Not sent</span> `;
 		/** @param {HistEntry} b */
 		const whisperMark = (b) => b.whisper && html`<span title="Whispered in a chat room">🤫</span> `;
 		/** @param {HistEntry} b */
@@ -9463,9 +9905,12 @@
 				const body = r ? r.body : textOf(b);
 				const act = asAction(body, b.Sent ? myName() : nameOf(n));
 				const tr = !b.Sent && trLine(body, `n:${n}`, i >= msgs.length - AUTO_RECENT);
-				return html`<div class="sb-b ${b.Sent ? 'me' : 'them'}${act && ' sb-act'}">${replyQuote(r)}${rich(act ?? body)}${tr}${roomLine(b, msgs, i)}<em>${!b.Sent && trButton(body)}${mailMark(b)}${whisperMark(b)}${uncheckedMark(b)}${timeOf(b.Time, true)}${msgButtons(b)}</em></div>`;
+				return html`<div class="sb-b ${b.Sent ? 'me' : 'them'}${act && ' sb-act'}">${replyQuote(r)}${rich(act ?? body)}${tr}${roomLine(b, msgs, i)}<em>${!b.Sent && trButton(body)}${failMark(b)}${mailMark(b)}${whisperMark(b)}${uncheckedMark(b)}${timeOf(b.Time, true)}${msgButtons(b)}</em></div>`;
 			});
 		}
+		const sendingBubbles = sendingNow
+			.filter((x) => x.n === n)
+			.map((x) => html`<div class="sb-b me sb-wait">${x.text}<em>🫧 sending…</em></div>`);
 		const waitingBubbles = waitingHere.map(
 			(w) =>
 				html`<div class="sb-b me sb-wait">${w.text}<em>⏳ sends when they're online · <a href="#" data-cancel="${w.id}">cancel</a></em></div>`,
@@ -9476,6 +9921,12 @@
 		let placeholder = `Beep ${nameOf(n)}…`;
 		if (whisper) {
 			placeholder = crabsWhisperPlus() ? `Whisper+ ${nameOf(n)}…` : `Whisper ${nameOf(n)}…`;
+		} else if (exempt && lastAsked && !lastAsked.kf) {
+			placeholder = `${nameOf(n)} isn't in 🌍 Global`;
+		} else if (exempt) {
+			placeholder = `Message ${nameOf(n)} through SlimeBeep…`;
+		} else if (cantReach(n)) {
+			placeholder = `${nameOf(n)} hasn't added you as a friend`;
 		} else if (offline) {
 			placeholder = `${nameOf(n)} is offline…`;
 		}
@@ -9484,9 +9935,9 @@
 			html`
 			<div class="sb-thead"><button id="sb-back" title="Back">${ICONS.back}</button>${avatar(n, nameOf(n))}
 				<div class="sb-main"><div class="sb-name">${nameOf(n)} <small style="font-weight:normal;color:#c08aaa">#${n}</small></div>
-				<div class="sb-sub">${f && html`<span class="sb-on"></span>`}${where(f)}</div>${!!f && statusLine(n)}</div>${trSettingsButton(`n:${n}`)}${pinsButton(`n:${n}`)}${muteButton(`n:${n}`)}${moreButton(`n:${n}`)}</div>
+				<div class="sb-sub">${(f || seen) && html`<span class="sb-on"></span>`}${(inRoom && 'In your room') || (seen && 'Online in SlimeBeep') || where(f)}</div>${!!f && statusLine(n)}</div>${trSettingsButton(`n:${n}`)}${pinsButton(`n:${n}`)}${muteButton(`n:${n}`)}${moreButton(`n:${n}`)}</div>
 			${jamLine(`n:${n}`)}
-			<div class="sb-msgwrap"><div class="sb-msgs" id="sb-msgs">${bubbles}${waitingBubbles}</div>
+			<div class="sb-msgwrap"><div class="sb-msgs" id="sb-msgs">${bubbles}${sendingBubbles}${waitingBubbles}</div>
 				<button class="sb-pill sb-jump" id="sb-jump"></button></div>
 			${replyBar(`n:${n}`)}
 			<div class="sb-compose">
@@ -9570,6 +10021,14 @@
 					return;
 				}
 			}
+			if (ownerExempt(n) && !friends.some((x) => x.MemberNumber === n)) {
+				sendExempt(n, text);
+				return;
+			}
+			if (cantReach(n)) {
+				failBeeps([{ n, text }], NOT_FRIENDS);
+				return render(true);
+			}
 			if (isOffline(n)) {
 				queueBeep(n, text);
 				return render(true);
@@ -9610,6 +10069,92 @@
 	 * @param {number} n
 	 */
 	const isOffline = (n) => friendsKnown && isFriend(n) && !friends.some((f) => f.MemberNumber === n);
+	/**
+	 * Whether member `n` is seen online by SlimeBeep: in your room, online in a group, or (the owner's exception) in Global.
+	 * @param {number} n
+	 */
+	const seenOnline = (n) => {
+		const info = peerInfo.get(n);
+		return (
+			sameRoom(n) || Object.values(groups).some((g) => (g.online || []).includes(n)) || (!!info && info.on && Date.now() - info.at < 120000)
+		);
+	};
+	/** When the online friends last came from the game. */
+	let friendsAt = 0;
+	/** @type {Map<number, number>} When each friend was first seen online while missing from the online friends (cantReach). */
+	const strayFrom = new Map();
+	/**
+	 * Whether a friend is online but missing from your online friends, and SlimeBeep has no mailbox to leave a beep in: the
+	 * game lists only friends who have you back, so they don't, and won't pass a beep on. A SlimeBeep friend who sent us
+	 * their keys (which takes being friends both ways) is more likely on the other server (the beta), and gets mail.
+	 * @param {number} n
+	 */
+	const cantReach = (n) => {
+		if (ownerExempt(n) || !isOffline(n) || !seenOnline(n) || (peers.has(n) && peerKeys[n] && peerEks[n])) {
+			strayFrom.delete(n);
+			return false;
+		}
+		// The online friends can be minutes old: a friend who just logged in isn't in them yet. Only an answer asked for
+		// after they were seen online, still without them, says they don't have you back.
+		const since = strayFrom.get(n);
+		if (!since) {
+			strayFrom.set(n, Date.now());
+			askFriends();
+			return false;
+		}
+		return friendsAt > since;
+	};
+	/** Why a beep to someone who doesn't have you back can't go. */
+	const NOT_FRIENDS = "they don't have you on their Bondage Club friend list, so the game won't pass it on";
+	/**
+	 * Keeps messages that couldn't be sent in their chats, marked ✖, and says why.
+	 * @param {{ n: number, text: string, at?: number }[]} list
+	 * @param {string} why
+	 */
+	function failBeeps(list, why) {
+		for (const x of list) {
+			const k = `nf:${newId()}`;
+			hist.push({ k, MemberNumber: x.n, MemberName: nameOf(x.n), Sent: true, Time: x.at || Date.now(), Message: x.text, failed: why });
+			histKeys.add(k);
+		}
+		hist.sort((a, b) => a.Time - b.Time);
+		saveHistory();
+		const names = [...new Set(list.map((x) => nameOf(x.n)))].join(', ');
+		notify(list.length === 1 ? `✖ Not sent to ${names}: ${why}` : `✖ ${list.length} messages not sent to ${names}: ${why}`);
+	}
+	/**
+	 * Sends under the owner's exception to someone who isn't an online friend: through the relay (shown in the chat as
+	 * sending meanwhile, one message after another per person), else the usual way for a friend who is offline (it waits
+	 * for them), else it is marked as not sent.
+	 * @param {number} n
+	 * @param {string} text
+	 */
+	async function sendExempt(n, text) {
+		const item = { id: newId(), n, text };
+		sendingNow.push(item);
+		if (isOpen()) {
+			render(true);
+		}
+		const run = (dmChains.get(n) || Promise.resolve()).then(() => relayDm(n, text));
+		dmChains.set(
+			n,
+			run.catch(() => ''),
+		);
+		const why = await run.catch(() => "it couldn't be sent, try again");
+		sendingNow = sendingNow.filter((x) => x !== item);
+		if (!why) {
+			notify(`🫧 Sent to ${nameOf(n)} through SlimeBeep`);
+		} else if (why === UNSURE) {
+			notify(`🫧 Sent to ${nameOf(n)} through SlimeBeep, but the relay didn't confirm it`);
+		} else if (isOffline(n) && !seenOnline(n)) {
+			queueBeep(n, text);
+		} else {
+			failBeeps([{ n, text }], why);
+		}
+		if (isOpen()) {
+			render(true);
+		}
+	}
 	/**
 	 * Adds a beep for an offline friend to `waiting` and tries their mailbox.
 	 * @param {number} n
@@ -12292,8 +12837,6 @@
 		document.documentElement.classList.toggle('sb-novid', !opts.musicVideo);
 	}
 
-	/** Member number that 🐞 reports can be beeped to (SlimeQueenSamantha). */
-	const OWNER = 255659;
 	/** New GitHub issue page, for 🐞 reports. */
 	const ISSUES = 'https://github.com/Proudkiller0015/slimebeep/issues/new';
 	/**

@@ -448,7 +448,7 @@ export class Group extends DurableObject {
 	/**
 	 * A client message (JSON with `t`). Before sign-in only 'auth'; then 'say', 'history', 'gkey', 'rekey', 'invite', 'kick',
 	 * 'ban' (Global), 'timeout', 'pin', 'admin', 'owner', 'rename', 'open', 'profile', 'gpic', 'music', 'musicEnd', 'musicQueue', 'musicAdd',
-	 * 'musicSkip', 'musicListen', 'status', 'leave' and 'disband'. Rate limited per connection.
+	 * 'musicSkip', 'musicListen', 'status', 'leave', 'disband' and 'lookup' (Global). Rate limited per connection.
 	 */
 	async webSocketMessage(ws, raw) {
 		const att = ws.deserializeAttachment();
@@ -541,12 +541,29 @@ export class Group extends DurableObject {
 					return await this.leave(att.member);
 				case 'disband':
 					return await this.disband(att.member);
+				case 'lookup':
+					return this.lookup(ws, att.member, p.member);
 				default:
 					return this.send(ws, { t: 'error', why: 'unknown' });
 			}
 		} catch (e) {
 			this.send(ws, { t: 'error', why: 'server error' });
 		}
+	}
+
+	/**
+	 * The SlimeBeep owner's exception, in Global only: the owner looks up any member, and any member looks up the owner,
+	 * so the two can message each other through their mailboxes without being Bondage Club friends. Answers the keys
+	 * Global holds for that number (bound to it, see auth) and whether they are online.
+	 */
+	lookup(ws, me, n) {
+		const owner = Number(this.env.GLOBAL_OWNER) || GLOBAL_OWNER;
+		if (!this.global || !isNum(n) || n === me || (me !== owner && n !== owner)) {
+			return this.send(ws, { t: 'error', why: 'unknown', ...(isNum(n) ? { member: n } : {}) });
+		}
+		const m = this.members[n];
+		const on = !!m && this.ctx.getWebSockets().some((w) => (w.deserializeAttachment() || {}).member === n);
+		return this.send(ws, { t: 'lookup', member: n, ...(m && m.ek ? { name: m.name, pub: m.pub, ek: m.ek, eks: m.eks } : {}), on });
 	}
 
 	webSocketClose(ws) {
@@ -874,6 +891,11 @@ export class Group extends DurableObject {
 				t: 'error',
 				why: target === null ? 'anyone can join Global from 👥 Groups' : 'Global has never seen that member number',
 			});
+		}
+		// SlimeBeep's owner is let back in only by the operator (opInvite): with the owner's number, an admin's code would
+		// make whoever uses it the owner for the owner's exception (see lookup).
+		if (this.global && target === (Number(this.env.GLOBAL_OWNER) || GLOBAL_OWNER) && member !== target) {
+			return this.send(ws, { t: 'error', why: "only the operator can let SlimeBeep's owner back in" });
 		}
 		// Re-keying an existing member needs an admin.
 		if (target !== null && this.members[target] && !admin) {

@@ -6,7 +6,7 @@ const SHOTS = process.argv.includes('--shots');
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 // Other SlimeBeep users, played from here against the relay.
 const RELAY_URL = process.env.RELAY || 'ws://localhost:8787';
-const { makePeer, groupAuth, keyed, onRelay, sealMail, openMail } = require('./relay/e2e-peer.js');
+const { makePeer, groupAuth, keyed, onRelay, sealMail, openMail, sign } = require('./relay/e2e-peer.js');
 /** A simulated SlimeBeep user, with the same end-to-end encryption as the add-on. */
 const relayUser = (member, name) => makePeer(member, name);
 async function relayJoin(gid, who, fields = {}) {
@@ -35,6 +35,28 @@ async function relayJoin(gid, who, fields = {}) {
 	await new Promise((r) => setTimeout(r, 400));
 	c.last = (t) => [...c.got].reverse().find((x) => x.t === t);
 	c.welcome = c.last('welcome');
+	return c;
+}
+/**
+ * A simulated SlimeBeep user's connection to mailbox `box`, signed in as `as` (their own number unless an impostor);
+ * everything it gets is kept in `got`.
+ */
+async function mailboxJoin(box, who, as = who.member) {
+	const ws = new WebSocket(`${RELAY_URL}/ws?m=${box}`, { headers: { Origin: 'https://www.bondageprojects.elementfx.com' } });
+	const c = { ws, got: [] };
+	ws.onmessage = async (e) => {
+		const x = JSON.parse(e.data);
+		c.got.push(x);
+		if (x.t === 'hello') {
+			ws.send(
+				JSON.stringify({ t: 'auth', member: as, name: who.name, pub: who.pub, sig: await sign(who, `${x.nonce}|mbox:${box}|${as}`) }),
+			);
+		}
+	};
+	await waitFor(() => c.got.some((x) => x.t === 'mail' || x.t === 'welcome'), 5000);
+	c.send = (x) => ws.send(JSON.stringify(x));
+	/** The beeps that came in, as the relay sends them. */
+	c.mail = () => c.got.filter((x) => x.t === 'mail').flatMap((x) => x.list);
 	return c;
 }
 /** Three seconds of silence as a WAV file (8 kHz, 8-bit mono), for the music player. */
@@ -5588,6 +5610,126 @@ const check = (ok, what) => {
 		await p.type('#sb-join-code', `SB-${gid}-${code}`);
 		await p.click('#sb-join');
 		check(!!code && (await waitFor(inGlobal, 8000)), "the admin's code lets them back in on their new keys");
+
+		// ---- The owner's exception (the test owner is #21, as on the test relay): #8 and the owner message each other
+		// through their mailboxes without being friends, and nobody can pass as the owner.
+		await p.evaluate(() => localStorage.setItem('slimebeep.owner', '21'));
+		await wait(6000);
+		const ownBox = await mailboxJoin(21, owner);
+		await p.evaluate(() => SlimeBeep.api.openChat(21));
+		await wait(1500);
+		const head = await p.evaluate(() => ({
+			ph: document.getElementById('sb-text').placeholder,
+			nf: !!document.querySelector('.sb-thead .sb-nf'),
+		}));
+		check(
+			/through SlimeBeep/.test(head.ph) && !head.nf,
+			`a chat with the owner offers to message them through SlimeBeep, friends or not (${JSON.stringify(head)})`,
+		);
+		await p.type('#sb-text', 'hi queen');
+		await p.keyboard.press('Enter');
+		const toOwner = await waitFor(async () => {
+			const m = ownBox.mail().find((x) => x.from === 8);
+			return !!m && (await openMail(owner, 8, m.enc)) === 'hi queen';
+		}, 8000);
+		const sentMark = await p.evaluate(() =>
+			[...document.querySelectorAll('.sb-b.me')].some((b) => /hi queen/.test(b.textContent || '') && (b.textContent || '').includes('🫧')),
+		);
+		check(
+			toOwner && sentMark,
+			`it reaches the owner at once, sealed to the key Global has for them, marked 🫧 (${JSON.stringify({ toOwner, sentMark })})`,
+		);
+		q.send({ t: 'lookup', member: 8 });
+		await wait(400);
+		const me8 = q.last('lookup');
+		const reply = await mailboxJoin(8, owner);
+		reply.send({ t: 'put', kf: me8.pub.x.slice(0, 16), enc: await sealMail(21, 8, me8.ek, 'hello #8'), ref: 'o1' });
+		const gotReply = await waitFor(
+			() =>
+				p.evaluate(() =>
+					[...document.querySelectorAll('.sb-b.them')].some(
+						(b) => /hello #8/.test(b.textContent || '') && !(b.textContent || '').includes('⚠') && (b.textContent || '').includes('🫧'),
+					),
+				),
+			8000,
+		);
+		check(gotReply, "the owner's answer arrives straight away, its sender checked against Global (no ⚠)");
+		await shot('owner-exception');
+		const eve8 = await relayUser(26, 'Eve');
+		const fake = await mailboxJoin(8, eve8, 21);
+		fake.send({ t: 'put', kf: me8.pub.x.slice(0, 16), enc: await sealMail(21, 8, me8.ek, 'fake queen'), ref: 'f1' });
+		await wait(3000);
+		check(
+			!(await p.evaluate(() => /fake queen/.test(localStorage.getItem('slimebeep.history.8') || ''))),
+			"someone else signing in as the owner's number isn't taken for the owner",
+		);
+		for (const c of [ownBox, reply, fake]) {
+			c.ws.close();
+		}
+
+		// Only the owner opens a chat with anyone by member number.
+		const openRow = async () => {
+			for (let i = 0; i < 4 && !(await p.$('[data-tab=chats]')); i++) {
+				await p.click('#sb-back').catch(() => {});
+				await wait(200);
+			}
+			await p.click('[data-tab=chats]');
+			await wait(200);
+			await p.type('#sb-search', '#99');
+			await wait(300);
+			return p.evaluate(() => {
+				const r = document.querySelector('[data-open="99"]');
+				return r ? r.textContent || '' : '';
+			});
+		};
+		const notOwner = await openRow();
+		await p.evaluate(() => localStorage.setItem('slimebeep.owner', '8'));
+		await p.click('[data-tab=chats]');
+		await wait(200);
+		const asOwner = await openRow();
+		await p.click('[data-open="99"]');
+		await wait(400);
+		const opened = await p.evaluate(() => (document.querySelector('.sb-thead') || {}).textContent || '');
+		check(
+			!notOwner && /Open #99/.test(asOwner) && /#99/.test(opened),
+			`only the owner gets "🔎 Open #99", and it opens that chat (${JSON.stringify({ notOwner, asOwner })})`,
+		);
+		await p.evaluate(() => localStorage.setItem('slimebeep.owner', '21'));
+
+		// ✖: Dee is on the friend list but not among the online friends. Offline, a beep waits for her; once she is seen
+		// online (in Global) she doesn't have #8 back, so it can never go: it is marked ✖, and so is the next one.
+		await p.evaluate(() => SlimeBeep.api.openChat(14));
+		await wait(400);
+		await p.type('#sb-text', 'are you there');
+		await p.keyboard.press('Enter');
+		await wait(400);
+		const waited = await p.evaluate(() => !!document.querySelector('.sb-wait'));
+		const dee = await relayJoin(gid, await relayUser(14, 'Dee'), { join: true });
+		const marked = await waitFor(
+			() =>
+				p.evaluate(() =>
+					[...document.querySelectorAll('.sb-b.me')].some(
+						(b) => /are you there/.test(b.textContent || '') && !!b.querySelector('.sb-fail'),
+					),
+				),
+			15000,
+		);
+		const ph = await p.evaluate(() => document.getElementById('sb-text').placeholder);
+		await p.type('#sb-text', 'hello?');
+		await p.keyboard.press('Enter');
+		await wait(400);
+		const second = await p.evaluate(() => ({
+			fail: [...document.querySelectorAll('.sb-b.me')].some((b) => /hello\?/.test(b.textContent || '') && !!b.querySelector('.sb-fail')),
+			beeped: beeps.some((x) => x[0] === 14),
+			toast: (document.getElementById('sb-toast') || {}).textContent || '',
+		}));
+		await shot('not-friends');
+		check(
+			waited && marked && /hasn't added you as a friend/.test(ph) && second.fail && !second.beeped && /Not sent/.test(second.toast),
+			`a friend online who doesn't have you back: ✖ Not sent, not "offline" (${JSON.stringify({ waited, marked, ph, ...second })})`,
+		);
+		dee.ws.close();
+		await p.evaluate(() => localStorage.removeItem('slimebeep.owner'));
 
 		for (const c of [q, a]) {
 			c.ws.close();

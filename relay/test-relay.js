@@ -687,6 +687,35 @@ async function testGlobal(gid) {
 	const e = await join(eve, { as: 23, fields: { join: true } });
 	check(e.closed && /not a member/.test(JSON.stringify(e.got)), "Eve can't take Cat's member number by joining with her own key");
 
+	// The owner's exception: the owner looks up anyone in Global, anyone looks up the owner, and nobody else anybody.
+	o.send({ t: 'lookup', member: 23 });
+	o.send({ t: 'lookup', member: 29 });
+	c.send({ t: 'lookup', member: 21 });
+	await wait(300);
+	const seen = o.got.filter((x) => x.t === 'lookup');
+	const l1 = seen.find((x) => x.member === 23);
+	const l0 = seen.find((x) => x.member === 29);
+	const l2 = c.last('lookup');
+	check(
+		!!l1 && l1.ek === cat.ek && l1.pub.x === cat.pub.x && typeof l1.eks === 'string' && l1.name === 'Cat' && l1.on === true,
+		"the owner looks up Cat: Global's keys for her, and that she is online",
+	);
+	check(!!l0 && !l0.ek && l0.on === false, 'someone not in Global: no keys, not online');
+	check(!!l2 && l2.member === 21 && l2.ek === own.ek && l2.on === true, 'Cat looks up the owner');
+	c.send({ t: 'lookup', member: 29 });
+	await wait(300);
+	check(
+		c.got.filter((x) => x.t === 'lookup').length === 1 && c.last('error').why === 'unknown' && c.last('error').member === 29,
+		'Cat can look up nobody else (the refusal names the number, so her SlimeBeep stops waiting)',
+	);
+	o.send({ t: 'admin', member: 23, on: true });
+	await wait(300);
+	c.send({ t: 'invite', member: 21 });
+	await wait(300);
+	check(/only the operator/.test(c.last('error').why), "even an admin can't make a code for the owner's number");
+	o.send({ t: 'admin', member: 23, on: false });
+	await wait(300);
+
 	// No member cap: well past the 40 of other groups.
 	const crowd = [];
 	for (let i = 0; i < 45; i++) {
