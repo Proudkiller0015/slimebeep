@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.17.0';
+	const VERSION = '3.17.1';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -270,6 +270,8 @@
 		globalAdmins: 50,
 		/** Most members in a linked group (one another add-on brings its members into, like the Void Order's chat). */
 		linkedMembers: 150,
+		/** How long api.joinGroup waits for the relay before giving up. */
+		joinWaitMs: 30000,
 		/** Most groups you can be in (Global aside). */
 		groups: 30,
 		/** Most members Global's roster lists (those online, then its admins). */
@@ -2618,10 +2620,18 @@
 					resolve({ ok: false, why: 'not logged in' });
 					return;
 				}
+				// A join that never answers (its connection replaced or dropped) still settles.
+				const late = setTimeout(() => resolve({ ok: false, why: 'timed out' }), LIMITS.joinWaitMs);
 				joinCode(
 					code,
-					(gid) => resolve({ ok: true, gid }),
-					(why) => resolve({ ok: false, why }),
+					(gid) => {
+						clearTimeout(late);
+						resolve({ ok: true, gid });
+					},
+					(why) => {
+						clearTimeout(late);
+						resolve({ ok: false, why });
+					},
 				);
 			}),
 		/**
