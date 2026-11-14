@@ -548,6 +548,7 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 	if (BASE.startsWith('ws://')) {
 		await testGlobal(`${GLOBAL_PREFIX}${Date.now().toString(36)}`);
 		await testGlobalAdmins(`${GLOBAL_PREFIX}a${Date.now().toString(36)}`);
+		await testLink();
 	} else {
 		console.log('skip Global (needs the local test relay)');
 	}
@@ -881,4 +882,31 @@ async function testGlobalAdmins(gid) {
 			/* closed */
 		}
 	}
+}
+
+/** The linked group: a partner server (holding LINK_KEY) makes codes for its members, one at a time, and removes them. */
+async function testLink() {
+	const http = BASE.replace(/^ws/, 'http');
+	const post = (path, body, key = 'test-link-key-0123456789abcdef0123') =>
+		fetch(`${http}${path}`, {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+			body: JSON.stringify(body),
+		});
+	const n = 7000 + Math.floor(Math.random() * 1000);
+	const wrong = await post('/link/invite', { member: n }, 'not-the-key-0123456789abcdef0123456');
+	check(wrong.status === 404, 'without the link key, no codes');
+	const made = await (await post('/link/invite', { member: n })).json();
+	check(/^[A-Z2-9]{10}$/.test(made.code || '') && made.gid === 'linktestvoidorder', 'the partner server gets a code for one member');
+	const who = await makePeer(n, 'Linked');
+	const c = await connect(made.gid, who, { fields: { invite: made.code } });
+	const w = c.last('welcome');
+	check(!!w && w.roster.linked === true && w.roster.owner === 21, 'that member joins with it: a linked group, owned by LINK_OWNER');
+	const again = await (await post('/link/invite', { member: n })).json();
+	check(again.member === true, 'asking again for someone already in says so');
+	const removed = await (await post('/link/remove', { member: n })).json();
+	await wait(300);
+	check(removed.removed === true && c.closed, 'removing them (they left the order) takes them out');
+	const owner = await (await post('/link/remove', { member: 21 })).json();
+	check(owner.removed === false, 'the owner is never removed');
 }

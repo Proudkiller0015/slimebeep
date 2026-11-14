@@ -80,6 +80,18 @@ await sb.inviteToGroup(id, 12345);
 
 Invites go out as normal beeps, so they show in both players' chats. The one to a friend without SlimeBeep has no link in it, and at most 3 of those go out a minute, a few seconds apart; invite beeps to SlimeBeep friends go a second apart. Inviting many people never turns into a burst of beeps. With `sent: 'later'` the code still works: try again in a minute, or pass the code on yourself.
 
+## Joining with a code
+
+```js
+await sb.joinGroup('SB-…');
+// in (or was in already):  { ok: true, gid }
+// couldn't:                { ok: false, why }
+```
+
+The same as pasting the code in 👥 Groups. It's for add-ons that bring their own members into a group: their server asks
+the relay for a code made for one member at a time (see the relay's linked group in its source), and their add-on joins
+with it.
+
 ## Beeping a friend
 
 ```js

@@ -921,7 +921,7 @@ const check = (ok, what) => {
 		api0.v === 1 &&
 			api0.frozen &&
 			api0.fns ===
-				'addPanel,apiVersion,doNotDisturb,group,groups,hasSlimeBeep,inviteToGroup,matchTheme,matchingTheme,nowPlaying,on,openChat,openGroup,openInvite,openPanel,openSettings,playSong,proveIdentity,sendBeep,setDoNotDisturb,slimeBeepFriends,version',
+				'addPanel,apiVersion,doNotDisturb,group,groups,hasSlimeBeep,inviteToGroup,joinGroup,matchTheme,matchingTheme,nowPlaying,on,openChat,openGroup,openInvite,openPanel,openSettings,playSong,proveIdentity,sendBeep,setDoNotDisturb,slimeBeepFriends,version',
 		`window.SlimeBeep.api is there for other add-ons, and can't be changed (${api0.fns})`,
 	);
 	// proveIdentity: a signed "this is me" for another add-on's server, made for that server only.
@@ -5610,6 +5610,25 @@ const check = (ok, what) => {
 		await p.type('#sb-join-code', `SB-${gid}-${code}`);
 		await p.click('#sb-join');
 		check(!!code && (await waitFor(inGlobal, 8000)), "the admin's code lets them back in on their new keys");
+
+		// ---- api.joinGroup: a partner add-on joins the player to its linked group with a code its server got for them.
+		const linkPost = (path) =>
+			fetch(`${RELAY_URL.replace(/^ws/, 'http')}${path}`, {
+				method: 'POST',
+				headers: { Authorization: 'Bearer test-link-key-0123456789abcdef0123', 'Content-Type': 'application/json' },
+				body: JSON.stringify({ member: 8 }),
+			}).then((r) => r.json());
+		await linkPost('/link/remove');
+		const link = await linkPost('/link/invite');
+		const linked = await p.evaluate((code) => SlimeBeep.api.joinGroup(code), `SB-${link.gid}-${link.code}`);
+		const inLinked = await waitFor(() => p.evaluate((g) => !!SlimeBeep.api.group(g), link.gid), 6000);
+		check(
+			linked.ok && linked.gid === link.gid && inLinked,
+			`api.joinGroup joins with a code a partner server made (${JSON.stringify(linked)})`,
+		);
+		const badCode = await p.evaluate(() => SlimeBeep.api.joinGroup('nonsense'));
+		check(!badCode.ok && /not a SlimeBeep group code/.test(badCode.why), 'a bad code is refused, with why');
+		await linkPost('/link/remove');
 
 		// ---- The owner's exception (the test owner is #21, as on the test relay): #8 and the owner message each other
 		// through their mailboxes without being friends, and nobody can pass as the owner.

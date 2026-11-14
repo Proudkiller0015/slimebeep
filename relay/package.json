@@ -4,7 +4,7 @@
   "description": "SlimeBeep's group chat relay: one Durable Object per group, WebSockets, last 200 messages kept.",
   "scripts": {
     "dev": "wrangler dev --port 8787",
-    "dev:test": "wrangler dev --port 8787 --var ALLOW_ANY_ORIGIN:1 --var OPERATOR_KEY:test-operator-key-0123456789abcdef --var GLOBAL_GID:globaltest --var GLOBAL_OWNER:21 --var GLOBAL_JOINS:47 --var GLOBAL_ROSTER_MS:3000 --var GLOBAL_KEY:c2xpbWViZWVwLWdsb2JhbC10ZXN0LWtleS0wMTIzNDU",
+    "dev:test": "wrangler dev --port 8787 --var ALLOW_ANY_ORIGIN:1 --var OPERATOR_KEY:test-operator-key-0123456789abcdef --var GLOBAL_GID:globaltest --var GLOBAL_OWNER:21 --var GLOBAL_JOINS:47 --var GLOBAL_ROSTER_MS:3000 --var GLOBAL_KEY:c2xpbWViZWVwLWdsb2JhbC10ZXN0LWtleS0wMTIzNDU --var LINK_KEY:test-link-key-0123456789abcdef0123 --var LINK_GID:linktestvoidorder --var LINK_OWNER:21",
     "dev:rotate": "wrangler dev --port 8787 --var ROTATE_MSGS:5",
     "deploy": "wrangler deploy",
     "test": "node test-relay.js"

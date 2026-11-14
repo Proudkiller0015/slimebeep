@@ -132,6 +132,15 @@ const GLOBAL = {
 };
 /** Global's owner (the Slime Queen), made owner when the group turns into Global if they are in it (GLOBAL_OWNER overrides it for the tests). */
 const GLOBAL_OWNER = 255659;
+/**
+ * A linked group: one group another add-on's server brings its own members into (the Void Order's chat, from the
+ * Void Order add-on). The partner server holds the LINK_KEY secret and may only make invites for, and remove members
+ * from, the group LINK_GID; the group is made, owned by LINK_OWNER, the first time it asks.
+ */
+const LINK = {
+	/** Most members (a group chat's 40 is too few for an order). */
+	members: 150,
+};
 /** The GLOBAL_KEY secret: 32 bytes in base64url. */
 const GLOBAL_KEY_RE = /^[A-Za-z0-9_-]{43}$/;
 /** A group id. */
@@ -188,7 +197,10 @@ const unb64url = (s) =>
  * Without that secret set, nothing is the operator.
  */
 async function isOperator(req, env) {
-	const key = env.OPERATOR_KEY;
+	return hasKey(req, env.OPERATOR_KEY);
+}
+/** Whether a request carries `key` (32+ characters) as `Authorization: Bearer <key>`; false when `key` isn't set. */
+async function hasKey(req, key) {
 	const got = (req.headers.get('Authorization') || '').replace(/^Bearer /, '');
 	if (typeof key !== 'string' || key.length < 32 || !got) {
 		return false;
@@ -218,6 +230,19 @@ export default {
 				return new Response('Bad group or member number', { status: 400 });
 			}
 			return env.GROUP.get(env.GROUP.idFromName(p.g)).opInvite(p.member);
+		}
+		// The linked group's partner server: POST /link/invite { member } (a code bound to that member, or
+		// { member: true } if they are in already) and POST /link/remove { member } (they left the partner's order).
+		if ((url.pathname === '/link/invite' || url.pathname === '/link/remove') && req.method === 'POST') {
+			if (!ID_RE.test(env.LINK_GID || '') || !(await hasKey(req, env.LINK_KEY))) {
+				return new Response('Not found', { status: 404 });
+			}
+			const p = await req.json().catch(() => ({}));
+			if (!isNum(p.member)) {
+				return new Response('Bad member number', { status: 400 });
+			}
+			const g = env.GROUP.get(env.GROUP.idFromName(env.LINK_GID));
+			return url.pathname === '/link/invite' ? g.linkInvite(p.member, env.LINK_GID) : g.linkRemove(p.member);
 		}
 		if (url.pathname !== '/ws') {
 			return new Response('Not found', { status: 404 });
@@ -296,6 +321,51 @@ export class Group extends DurableObject {
 	/** Whether this group is Global. */
 	get global() {
 		return !!this.meta && this.meta.global === 1;
+	}
+	/** Most members this group takes (Global has no cap). */
+	get memberCap() {
+		return this.meta && this.meta.linked ? LINK.members : LIMITS.members;
+	}
+
+	/**
+	 * A code for one member number, asked by the linked group's partner server (see the Worker's fetch). Makes the group
+	 * the first time, owned by LINK_OWNER, who joins with a code like everyone else.
+	 * @returns {Promise<Response>} { code, gid }, { member: true, gid } when they are in already, or an error
+	 */
+	async linkInvite(member, gid) {
+		if (!this.meta) {
+			const owner = Number(this.env.LINK_OWNER) || GLOBAL_OWNER;
+			this.meta = { name: this.env.LINK_NAME || 'Void Order', owner, admins: [owner], open: false, created: Date.now(), e2e: 1, linked: 1 };
+			this.members = {};
+			this.keys = { epoch: 0, rekey: false, eps: {} };
+			await this.ctx.storage.put('keys', this.keys);
+			await this.save();
+		}
+		if (this.members[member]) {
+			return Response.json({ member: true, gid });
+		}
+		if (Object.keys(this.members).length >= this.memberCap) {
+			return new Response('Group is full', { status: 409 });
+		}
+		const code = secret();
+		this.invites[code] = { member, by: 0, exp: Date.now() + LIMITS.inviteDays * 864e5, uses: 0 };
+		await this.save();
+		return Response.json({ code, gid });
+	}
+	/** Takes a member out of the linked group (they left the partner's order); never its owner. */
+	async linkRemove(member) {
+		if (!this.meta || !this.members[member] || member === this.meta.owner) {
+			return Response.json({ removed: false });
+		}
+		const name = this.members[member].name;
+		this.drop(member);
+		this.meta.admins = this.meta.admins.filter((n) => n !== member);
+		await this.save();
+		await this.note(`${name} left`);
+		this.closeMember(member, 'removed');
+		await this.rosterChanged();
+		await this.needRekey();
+		return Response.json({ removed: true });
 	}
 	/** Global's members, read from their own records. */
 	async loadGlobalMembers() {
@@ -416,7 +486,7 @@ export class Group extends DurableObject {
 		if (!this.meta) {
 			return new Response('No such group', { status: 404 });
 		}
-		if (!this.global && !this.members[member] && Object.keys(this.members).length >= LIMITS.members) {
+		if (!this.global && !this.members[member] && Object.keys(this.members).length >= this.memberCap) {
 			return new Response('Group is full', { status: 409 });
 		}
 		const code = secret();
@@ -667,7 +737,7 @@ export class Group extends DurableObject {
 			if (known && !samePub(known.pub, pub) && !inv.member) {
 				return this.fail(ws, 'that member number is taken');
 			}
-			if (!known && !this.global && Object.keys(this.members).length >= LIMITS.members) {
+			if (!known && !this.global && Object.keys(this.members).length >= this.memberCap) {
 				return this.fail(ws, 'group is full');
 			}
 			// In Global, connections still signed in on the keys this replaces are closed.
@@ -880,7 +950,7 @@ export class Group extends DurableObject {
 		if (!admin && !this.meta.open) {
 			return this.send(ws, { t: 'error', why: 'only admins can invite here' });
 		}
-		if (!this.global && Object.keys(this.members).length >= LIMITS.members) {
+		if (!this.global && Object.keys(this.members).length >= this.memberCap) {
 			return this.send(ws, { t: 'error', why: 'group is full' });
 		}
 		const target = p.member == null ? null : p.member;
@@ -1424,7 +1494,7 @@ export class Group extends DurableObject {
 	 */
 	async addKeys(member, p) {
 		const k = this.keys;
-		if (!Number.isInteger(p.e) || !Array.isArray(p.wraps) || p.wraps.length > LIMITS.members) {
+		if (!Number.isInteger(p.e) || !Array.isArray(p.wraps) || p.wraps.length > this.memberCap) {
 			return;
 		}
 		if (p.fresh === true) {
@@ -1576,6 +1646,7 @@ export class Group extends DurableObject {
 			owner: g.owner,
 			admins: g.admins,
 			open: g.open,
+			...(g.linked ? { linked: true } : {}),
 			online: this.online(),
 			timeouts: this.timeoutsOf(Object.keys(this.members).map(Number)),
 			members: Object.values(this.members).map((m) => ({
