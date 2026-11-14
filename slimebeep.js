@@ -268,6 +268,8 @@
 		/** Most admins in a group, and in Global. */
 		admins: 10,
 		globalAdmins: 50,
+		/** Most members in a linked group (one another add-on brings its members into, like the Void Order's chat). */
+		linkedMembers: 150,
 		/** Most groups you can be in (Global aside). */
 		groups: 30,
 		/** Most members Global's roster lists (those online, then its admins). */
@@ -2605,6 +2607,24 @@
 			};
 		},
 		/**
+		 * Joins a group with an invite code (SB-…), as if it was typed in 👥 Groups: for add-ons that bring their own
+		 * members into a group (a partner server makes codes for one member at a time).
+		 * @param {string} code
+		 * @returns {Promise<{ ok: true, gid: string } | { ok: false, why: string }>} once in (at once if already a member)
+		 */
+		joinGroup: (code) =>
+			new Promise((resolve) => {
+				if (!loggedIn()) {
+					resolve({ ok: false, why: 'not logged in' });
+					return;
+				}
+				joinCode(
+					code,
+					(gid) => resolve({ ok: true, gid }),
+					(why) => resolve({ ok: false, why }),
+				);
+			}),
+		/**
 		 * Opens SlimeBeep on "Invite <them> to…", listing the groups you can invite to.
 		 * @param {number} memberNumber
 		 */
@@ -4124,6 +4144,7 @@
 	 * @property {number[]} online
 	 * @property {GroupMember[]} members Global: only who is online and its admins
 	 * @property {boolean} [global] it is Global
+	 * @property {boolean} [linked] a linked group (another add-on brings its members in; more members allowed)
 	 * @property {number} [count] Global: how many members it has
 	 * @property {Record<string, number>} [timeouts] running timeouts of the members listed: member number -> when it ends
 	 */
@@ -6649,8 +6670,14 @@
 		}
 		const old = groups[gid];
 		const global = isGlobal(gid) && r.global === true;
+		let cap = LIMITS.members;
+		if (global) {
+			cap = LIMITS.globalListed;
+		} else if (r.linked === true) {
+			cap = LIMITS.linkedMembers;
+		}
 		const members = r.members
-			.slice(0, global ? LIMITS.globalListed : LIMITS.members)
+			.slice(0, cap)
 			.filter((m) => m && isNum(m.n))
 			.map((m) => ({
 				n: m.n,
@@ -7042,13 +7069,20 @@
 	 * Joins a group with an invite code (SB-…).
 	 * @param {string} raw the code as typed or pasted
 	 * @param {(gid: string) => void} [done] runs once in, or at once if already a member
+	 * @param {(why: string) => void} [failed] runs when it couldn't join, with why
 	 */
-	function joinCode(raw, done) {
+	function joinCode(raw, done, failed) {
 		const m = CODE_RE.exec(String(raw || '').trim());
 		if (!m) {
+			if (failed) {
+				failed('not a SlimeBeep group code');
+			}
 			return notify('That is not a SlimeBeep group code');
 		}
 		if (!secure()) {
+			if (failed) {
+				failed('this page has no encryption (http)');
+			}
 			return needHttps();
 		}
 		const [, gid, code] = m;
@@ -7059,6 +7093,9 @@
 			return;
 		}
 		if (groupCount() >= LIMITS.groups) {
+			if (failed) {
+				failed('in too many groups');
+			}
 			return notify('You are in too many groups');
 		}
 		notify('👥 Joining…');
@@ -7072,7 +7109,12 @@
 					done(gid);
 				}
 			},
-			onFail: (why) => notify(`⚠ Couldn't join${why ? `: ${why}` : ''}`),
+			onFail: (why) => {
+				if (failed) {
+					failed(why || 'refused');
+				}
+				notify(`⚠ Couldn't join${why ? `: ${why}` : ''}`);
+			},
 		});
 	}
 	/** How often a banned account checks whether its Global ban was lifted, while the visit lasts (ms). */
