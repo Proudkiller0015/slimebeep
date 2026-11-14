@@ -17,3 +17,8 @@ new_sqlite_classes = ["Group"]
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["Mailbox"]
+
+# The linked group: the Void Order chat, brought in by the Void Order add-on server (it holds LINK_KEY).
+[vars]
+LINK_GID = "765jbnek0x2qq5cl"
+LINK_NAME = "Void Order"
