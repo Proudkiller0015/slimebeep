@@ -547,6 +547,7 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 	const GLOBAL_PREFIX = process.env.GLOBAL_PREFIX || 'globaltest';
 	if (BASE.startsWith('ws://')) {
 		await testGlobal(`${GLOBAL_PREFIX}${Date.now().toString(36)}`);
+		await testGlobalAdmins(`${GLOBAL_PREFIX}a${Date.now().toString(36)}`);
 	} else {
 		console.log('skip Global (needs the local test relay)');
 	}
@@ -846,6 +847,34 @@ async function testGlobal(gid) {
 	check(bulk.closed && /too many/.test(JSON.stringify(bulk.got)), 'one address joining too many new numbers is stopped');
 
 	for (const x of all) {
+		try {
+			x.ws.close();
+		} catch (err) {
+			/* closed */
+		}
+	}
+}
+
+/** Global takes more admins than a group chat's 10. */
+async function testGlobalAdmins(gid) {
+	const own = await makePeer(21, 'Owner');
+	const made = await connect(gid, own, { fields: { create: { name: 'Beta chat', open: false } } });
+	await wait(300);
+	made.ws.close();
+	await wait(100);
+	const o = await connect(gid, own);
+	const crowd = [];
+	for (let i = 0; i < 12; i++) {
+		crowd.push(await connect(gid, await makePeer(3000 + i, `Helper ${i}`), { fields: { join: true } }));
+	}
+	for (let i = 0; i < 12; i++) {
+		o.send({ t: 'admin', member: 3000 + i, on: true });
+		await wait(120);
+	}
+	await wait(3600);
+	const admins = (o.last('roster') || o.last('welcome')).roster.admins;
+	check(admins.length === 13, `Global takes more than 10 admins (${admins.length} with the owner)`);
+	for (const x of [o, ...crowd]) {
 		try {
 			x.ws.close();
 		} catch (err) {
