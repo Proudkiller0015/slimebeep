@@ -272,7 +272,8 @@ export default {
 
 /**
  * One group chat. Members' statuses and who listens along live on their connections, not in storage. Storage: 'meta' { name, owner, admins, open, created, pic, e2e, timeouts }, 'members' (member
- * number -> { n, name, pub, ek, eks, joined, pic, rk }), 'invites' (secret -> { member, by, exp, uses }),
+ * number -> { n, name, pub, ek, eks, joined, rk }), 'mp:<member number>' each member's picture (a data URL; kept
+ * apart so 150 pictures never make one record too big), 'invites' (secret -> { member, by, exp, uses }),
  * 'msg:<seq>' sealed messages, 'keys' { epoch, rekey, eps: epoch -> member -> wrap } and 'music'
  * { u, ti, p, pl, d, i, b, by, name, at, q }: the song playing, only its link and where it is, never the sound,
  * and the titles of the songs queued after it. 'pins' [{ id, by, at, m }]: pinned messages, each with a copy of
@@ -290,6 +291,8 @@ export class Group extends DurableObject {
 		// Global's members changed or removed since the last save (see touch and drop).
 		this.dirty = new Set();
 		this.dropped = new Set();
+		// Members whose picture changed or who left since the last save, in the other groups (see save).
+		this.picsChanged = new Set();
 		// When each member last spoke in Global, and when each address last joined new numbers (in memory only).
 		this.lastSay = new Map();
 		this.joins = new Map();
@@ -314,6 +317,10 @@ export class Group extends DurableObject {
 				}
 				this.meta.e2e = 1;
 				await ctx.storage.put({ meta: this.meta, seq: this.seq });
+			}
+			// After everything else is loaded: moving pictures out of an older 'members' record saves the group.
+			if (this.meta && !this.meta.global) {
+				await this.loadPics();
 			}
 		});
 	}
@@ -409,11 +416,34 @@ export class Group extends DurableObject {
 		this.dirty.add(n);
 		this.dropped.delete(n);
 	}
-	/** Removes a member; save() deletes their record in Global (the key their number is bound to stays, see save). */
+	/** Removes a member; save() deletes their record in Global (the key their number is bound to stays, see save), or their picture. */
 	drop(n) {
 		delete this.members[n];
 		this.dirty.delete(n);
 		this.dropped.add(n);
+		this.picsChanged.add(n);
+	}
+	/**
+	 * Puts each member's picture ('mp:<n>') back on them. Groups saved before pictures had their own records carry
+	 * them inside 'members': those are moved out, and 'members' is saved again without them.
+	 */
+	async loadPics() {
+		for (const m of Object.values(this.members)) {
+			if (m.pic) {
+				this.picsChanged.add(m.n);
+			}
+		}
+		for (const [k, pic] of await this.ctx.storage.list({ prefix: 'mp:' })) {
+			const m = this.members[Number(k.slice(3))];
+			if (m) {
+				m.pic = pic;
+			} else {
+				this.picsChanged.add(Number(k.slice(3)));
+			}
+		}
+		if (this.picsChanged.size) {
+			await this.save();
+		}
 	}
 	/**
 	 * Whether `ip` may join one more new member number to Global (GLOBAL.joinsPerHour), counting it if so.
@@ -450,7 +480,14 @@ export class Group extends DurableObject {
 		}
 		this.invites = {};
 		this.keys = { epoch: 0, rekey: false, eps: {} };
+		// Global keeps no member pictures (see auth).
+		const pics = [...(await this.ctx.storage.list({ prefix: 'mp:' })).keys()];
+		for (let i = 0; i < pics.length; i += 128) {
+			await this.ctx.storage.delete(pics.slice(i, i + 128));
+		}
+		this.picsChanged.clear();
 		for (const n of Object.keys(this.members)) {
+			delete this.members[n].pic;
 			this.touch(Number(n));
 		}
 		await this.ctx.storage.delete(['keys', 'members', 'music', 'pins']);
@@ -1261,12 +1298,16 @@ export class Group extends DurableObject {
 		if (typeof p.name === 'string') {
 			m.name = clean(p.name, LIMITS.name) || m.name;
 		}
+		const pic = m.pic;
 		if (this.global) {
 			delete m.pic;
 		} else if (p.pic === null) {
 			delete m.pic;
 		} else if (typeof p.pic === 'string' && p.pic.length <= LIMITS.pic && PIC_RE.test(p.pic)) {
 			m.pic = p.pic;
+		}
+		if (!this.global && m.pic !== pic) {
+			this.picsChanged.add(member);
 		}
 		this.touch(member);
 		await this.save();
@@ -1471,7 +1512,7 @@ export class Group extends DurableObject {
 			return await this.rosterChanged();
 		}
 		const name = this.members[member].name;
-		delete this.members[member];
+		this.drop(member);
 		// A linked group's owner stays its owner (and admin) while out of it, and the group stays when empty.
 		if (!g.linked || member !== g.owner) {
 			g.admins = g.admins.filter((n) => n !== member);
@@ -1713,12 +1754,40 @@ export class Group extends DurableObject {
 		}
 		return out;
 	}
-	/** Saves meta, members and invites. Global writes only the members that changed, each in its own record. */
+	/**
+	 * Saves meta, members and invites. Global writes only the members that changed, each in its own record; other
+	 * groups write 'members' without pictures, and the pictures that changed (or whose member left) as 'mp:<n>'.
+	 */
 	async save() {
 		if (!this.global) {
-			await this.ctx.storage.put({ meta: this.meta, members: this.members, invites: this.invites });
+			const members = {};
+			for (const [n, m] of Object.entries(this.members)) {
+				members[n] = { ...m };
+				delete members[n].pic;
+			}
+			const put = Object.entries({ meta: this.meta, members, invites: this.invites });
+			const gone = [];
+			for (const n of this.picsChanged) {
+				const pic = this.members[n] && this.members[n].pic;
+				if (pic) {
+					put.push([`mp:${n}`, pic]);
+				} else {
+					gone.push(`mp:${n}`);
+				}
+			}
+			this.picsChanged.clear();
+			this.dirty.clear();
+			this.dropped.clear();
+			// Storage takes at most 128 keys a call; meta, members and invites go in the first.
+			for (let i = 0; i < put.length; i += 128) {
+				await this.ctx.storage.put(Object.fromEntries(put.slice(i, i + 128)));
+			}
+			for (let i = 0; i < gone.length; i += 128) {
+				await this.ctx.storage.delete(gone.slice(i, i + 128));
+			}
 			return;
 		}
+		this.picsChanged.clear();
 		/** @type {Record<string, unknown>} */
 		const put = { meta: this.meta, invites: this.invites };
 		for (const n of this.dirty) {

@@ -549,6 +549,7 @@ async function connect(gid, who, extra = {}, origin = ORIGIN) {
 		await testGlobal(`${GLOBAL_PREFIX}${Date.now().toString(36)}`);
 		await testGlobalAdmins(`${GLOBAL_PREFIX}a${Date.now().toString(36)}`);
 		await testLink();
+		await testLinkPictures();
 	} else {
 		console.log('skip Global (needs the local test relay)');
 	}
@@ -932,4 +933,84 @@ async function testLink() {
 	check(removed.removed === true && c.closed, 'removing them (they left the order) takes them out');
 	const owner = await (await post('/link/remove', { member: 21 })).json();
 	check(owner.removed === false, 'the owner is never removed');
+}
+
+/**
+ * A full linked group: 150 members, each with a full-size picture. Every picture is kept and sent to whoever signs
+ * in, the 151st member is refused, and a member's picture goes when they do. Its members are removed again at the end.
+ */
+async function testLinkPictures() {
+	const http = BASE.replace(/^ws/, 'http');
+	const post = (path, body) =>
+		fetch(`${http}${path}`, {
+			method: 'POST',
+			headers: { Authorization: 'Bearer test-link-key-0123456789abcdef0123', 'Content-Type': 'application/json' },
+			body: JSON.stringify(body),
+		});
+	const head = 'data:image/png;base64,';
+	const pic = (n) => `${head}${`${n}Q`.repeat(12000)}`.slice(0, 12000);
+	const first = 20000 + Math.floor(Math.random() * 100000);
+	/** @type {Map<number, object>} member number -> peer */
+	const added = new Map();
+	let full = false;
+	let n = first;
+	// Members other tests left in the group count towards the 150 too.
+	while (!full && added.size < 150) {
+		const batch = [];
+		for (let i = 0; i < 10; i++, n++) {
+			const res = await post('/link/invite', { member: n });
+			if (res.status === 409) {
+				full = true;
+				break;
+			}
+			const { code, gid } = await res.json();
+			batch.push(
+				(async (m) => {
+					const who = await makePeer(m, `Member ${m}`);
+					const c = await connect(gid, who, { makesKeys: false, fields: { invite: code } });
+					if (c.last && c.last('welcome')) {
+						c.send({ t: 'profile', pic: pic(m) });
+						added.set(m, who);
+						await wait(300);
+					}
+					c.ws.close();
+				})(n),
+			);
+		}
+		await Promise.all(batch);
+	}
+	const extra = await post('/link/invite', { member: n + 1 });
+	check(extra.status === 409, `the linked group takes 150 members and no more (${added.size} added here)`);
+	const [one, who] = [...added][0];
+	const c = await connect('linktestvoidorder', who, { makesKeys: false });
+	await wait(500);
+	const w = c.last('welcome');
+	const pics = new Map(c.got.filter((x) => x.t === 'pic').map((x) => [x.n, x.data]));
+	check(!!w && w.roster.members.length === 150, 'a member signing in sees all 150 members');
+	check(
+		[...added.keys()].every((m) => pics.get(m) === pic(m)),
+		'and every full-size picture, each with its member (150 pictures are more than one storage record could hold with them)',
+	);
+	c.send({ t: 'profile', pic: null });
+	await wait(300);
+	c.ws.close();
+	const again = await connect('linktestvoidorder', who, { makesKeys: false });
+	await wait(500);
+	check(!again.got.some((x) => x.t === 'pic' && x.n === one), 'a removed picture stays removed');
+	again.ws.close();
+	for (const m of added.keys()) {
+		await post('/link/remove', { member: m });
+	}
+	const back = await (await post('/link/invite', { member: first + 1 })).json();
+	const b = await connect('linktestvoidorder', added.get(first + 1) || (await makePeer(first + 1, 'Back')), {
+		makesKeys: false,
+		fields: { invite: back.code },
+	});
+	await wait(500);
+	check(
+		!!b.last('welcome') && !b.got.some((x) => x.t === 'pic' && x.n === first + 1),
+		"someone who left and came back doesn't get their old picture back",
+	);
+	b.ws.close();
+	await post('/link/remove', { member: first + 1 });
 }
