@@ -19,7 +19,10 @@ interface BcPlayer {
 	/** The asset family (body type), e.g. "Female3DCG". */
 	AssetFamily?: string;
 	/** What the character wears and holds. */
-	Appearance?: { Asset?: { Name?: string; Group?: { Name?: string } }; Property?: { TypeRecord?: Record<string, number> } }[];
+	Appearance?: {
+		Asset?: { Name?: string; Group?: { Name?: string } };
+		Property?: { TypeRecord?: Record<string, number>; Expression?: string | null };
+	}[];
 	/** Add-on settings kept in the account (set at login, Screens/Character/Login/Login.js), saved with ServerPlayerExtensionSettingsSync. */
 	ExtensionSettings?: Record<string, unknown>;
 }

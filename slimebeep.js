@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.17.1';
+	const VERSION = '3.18.0';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -87,6 +87,8 @@
 		afk: false,
 		/** The AFK auto-reply. */
 		afkMsg: "I'm away right now, I'll answer when I'm back!",
+		/** AFK turns on by itself while you're away (AFK_IDLE without touching the game, or the game's AFK bubble) and off when you're back. */
+		afkAuto: false,
 		/** In the same chat room, a chat's replies whisper (otherwise they beep). */
 		roomWhisper: true,
 		/** Whether chats may whisper at all; off, they always beep and 🤫 is hidden. */
@@ -2081,6 +2083,15 @@
 		addEventListener('keydown', escAfterClick);
 		addEventListener('keydown', konamiKey, true);
 		addEventListener('keydown', hotkeyDown, true);
+		for (const type of AFK_INPUT) {
+			addEventListener(
+				type,
+				() => {
+					lastInput = Date.now();
+				},
+				{ capture: true, passive: true },
+			);
+		}
 		hookLscg();
 		toggle.addEventListener(
 			'pointerdown',
@@ -7786,6 +7797,7 @@
 				shareBeat();
 				drawMusic();
 			}
+			awayTick();
 			if (loggedIn() && histOwner === Player.MemberNumber) {
 				achTick();
 				statusTick();
@@ -7876,6 +7888,43 @@
 	const AFK_MARK = '💤 Auto-reply: ';
 	/** @type {Map<number, number>} Member -> when they last got the auto-reply. */
 	const afkTold = new Map();
+	/** How long without a click, key or touch in the game before opts.afkAuto counts you as away (the game's own AFK bubble time). */
+	const AFK_IDLE = 5 * 60 * 1000;
+	/** The game input that means you're there. */
+	const AFK_INPUT = ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart'];
+	/** When you last clicked, typed or moved the mouse in the game. */
+	let lastInput = Date.now();
+	/** Whether opts.afkAuto has you away right now (not saved: a reload finds you back). */
+	let awayAuto = false;
+	/** How many people got the auto-reply since awayAuto turned on. */
+	let awayTold = 0;
+	/** Whether beeps and whispers get the auto-reply now: AFK by the 💤 button, or away with opts.afkAuto. */
+	function afkNow() {
+		return opts.afk || awayAuto;
+	}
+	/** Whether your character shows the game's AFK bubble (its own timer, or picked by hand). */
+	function afkBubble() {
+		const app = loggedIn() && Array.isArray(Player.Appearance) ? Player.Appearance : [];
+		return app.some(
+			(a) => a && a.Asset && a.Asset.Group && a.Asset.Group.Name === 'Emoticon' && a.Property && a.Property.Expression === 'Afk',
+		);
+	}
+	/** Shows AFK on the 💤 header button. */
+	function showAfk() {
+		const b = $('sb-afk');
+		if (!b) {
+			return;
+		}
+		b.textContent = '💤';
+		if (opts.afk) {
+			b.title = `AFK: beeps and whispers get "${opts.afkMsg}" (click when you're back)`;
+		} else if (awayAuto) {
+			b.title = `Away: beeps and whispers get "${opts.afkMsg}" until you're back`;
+		} else {
+			b.title = 'Go AFK (auto-reply)';
+		}
+		b.classList.toggle('on', afkNow());
+	}
 	/**
 	 * Turns AFK on or off and shows it on the 💤 header button.
 	 * @param {boolean} on
@@ -7883,12 +7932,24 @@
 	function setAfk(on) {
 		setOpt('afk', on);
 		afkTold.clear();
-		const b = $('sb-afk');
-		if (b) {
-			b.textContent = '💤';
-			b.title = on ? `AFK: beeps and whispers get "${opts.afkMsg}" (click when you're back)` : 'Go AFK (auto-reply)';
-			b.classList.toggle('on', on);
+		showAfk();
+	}
+	/** Every tick with opts.afkAuto: away after AFK_IDLE without input or while the AFK bubble shows, back on the next input. */
+	function awayTick() {
+		const away = opts.afkAuto && loggedIn() && (Date.now() - lastInput >= AFK_IDLE || afkBubble());
+		if (away === awayAuto) {
+			return;
 		}
+		awayAuto = away;
+		if (away) {
+			awayTold = 0;
+			if (!opts.afk) {
+				afkTold.clear();
+			}
+		} else if (awayTold && !opts.afk) {
+			notify(`👋 Welcome back: ${awayTold === 1 ? '1 person' : `${awayTold} people`} got your auto-reply`);
+		}
+		showAfk();
 	}
 	/** The box for going AFK: the auto-reply to send. */
 	function openAfk() {
@@ -7902,7 +7963,7 @@
 			html`<div class="sb-crop-card sb-status-card">
 			<b>💤 Go AFK</b>
 			<input class="sb-search" id="sb-afk-text" maxlength="200" placeholder="Your auto-reply" aria-label="Your auto-reply">
-			<span class="sb-hint" style="text-align:center">Anyone who beeps or whispers you gets this reply, once every 10 minutes each, until you click 💤 again.</span>
+			<span class="sb-hint" style="text-align:center">Anyone who beeps or whispers you gets this reply, once every 10 minutes each, until you click 💤 again. To send it by itself whenever you're away, turn it on in Settings.</span>
 			<div class="sb-crop-btns" style="justify-content:center"><button class="sb-pill" data-act="cancel">Cancel</button><button class="sb-go" data-act="go">Go AFK</button></div>
 		</div>`,
 		);
@@ -7948,13 +8009,16 @@
 	 * @param {boolean} whisper it came as a room whisper (the reply goes the same way)
 	 */
 	function afkReply(n, text, whisper) {
-		if (!opts.afk || !loggedIn() || !isNum(n) || n === Player.MemberNumber || String(text).startsWith(AFK_MARK)) {
+		if (!afkNow() || !loggedIn() || !isNum(n) || n === Player.MemberNumber || String(text).startsWith(AFK_MARK)) {
 			return;
 		}
 		if (Date.now() - (afkTold.get(n) || 0) < AFK_GAP) {
 			return;
 		}
 		afkTold.set(n, Date.now());
+		if (awayAuto && !opts.afk) {
+			awayTold++;
+		}
 		const reply = AFK_MARK + opts.afkMsg;
 		if (whisper) {
 			if (typeof ChatRoomSendWhisper === 'function') {
@@ -12600,6 +12664,7 @@
 				['desktop', 'Desktop notification when in the background', () => opts.desktop, (on) => setDesktop(on)],
 				['dnd', 'Do not disturb (no sounds or pop-ups)', () => opts.dnd, (on) => setDnd(on)],
 				['updateNotes', "Tell me what's new after an update", () => opts.updateNotes, (on) => setOpt('updateNotes', on)],
+				['afkAuto', 'Auto-reply when away 5 min or AFK', () => opts.afkAuto, (on) => setOpt('afkAuto', on)],
 			],
 			[
 				['night', 'Night mode (a night blue slime)', () => opts.night, (on) => setNight(on)],

@@ -4396,6 +4396,70 @@ const check = (ok, what) => {
 			),
 			'clicking 💤 again turns AFK off',
 		);
+
+		// ---- Away by itself (Settings): the game's AFK bubble or 5 minutes without input; back on the next input.
+		const afkState = () =>
+			p.evaluate(() => ({
+				on: document.getElementById('sb-afk').classList.contains('on'),
+				saved: JSON.parse(localStorage.getItem('slimebeep.options')).afk,
+			}));
+		const bubble = (on) =>
+			p.evaluate((on) => {
+				if (on) {
+					Player.Appearance = [{ Asset: { Name: 'Emoticon', Group: { Name: 'Emoticon' } }, Property: { Expression: 'Afk' } }];
+				} else {
+					delete Player.Appearance;
+				}
+			}, on);
+		await bubble(true);
+		await wait(1300);
+		const offWhileOff = await afkState();
+		await p.evaluate(() => {
+			settingsPage(1);
+			settingsTick('Auto-reply when away 5 min or AFK');
+			beeps.length = 0;
+			local.length = 0;
+		});
+		await wait(1300);
+		const byBubble = await afkState();
+		await beepIn(14, 'Dee', 'are you afk?');
+		await wait(1600);
+		const awayReplies = await p.evaluate(() => beeps.map((b) => [b[0], b[1]]));
+		await bubble(false);
+		await p.evaluate(() => document.dispatchEvent(new PointerEvent('pointermove', { bubbles: true })));
+		await wait(1300);
+		const back = await afkState();
+		const toasts = await p.$eval('#sb-toast', (e) => e.textContent);
+		check(
+			!offWhileOff.on &&
+				byBubble.on &&
+				!byBubble.saved &&
+				JSON.stringify(awayReplies) === JSON.stringify([[14, '💤 Auto-reply: Making plushies, back soon']]) &&
+				!back.on &&
+				/Welcome back: 1 person got your auto-reply/.test(toasts),
+			`with the setting on, the AFK bubble turns the auto-reply on and coming back turns it off (${JSON.stringify({ offWhileOff, byBubble, awayReplies, back, toasts })})`,
+		);
+		// Five minutes without a click or key: shift the clock instead of waiting.
+		await p.evaluate(() => {
+			window.realNow = Date.now;
+			Date.now = () => window.realNow() + 6 * 60 * 1000;
+		});
+		await wait(1300);
+		const idle = await afkState();
+		await p.evaluate(() => {
+			document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Shift', bubbles: true }));
+		});
+		await wait(1300);
+		const typed = await afkState();
+		await p.evaluate(() => {
+			Date.now = window.realNow;
+			document.querySelectorAll('.sb-card').forEach((c) => c.remove());
+			settingsTick('Auto-reply when away 5 min or AFK');
+		});
+		check(
+			idle.on && !idle.saved && !typed.on && !(await p.evaluate(() => JSON.parse(localStorage.getItem('slimebeep.options')).afkAuto)),
+			`five minutes without input counts as away, a key press as back (${JSON.stringify({ idle, typed })})`,
+		);
 	}
 
 	// ---- 🍞 The game's toasts (R133): cards and notes go through ToastManager in SlimeBeep's colours,

@@ -448,5 +448,11 @@
     "date": "14 Nov 2026",
     "title": "📢 SlimeBeep 3.17.1",
     "text": "🛠 Bigger groups keep everyone's pictures safely; add-ons joining a group no longer wait forever."
+  },
+  {
+    "id": "3.18.0",
+    "date": "15 Nov 2026",
+    "title": "📢 SlimeBeep 3.18",
+    "text": "💤 New in Settings: your auto-reply can turn on by itself after 5 minutes away or while your AFK bubble shows, and off when you're back."
   }
 ]
