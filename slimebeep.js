@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.18.0';
+	const VERSION = '3.19.0';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -53,6 +53,8 @@
 		lastVersion: null,
 		/** After an update, a note in the room chat with what's new. */
 		updateNotes: true,
+		/** While playing, say when a newer SlimeBeep is out (a reload gets it). */
+		updateReady: true,
 		/** Night colours. */
 		night: false,
 		/** @type {'all' | 'others' | 'none'} Whom the slime and version show over in a chat room: everyone, all but you, nobody. */
@@ -2107,6 +2109,7 @@
 		place();
 		setInterval(tick, 1000);
 		news();
+		setInterval(checkForUpdate, UPDATE_CHECK);
 		registerSettings();
 	}
 
@@ -8298,6 +8301,39 @@
 			cls: 'news',
 		});
 	}
+	/** How often a running SlimeBeep asks GitHub Pages whether a newer one is out. */
+	const UPDATE_CHECK = 15 * 60 * 1000;
+	/** @type {string | null} The newer version already announced, so it is said once. */
+	let updateTold = null;
+
+	/**
+	 * With opts.updateReady: when GitHub Pages has a newer SlimeBeep than this one, says so once (a reload loads it).
+	 * Waits while Do not disturb is on.
+	 */
+	function checkForUpdate() {
+		if (!opts.updateReady || opts.dnd) {
+			return;
+		}
+		fetch(`${PAGES}?t=${Date.now()}`, { cache: 'no-store' })
+			.then((r) => (r.ok ? r.text() : ''))
+			.then((code) => {
+				const m = /const VERSION = '(\d+\.\d+\.\d+)'/.exec(code);
+				if (!m || !newer(m[1], VERSION) || m[1] === updateTold) {
+					return;
+				}
+				updateTold = m[1];
+				const text = `SlimeBeep v${m[1]} is ready (you have v${VERSION}). Reload the game to get it.`;
+				if (gameToasts()) {
+					gameToast({ title: 'SlimeBeep update', text, ms: 20000, category: 'SlimeBeep-news' });
+				} else {
+					card({ icon: logoIcon(), title: 'SlimeBeep update', text, ms: 20000, cls: 'news' });
+				}
+			})
+			.catch(() => {
+				/* offline: try again next time */
+			});
+	}
+
 	/** Whether news() has finished (loaded or failed). */
 	let newsLoaded = false;
 	/** Load time, for updateNote's wait. */
@@ -12664,6 +12700,7 @@
 				['desktop', 'Desktop notification when in the background', () => opts.desktop, (on) => setDesktop(on)],
 				['dnd', 'Do not disturb (no sounds or pop-ups)', () => opts.dnd, (on) => setDnd(on)],
 				['updateNotes', "Tell me what's new after an update", () => opts.updateNotes, (on) => setOpt('updateNotes', on)],
+				['updateReady', 'Tell me when an update is ready to reload', () => opts.updateReady, (on) => setOpt('updateReady', on)],
 				['afkAuto', 'Auto-reply when away 5 min or AFK', () => opts.afkAuto, (on) => setOpt('afkAuto', on)],
 			],
 			[
