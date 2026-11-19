@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.19.1';
+	const VERSION = '3.19.2';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -1392,6 +1392,12 @@
 		next: svgIcon(14, html`<path d="M18 5v14M5 5l10 7-10 7z" fill="currentColor" stroke-width="2"/>`),
 	};
 	const css = `
+		html.sb-beeps-read #ebc-tab-unread-dot, html.sb-beeps-read #ebc-notes-tab-badge,
+		html.sb-beeps-read #floatingMessageButton .lc-fab-badge { display: none !important; }
+		html.sb-beeps-read #floatingMessageButton .lc-fab-ring { animation: none !important; box-shadow: none !important; opacity: 0 !important; }
+		html.sb-beeps-count #ebc-notes-tab-badge, html.sb-beeps-count #floatingMessageButton .lc-fab-badge { font-size: 0 !important; }
+		html.sb-beeps-count #ebc-notes-tab-badge::after,
+		html.sb-beeps-count #floatingMessageButton .lc-fab-badge::after { content: var(--sb-beeps); font-size: 11px; }
 		#sb-toggle { position: fixed; z-index: 100000; width: 46px; height: 46px; border-radius: 50%; padding: 0; overflow: visible;
 			border: 3px solid #fff; background: #ffd6ec; cursor: pointer; box-shadow: 0 3px 10px #ff4fa366; touch-action: none; }
 		#sb-toggle img { width: 100%; height: 100%; display: block; border-radius: 50%; pointer-events: none; }
@@ -2228,6 +2234,24 @@
 		if (wceLoaded && unreadNow === 0 && args[6] === 'Icons/Chat.png' && args[5] === 'Red') {
 			args[5] = 'White';
 		}
+	}
+	/** The beep count last handed to EBC's and LianChat's markers (-1: not yet). */
+	let otherBeepsShown = -1;
+	/**
+	 * EBC and LianChat count beeps until their own windows open, and neither lets another add-on clear that count. Their
+	 * unread markers follow SlimeBeep instead: hidden once every beep is read here, otherwise showing how many are unread
+	 * here (css: html.sb-beeps-read / html.sb-beeps-count with --sb-beeps). Their own counts are left alone.
+	 * @param {number} n unread one-to-one game beeps here, muted chats too
+	 */
+	function calmOtherBeeps(n) {
+		if (n === otherBeepsShown) {
+			return;
+		}
+		otherBeepsShown = n;
+		const root = document.documentElement;
+		root.classList.toggle('sb-beeps-read', n === 0);
+		root.classList.toggle('sb-beeps-count', n > 0);
+		root.style.setProperty('--sb-beeps', JSON.stringify(n > 99 ? '99+' : String(n)));
 	}
 	/**
 	 * Says hello to the room (hidden), or answers one person's hello; SlimeBeeps answer with their version.
@@ -7909,6 +7933,7 @@
 			const fresh = sync();
 			const unreadList = log().filter(unread);
 			unreadNow = unreadList.length;
+			calmOtherBeeps(unreadList.filter((h) => !h.group && !h.mail).length);
 			const n = unreadList.filter(notifies).length;
 			const sdk = window.bcModSdk;
 			wceLoaded = !!sdk && typeof sdk.getModsInfo === 'function' && sdk.getModsInfo().some((m) => m.name === 'WCE');

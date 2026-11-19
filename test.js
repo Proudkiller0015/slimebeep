@@ -919,6 +919,45 @@ const check = (ok, what) => {
 		wceButton.allRead === 'White' && wceButton.oneUnread === 'Red' && wceButton.other === 'Red',
 		`WCE's red messenger button turns white once everything is read here, stays red while something isn't (${JSON.stringify(wceButton)})`,
 	);
+	// ---- EBC's and LianChat's unread markers count beeps until their own windows open: they follow SlimeBeep instead,
+	// hidden once everything is read here, showing the number unread here otherwise.
+	const otherBeeps = await p.evaluate(async () => {
+		const read = FriendListBeepLog.map((b) => b.Read);
+		const box = document.createElement('div');
+		box.innerHTML =
+			'<div id="ebc-tab"><div id="ebc-tab-unread-dot"></div><span id="ebc-notes-tab-badge" style="display:block;font-size:11px">7</span></div>' +
+			'<button id="floatingMessageButton" class="lc-fab lc-fab--unread"><span class="lc-fab-badge" style="display:flex">12</span><span class="lc-fab-ring" style="opacity:1"></span></button>';
+		document.body.appendChild(box);
+		const look = () => {
+			const css = (id, pseudo) => getComputedStyle(document.querySelector(id), pseudo);
+			return {
+				dot: css('#ebc-tab-unread-dot').display,
+				ebc: `${css('#ebc-notes-tab-badge').display} ${css('#ebc-notes-tab-badge', '::after').content}`,
+				lian: `${css('.lc-fab-badge').display} ${css('.lc-fab-badge', '::after').content}`,
+				ring: css('.lc-fab-ring').opacity,
+			};
+		};
+		FriendListBeepLog.forEach((b) => (b.Read = true));
+		await new Promise((r) => setTimeout(r, 1300));
+		const allRead = look();
+		FriendListBeepLog.findLast((b) => !b.Sent).Read = false;
+		await new Promise((r) => setTimeout(r, 1300));
+		const oneUnread = look();
+		FriendListBeepLog.forEach((b, i) => (b.Read = read[i]));
+		box.remove();
+		return { allRead, oneUnread };
+	});
+	check(
+		otherBeeps.allRead.dot === 'none' &&
+			otherBeeps.allRead.ebc.startsWith('none') &&
+			otherBeeps.allRead.lian.startsWith('none') &&
+			otherBeeps.allRead.ring === '0' &&
+			otherBeeps.oneUnread.dot === 'block' &&
+			otherBeeps.oneUnread.ebc === 'block "1"' &&
+			otherBeeps.oneUnread.lian === 'flex "1"' &&
+			otherBeeps.oneUnread.ring === '1',
+		`EBC's and LianChat's unread marks go once everything is read here and show the count here otherwise (${JSON.stringify(otherBeeps)})`,
+	);
 	// ---- Group chats: SlimeBeep users only, roles, passing on, and nothing a stranger or a forgery can do.
 	await p.evaluate(() => {
 		hidden.length = 0;

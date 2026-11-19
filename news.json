@@ -466,5 +466,11 @@
     "date": "18 Nov 2026",
     "title": "📢 SlimeBeep 3.19.1",
     "text": "📌 The pin number now counts only pins you haven't seen, and opening 📌 clears it. With WCE, its Instant Messenger button no longer stays red once you've read everything in SlimeBeep."
+  },
+  {
+    "id": "3.19.2",
+    "date": "19 Nov 2026",
+    "title": "📢 SlimeBeep 3.19.2",
+    "text": "With EBC or LianChat, their unread beep marks now go away once you've read everything in SlimeBeep, and show SlimeBeep's unread number otherwise."
   }
 ]
