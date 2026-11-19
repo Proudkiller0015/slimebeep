@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.19.0';
+	const VERSION = '3.19.1';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -1861,6 +1861,14 @@
 						drawBadge(args[0], args[1], args[2], args[3]);
 						return r;
 					});
+					mod.hookFunction('DrawButton', 0, (args, next) => {
+						try {
+							calmWceButton(args);
+						} catch (e) {
+							warn(e, 'WCE button');
+						}
+						return next(args);
+					});
 				}
 			}
 		} catch (e) {
@@ -2207,6 +2215,20 @@
 	let helloRoom = '';
 	/** Member number -> when we last answered their hello. */
 	const helloAnswered = new Map();
+	/** Unread beeps in the log, muted chats too (counted every second). */
+	let unreadNow = 0;
+	/** Whether WCE is loaded, whose Instant Messenger button turns red for every beep until its own window is opened. */
+	let wceLoaded = false;
+	/**
+	 * WCE's Instant Messenger button stays red after the beeps were read here: its count only clears when its own window
+	 * opens. With nothing unread left, it is drawn white (WCE's count is left alone).
+	 * @param {unknown[]} args DrawButton's: left, top, width, height, label, colour, image, hover text, disabled
+	 */
+	function calmWceButton(args) {
+		if (wceLoaded && unreadNow === 0 && args[6] === 'Icons/Chat.png' && args[5] === 'Red') {
+			args[5] = 'White';
+		}
+	}
 	/**
 	 * Says hello to the room (hidden), or answers one person's hello; SlimeBeeps answer with their version.
 	 * @param {number} [to] answers this member only
@@ -6455,6 +6477,54 @@
 			/* this visit only */
 		}
 	};
+	/** @type {{ owner: number, keys: Set<string> } | null} The pins the account logged in has seen, as '<chat>:<pin id>'. */
+	let pinSeenStore = null;
+	/** The pins the account logged in has seen in the 📌 box, as '<chat>:<pin id>'. */
+	function pinsSeen() {
+		const me = Player.MemberNumber;
+		if (!pinSeenStore || pinSeenStore.owner !== me) {
+			/** @type {Set<string>} */
+			const keys = new Set();
+			try {
+				const saved = JSON.parse(localStorage.getItem(`slimebeep.pinsSeen.${me}`) || '[]');
+				for (const k of Array.isArray(saved) ? saved : []) {
+					if (typeof k === 'string' && k.length <= 80) {
+						keys.add(k);
+					}
+				}
+			} catch (e) {
+				/* none seen yet */
+			}
+			pinSeenStore = { owner: me, keys };
+		}
+		return pinSeenStore.keys;
+	}
+	/**
+	 * How many of a chat's pins you haven't seen yet (others' pins since you last opened its 📌 box; yours you saw).
+	 * @param {string} chat a muteKey
+	 */
+	const unseenPins = (chat) => pinsOf(chat).filter((pin) => pin.by !== Player.MemberNumber && !pinsSeen().has(`${chat}:${pin.id}`)).length;
+	/**
+	 * Marks a chat's pins as seen, as they are now; pins that are gone are forgotten, so the list stays as small as
+	 * the chats' pins.
+	 * @param {string} chat a muteKey
+	 */
+	function seePins(chat) {
+		const keys = pinsSeen();
+		for (const k of [...keys]) {
+			if (k.startsWith(`${chat}:`)) {
+				keys.delete(k);
+			}
+		}
+		for (const pin of pinsOf(chat)) {
+			keys.add(`${chat}:${pin.id}`);
+		}
+		try {
+			localStorage.setItem(`slimebeep.pinsSeen.${Player.MemberNumber}`, JSON.stringify([...keys]));
+		} catch (e) {
+			/* this visit only */
+		}
+	}
 	/**
 	 * A friend pinned a message in your chat with them (hidden beep). It can only be one of theirs or yours.
 	 * @param {number} from
@@ -6587,13 +6657,15 @@
 	const pinnedEntry = (chat, pin) =>
 		chat.startsWith('g:') ? hist.find((h) => h.k === `${chat}:${pin.id}`) : hist.find((h) => muteKey(h) === chat && pinFor(h) === pin);
 	/**
-	 * The 📌 button of a chat's header, with how many pins it has; shown once it has any, or when you may pin.
+	 * The 📌 button of a chat's header, with how many pins you haven't seen yet; shown once the chat has any pins, or
+	 * when you may pin.
 	 * @param {string} chat a muteKey
 	 */
 	const pinsButton = (chat) => {
-		const n = pinsOf(chat).length;
+		const n = unseenPins(chat);
 		return (
-			(n > 0 || canPin(chat)) && html`<button id="sb-pins" title="Pinned messages">📌${n > 0 && html`<i class="sb-pinn">${n}</i>`}</button>`
+			(pinsOf(chat).length > 0 || canPin(chat)) &&
+			html`<button id="sb-pins" title="Pinned messages">📌${n > 0 && html`<i class="sb-pinn">${n}</i>`}</button>`
 		);
 	};
 	/**
@@ -6603,6 +6675,11 @@
 	function openPins(chat) {
 		const pins = pinsOf(chat);
 		const can = canPin(chat);
+		seePins(chat);
+		const badge = $('sb-pins') && $('sb-pins').querySelector('.sb-pinn');
+		if (badge) {
+			badge.remove();
+		}
 		askBox(
 			html`<div class="sb-crop-card sb-pins">
 			<b>📌 Pinned messages</b>
@@ -7830,7 +7907,11 @@
 			}
 			const first = histOwner === null || (loggedIn() && histOwner !== Player.MemberNumber);
 			const fresh = sync();
-			const n = log().filter((h) => unread(h) && notifies(h)).length;
+			const unreadList = log().filter(unread);
+			unreadNow = unreadList.length;
+			const n = unreadList.filter(notifies).length;
+			const sdk = window.bcModSdk;
+			wceLoaded = !!sdk && typeof sdk.getModsInfo === 'function' && sdk.getModsInfo().some((m) => m.name === 'WCE');
 			const badge = $('sb-badge');
 			badge.textContent = n > 99 ? '99+' : String(n);
 			badge.style.display = n ? 'block' : 'none';

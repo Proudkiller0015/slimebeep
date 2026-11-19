@@ -892,6 +892,33 @@ const check = (ok, what) => {
 		[11, 12, 13].every((n) => timedFind.includes(n)),
 		`after logging in, online friends are asked whether they have SlimeBeep without pressing 🔍 (${JSON.stringify(timedFind)})`,
 	);
+	// ---- WCE's Instant Messenger button turns red for every beep until its own window opens: once nothing is unread
+	// here, SlimeBeep draws it white (and leaves it red while something is).
+	const wceButton = await p.evaluate(async () => {
+		const read = FriendListBeepLog.map((b) => b.Read);
+		window.bcModSdk.getModsInfo = () => [{ name: 'WCE', version: '6.3.20' }];
+		const colour = () => hooks.DrawButton([1, 2, 90, 90, '', 'Red', 'Icons/Chat.png', 'Instant Messenger', false], (a) => a[5]);
+		const other = hooks.DrawButton([1, 2, 90, 90, '', 'Red', 'Icons/Cancel.png', 'Cancel', false], (a) => a[5]);
+		// Reading everything: each friend's chat opened here, and the game's log marked read.
+		for (const n of [11, 12, 13, 14]) {
+			SlimeBeep.api.openChat(n);
+			await new Promise((r) => setTimeout(r, 150));
+		}
+		FriendListBeepLog.forEach((b) => (b.Read = true));
+		await new Promise((r) => setTimeout(r, 1300));
+		const allRead = colour();
+		const last = FriendListBeepLog.findLast((b) => !b.Sent);
+		last.Read = false;
+		await new Promise((r) => setTimeout(r, 1300));
+		const oneUnread = colour();
+		FriendListBeepLog.forEach((b, i) => (b.Read = read[i]));
+		delete window.bcModSdk.getModsInfo;
+		return { allRead, oneUnread, other };
+	});
+	check(
+		wceButton.allRead === 'White' && wceButton.oneUnread === 'Red' && wceButton.other === 'Red',
+		`WCE's red messenger button turns white once everything is read here, stays red while something isn't (${JSON.stringify(wceButton)})`,
+	);
 	// ---- Group chats: SlimeBeep users only, roles, passing on, and nothing a stranger or a forgery can do.
 	await p.evaluate(() => {
 		hidden.length = 0;
@@ -1225,13 +1252,14 @@ const check = (ok, what) => {
 		const pinShown = await waitFor(
 			() =>
 				p.evaluate(
-					() => /1/.test((document.querySelector('#sb-pins .sb-pinn') || {}).textContent || '') && !!document.querySelector('.sb-pinned'),
+					() =>
+						!!document.querySelector('#sb-pins') && !document.querySelector('#sb-pins .sb-pinn') && !!document.querySelector('.sb-pinned'),
 				),
 			5000,
 		);
 		check(
 			pinned && annPins && pinShown,
-			`the owner pins Ann's message: Ann gets the pin, and the chat marks it (${JSON.stringify({ pinned, annPins, pinShown })})`,
+			`the owner pins Ann's message: Ann gets the pin, the chat marks it, and no 📌 number (you saw your own pin) (${JSON.stringify({ pinned, annPins, pinShown })})`,
 		);
 		await p.click('#sb-pins');
 		await wait(200);
@@ -1257,7 +1285,7 @@ const check = (ok, what) => {
 		const sentPin = await p.evaluate(() =>
 			hidden.map((h) => JSON.parse(h.Message || '{}')).find((m) => m.pin && m.pin.text === 'hiii' && m.pin.from === 11),
 		);
-		check(!!sentPin && (await p.$eval('#sb-pins .sb-pinn', (e) => e.textContent)) === '1', "pinning Ann's beep tells her SlimeBeep");
+		check(!!sentPin && !(await p.$('#sb-pins .sb-pinn')), "pinning Ann's beep tells her SlimeBeep (and counts as seen here)");
 		await hide(11, 'Ann', {
 			sb: 1,
 			pin: { id: 'annpin0001', from: 1, name: 'Me', text: 'hey Ann <3', at: Date.now() - 45 * 60000, by: 11 },
@@ -1269,10 +1297,23 @@ const check = (ok, what) => {
 				(b) => /hey Ann/.test(b.textContent || '') && !!b.querySelector('.sb-pinned'),
 			),
 		}));
-		check(both.count === '2' && both.marked, `Ann's SlimeBeep pins one of mine: it shows here too (${JSON.stringify(both)})`);
+		check(both.count === '1' && both.marked, `Ann's SlimeBeep pins one of mine: it shows here too, with 📌 1 (${JSON.stringify(both)})`);
+		await p.click('#sb-pins');
+		await wait(200);
+		const seenPin = await p.evaluate(() => {
+			const gone = !document.querySelector('#sb-pins .sb-pinn');
+			document.querySelector('.sb-pins [data-act="cancel"]').click();
+			return gone;
+		});
+		await p.evaluate(() => SlimeBeep.api.openChat(11));
+		await wait(300);
+		check(seenPin && !(await p.$('#sb-pins .sb-pinn')), 'opening 📌 drops the number, and it stays gone when the chat opens again');
 		await hide(11, 'Ann', { sb: 1, unpin: 'annpin0001' });
 		await wait(300);
-		check((await p.$eval('#sb-pins .sb-pinn', (e) => e.textContent)) === '1', 'and her unpin takes it off');
+		check(
+			!!(await p.$('#sb-pins')) && !(await p.$('#sb-pins .sb-pinn')) && (await p.$$eval('.sb-pinned', (e) => e.length)) === 1,
+			'and her unpin takes it off',
+		);
 		await p.evaluate((g) => SlimeBeep.api.openGroup(g), gid);
 		await wait(300);
 		// @: typing it lists the members; Enter writes the name.
