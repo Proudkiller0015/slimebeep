@@ -10,7 +10,7 @@
 	/** URL this copy was loaded from, or '' when it was injected as text. Read by the start-up check. */
 	const LOADED_FROM = (document.currentScript instanceof HTMLScriptElement && document.currentScript.src) || '';
 
-	const VERSION = '3.19.2';
+	const VERSION = '3.19.3';
 	// Only one copy runs per page.
 	if (window.SlimeBeep) {
 		return;
@@ -71,7 +71,7 @@
 		pinned: [],
 		/** Do not disturb: no sounds, message cards or desktop notifications (messages still arrive, unread). */
 		dnd: false,
-		/** @type {string[]} Sites besides EMBED_HOSTS whose pictures show in chats without asking. */
+		/** @type {string[]} Sites besides EMBED_HOSTS and OWN_WORKERS whose pictures show in chats without asking. */
 		trustedHosts: [],
 		/** Music player volume, 0 to 100. */
 		musicVolume: 70,
@@ -1111,6 +1111,13 @@
 		'pbs.twimg.com',
 	]);
 	/**
+	 * SlimeBeep's own Cloudflare Workers (SlimeCheat's uploads among them): only that account can put a Worker under
+	 * this subdomain, so its pictures show without asking.
+	 */
+	const OWN_WORKERS = /\.slimebeep-relay\.workers\.dev$/;
+	/** @param {string} host */
+	const picTrusted = (host) => EMBED_HOSTS.has(host) || OWN_WORKERS.test(host) || opts.trustedHosts.includes(host);
+	/**
 	 * The picture behind a link: a picture file on any https site, or the GIF of a Tenor or Giphy page.
 	 * @param {string} link
 	 * @returns {{ src: string, host: string } | null}
@@ -1151,7 +1158,7 @@
 	 */
 	const embedHtml = (link, pic) => {
 		const src = esc(pic.src);
-		if (!EMBED_HOSTS.has(pic.host) && !opts.trustedHosts.includes(pic.host) && !shownOnce.has(pic.src)) {
+		if (!picTrusted(pic.host) && !shownOnce.has(pic.src)) {
 			const host = esc(pic.host);
 			return `<span class="sb-asktrust">🖼 A picture from <b>${host}</b> <button class="sb-pill" data-pic-once="${src}">Show</button> <button class="sb-pill" data-pic-trust="${host}">Always trust ${host}</button></span>`;
 		}

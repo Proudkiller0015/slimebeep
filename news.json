@@ -472,5 +472,11 @@
     "date": "19 Nov 2026",
     "title": "📢 SlimeBeep 3.19.2",
     "text": "With EBC or LianChat, their unread beep marks now go away once you've read everything in SlimeBeep, and show SlimeBeep's unread number otherwise."
+  },
+  {
+    "id": "3.19.3",
+    "date": "19 Nov 2026",
+    "title": "📢 SlimeBeep 3.19.3",
+    "text": "Pictures uploaded with SlimeCheat now show in chats straight away, without asking you to trust the site first."
   }
 ]

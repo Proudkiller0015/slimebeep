@@ -1785,6 +1785,7 @@ const check = (ok, what) => {
 				'https://tenor.com/view/cat-dance-gif-7523542997650649169',
 				'https://giphy.com/gifs/happy-dance-JIX9t2j0ZTN9S',
 				'https://i.imgur.com/abc123.png?x=1&y=2',
+				'https://song-upload.slimebeep-relay.workers.dev/k3j9x2.png',
 				'https://example.com/tracker.gif',
 				'http://i.imgur.com/plain.png',
 			]) {
@@ -1809,10 +1810,11 @@ const check = (ok, what) => {
 					'https://tenor.com/view/cat-dance-gif-7523542997650649169.gif',
 					'https://i.giphy.com/JIX9t2j0ZTN9S.gif',
 					'https://i.imgur.com/abc123.png?x=1&y=2',
+					'https://song-upload.slimebeep-relay.workers.dev/k3j9x2.png',
 				]) &&
 				pics.policy &&
 				JSON.stringify(pics.ask) === '["example.com"]',
-			`Tenor, Giphy and imgur links show their picture, example.com asks first, http:// stays a link (${JSON.stringify(pics)})`,
+			`Tenor, Giphy, imgur and SlimeBeep's own Worker links show their picture, example.com asks first, http:// stays a link (${JSON.stringify(pics)})`,
 		);
 		await wait(2500);
 		await shot('chat-pictures');
@@ -1843,6 +1845,22 @@ const check = (ok, what) => {
 		check(
 			trusted.src.includes('https://example.com/other.png') && !trusted.ask.length && JSON.stringify(trustSaved) === '["example.com"]',
 			`Always trust shows every picture from there and is remembered (${JSON.stringify({ trusted, trustSaved })})`,
+		);
+		await p.evaluate(() =>
+			FriendListBeepLog.push({
+				MemberNumber: 12,
+				MemberName: 'Bea',
+				Sent: false,
+				Read: false,
+				Time: new Date(),
+				Message: 'https://slimebeep-relay.workers.dev.example.com/lookalike.png',
+			}),
+		);
+		await wait(1300);
+		const lookalike = await picsNow();
+		check(
+			JSON.stringify(lookalike.ask) === '["slimebeep-relay.workers.dev.example.com"]',
+			`a site that only looks like SlimeBeep's Workers still asks (${JSON.stringify(lookalike)})`,
 		);
 		await p.evaluate(() => SlimeBeep.api.openChat(12));
 
